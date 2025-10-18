@@ -1,0 +1,161 @@
+# Services for Baby Tracker integration
+
+add_diaper:
+  name: Add Diaper
+  description: Add a diaper change record to Baby Tracker
+  fields:
+    pee:
+      name: Pee
+      description: Whether the diaper was wet
+      required: false
+      selector:
+        boolean:
+    poo:
+      name: Poo
+      description: Whether the diaper was dirty
+      required: false
+      selector:
+        boolean:
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      example: "Unusually soiled"
+      selector:
+        text:
+
+add_nursing:
+  name: Add Nursing
+  description: Add a nursing session record to Baby Tracker
+  fields:
+    left_duration:
+      name: Left Duration
+      description: Duration on left side (minutes)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 120
+          unit_of_measurement: min
+    right_duration:
+      name: Right Duration
+      description: Duration on right side (minutes)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 120
+          unit_of_measurement: min
+    both_duration:
+      name: Both Duration
+      description: Duration on both sides (minutes)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 120
+          unit_of_measurement: min
+    finish_side:
+      name: Finish Side
+      description: Which side finished on
+      required: false
+      default: "Left"
+      selector:
+        select:
+          options:
+            - "Left"
+            - "Right" 
+            - "Both"
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+
+add_formula:
+  name: Add Formula
+  description: Add a formula feeding record to Baby Tracker
+  fields:
+    amount:
+      name: Amount
+      description: Amount in ml (or oz if is_english_measure is true)
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 500
+    is_english_measure:
+      name: English Measure
+      description: Whether amount is in oz (true) or ml (false)
+      required: false
+      default: false
+      selector:
+        boolean:
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+
+add_pumped:
+  name: Add Pumped Milk
+  description: Add a pumped milk record to Baby Tracker
+  fields:
+    amount:
+      name: Amount
+      description: Amount in ml (or oz if is_english_measure is true)
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 500
+    is_english_measure:
+      name: English Measure
+      description: Whether amount is in oz (true) or ml (false)
+      required: false
+      default: false
+      selector:
+        boolean:
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+
+add_temperature:
+  name: Add Temperature
+  description: Add a temperature record to Baby Tracker
+  fields:
+    temperature:
+      name: Temperature
+      description: Temperature value
+      required: true
+      selector:
+        number:
+          min: 90
+          max: 107
+          step: 0.1
+    is_fahrenheit:
+      name: Fahrenheit
+      description: Whether temperature is in Fahrenheit (true) or Celsius (false)
+      required: false
+      default: true
+      selector:
+        boolean:
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+
+sync:
+  name: Sync
+  description: Sync data with the Baby Tracker server
+  fields: {}
