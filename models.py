@@ -1016,3 +1016,358 @@ class Medicine(BaseModel):
             data["medicine"] = self.medicine_selection.to_dict()
             
         return data
+class MilestoneSelection(BaseModel):
+    """Model representing a milestone selection/type"""
+
+    def __init__(self, data: Dict[str, Any] = None):
+        self.name: str = ""
+        self.description: str = ""
+
+        super().__init__(data)
+        self.object_type = "MilestoneSelection"
+
+    def from_dict(self, data: Dict[str, Any]) -> None:
+        """Load milestone selection data from a dictionary"""
+        super().from_dict(data)
+        self.name = data.get("name", "")
+        self.description = data.get("description", "")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert milestone selection model to a dictionary"""
+        data = super().to_dict()
+        data.update({
+            "name": self.name,
+            "description": self.description
+        })
+        return data
+
+class Milestone(BaseModel):
+    """Model representing a milestone achievement"""
+
+    def __init__(self, data: Dict[str, Any] = None):
+        self.time: str = None
+        self.milestone_selection_id: str = None
+        self.note: str = ""
+        self.baby_id: str = None
+        self.has_picture: bool = False
+        self.milestone_selection: MilestoneSelection = None
+
+        super().__init__(data)
+        self.object_type = "Milestone"
+
+    def from_dict(self, data: Dict[str, Any] = None) -> None:
+        """Load milestone data from a dictionary"""
+        super().from_dict(data)
+        self.time = data.get("time", self.timestamp)
+        self.note = data.get("note", "")
+
+        # Handle milestone selection reference
+        milestone_data = data.get("milestoneSelection", {})
+        if isinstance(milestone_data, dict):
+            self.milestone_selection = MilestoneSelection(milestone_data)
+            self.milestone_selection_id = milestone_data.get("objectID", "")
+        else:
+            self.milestone_selection_id = data.get("milestoneSelectionID", "")
+
+        # Handle baby reference
+        baby_data = data.get("baby", {})
+        if isinstance(baby_data, dict):
+            self.baby_id = baby_data.get("objectID", "")
+        else:
+            self.baby_id = data.get("baby_id", "")
+
+        self.has_picture = bool(data.get("hasPicture", False))
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert milestone model to a dictionary"""
+        data = super().to_dict()
+        data.update({
+            "time": self.time,
+            "milestoneSelectionID": self.milestone_selection_id,
+            "note": self.note,
+            "hasPicture": self.has_picture
+        })
+        if self.baby_id:
+            data["baby"] = {"objectID": self.baby_id}
+
+        # Include milestone selection if available
+        if self.milestone_selection:
+            data["milestoneSelection"] = self.milestone_selection.to_dict()
+
+        return data
+
+class DoctorVisit(BaseModel):
+    """Model representing a doctor visit"""
+
+    def __init__(self, data: Dict[str, Any] = None):
+        self.time: str = None
+        self.is_appointment: bool = True
+        self.visit_type: int = 0
+        self.doctor_id: str = None
+        self.doctor_note: str = ""
+        self.symptom: str = ""
+        self.growth_id: str = None
+        self.sick_id: str = None
+        self.note: str = ""
+        self.baby_id: str = None
+        self.has_picture: bool = False
+
+        super().__init__(data)
+        self.object_type = "DoctorVisit"
+
+    def from_dict(self, data: Dict[str, Any]) -> None:
+        """Load doctor visit data from a dictionary"""
+        super().from_dict(data)
+        self.time = data.get("time", self.timestamp)
+        self.is_appointment = bool(data.get("isAppointment", True))
+        self.visit_type = int(data.get("visitType", 0))
+        self.doctor_id = data.get("doctorID", "")
+        self.doctor_note = data.get("doctorNote", "")
+        self.symptom = data.get("symptom", "")
+        self.growth_id = data.get("growthID", "")
+        self.sick_id = data.get("sickID", "")
+        self.note = data.get("note", "")
+
+        # Handle baby reference
+        baby_data = data.get("baby", {})
+        if isinstance(baby_data, dict):
+            self.baby_id = baby_data.get("objectID", "")
+        else:
+            self.baby_id = data.get("baby_id", "")
+
+        self.has_picture = bool(data.get("hasPicture", False))
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert doctor visit model to a dictionary"""
+        data = super().to_dict()
+        data.update({
+            "time": self.time,
+            "isAppointment": self.is_appointment,
+            "visitType": self.visit_type,
+            "doctorID": self.doctor_id,
+            "doctorNote": self.doctor_note,
+            "symptom": self.symptom,
+            "growthID": self.growth_id,
+            "sickID": self.sick_id,
+            "note": self.note,
+            "hasPicture": self.has_picture
+        })
+        if self.baby_id:
+            data["baby"] = {"objectID": self.baby_id}
+
+        return data
+
+class VaccineSelection(BaseModel):
+    """Model representing a vaccine selection/type"""
+
+    def __init__(self, data: Dict[str, Any] = None):
+        self.name: str = ""
+        self.description: str = ""
+
+        super().__init__(data)
+        self.object_type = "VaccineSelection"
+
+    def from_dict(self, data: Dict[str, Any]) -> None:
+        """Load vaccine selection data from a dictionary"""
+        super().from_dict(data)
+        self.name = data.get("name", "")
+        self.description = data.get("description", "")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert vaccine selection model to a dictionary"""
+        data = super().to_dict()
+        data.update({
+            "name": self.name,
+            "description": self.description
+        })
+        return data
+
+class Vaccine(BaseModel):
+    """Model representing a vaccine administration"""
+
+    def __init__(self, data: Dict[str, Any] = None):
+        self.time: str = None
+        self.vacc_id: str = None
+        self.doc_visit_id: str = None
+        self.note: str = ""
+        self.baby_id: str = None
+        self.has_picture: bool = False
+        self.vaccine_selection: VaccineSelection = None
+
+        super().__init__(data)
+        self.object_type = "Vaccine"
+
+    def from_dict(self, data: Dict[str, Any]) -> None:
+        """Load vaccine data from a dictionary"""
+        super().from_dict(data)
+        self.time = data.get("time", self.timestamp)
+        self.doc_visit_id = data.get("docVisitID", "")
+        self.note = data.get("note", "")
+
+        # Handle vaccine selection reference
+        vaccine_data = data.get("vaccineSelection", {})
+        if isinstance(vaccine_data, dict):
+            self.vaccine_selection = VaccineSelection(vaccine_data)
+            self.vacc_id = vaccine_data.get("objectID", "")
+        else:
+            self.vacc_id = data.get("vaccID", "")
+
+        # Handle baby reference
+        baby_data = data.get("baby", {})
+        if isinstance(baby_data, dict):
+            self.baby_id = baby_data.get("objectID", "")
+        else:
+            self.baby_id = data.get("baby_id", "")
+
+        self.has_picture = bool(data.get("hasPicture", False))
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert vaccine model to a dictionary"""
+        data = super().to_dict()
+        data.update({
+            "time": self.time,
+            "vaccID": self.vacc_id,
+            "docVisitID": self.doc_visit_id,
+            "note": self.note,
+            "hasPicture": self.has_picture
+        })
+        if self.baby_id:
+            data["baby"] = {"objectID": self.baby_id}
+
+        # Include vaccine selection if available
+        if self.vaccine_selection:
+            data["vaccineSelection"] = self.vaccine_selection.to_dict()
+
+        return data
+
+class Growth(BaseModel):
+    """Model representing a growth measurement"""
+
+    def __init__(self, data: Dict[str, Any] = None):
+        self.time: str = None
+        self.weight: float = 0.0
+        self.length: float = 0.0
+        self.head: float = 0.0
+        self.is_english_weight_scale: bool = True
+        self.is_english_length_scale: bool = True
+        self.note: str = ""
+        self.baby_id: str = None
+        self.has_picture: bool = False
+
+        super().__init__(data)
+        self.object_type = "Growth"
+
+    def from_dict(self, data: Dict[str, Any]) -> None:
+        """Load growth data from a dictionary"""
+        super().from_dict(data)
+        self.time = data.get("time", self.timestamp)
+        self.weight = float(data.get("weight", 0.0))
+        self.length = float(data.get("length", 0.0))
+        self.head = float(data.get("head", 0.0))
+        self.is_english_weight_scale = bool(data.get("isEnglishWeightScale", True))
+        self.is_english_length_scale = bool(data.get("isEnglishLengthScale", True))
+        self.note = data.get("note", "")
+
+        # Handle baby reference
+        baby_data = data.get("baby", {})
+        if isinstance(baby_data, dict):
+            self.baby_id = baby_data.get("objectID", "")
+        else:
+            self.baby_id = data.get("baby_id", "")
+
+        self.has_picture = bool(data.get("hasPicture", False))
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert growth model to a dictionary"""
+        data = super().to_dict()
+        data.update({
+            "time": self.time,
+            "weight": self.weight,
+            "length": self.length,
+            "head": self.head,
+            "isEnglishWeightScale": self.is_english_weight_scale,
+            "isEnglishLengthScale": self.is_english_length_scale,
+            "note": self.note,
+            "hasPicture": self.has_picture
+        })
+        if self.baby_id:
+            data["baby"] = {"objectID": self.baby_id}
+
+        return data
+
+class BathType(BaseModel):
+    """Model representing a bath type/description"""
+
+    def __init__(self, data: Dict[str, Any] = None):
+        self.name: str = ""
+
+        super().__init__(data)
+        self.object_type = "BathType"
+
+    def from_dict(self, data: Dict[str, Any]) -> None:
+        """Load bath type data from a dictionary"""
+        super().from_dict(data)
+        self.name = data.get("name", "")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert bath type model to a dictionary"""
+        data = super().to_dict()
+        data.update({
+            "name": self.name
+        })
+        return data
+
+class Bath(BaseModel):
+    """Model representing a bath record"""
+
+    def __init__(self, data: Dict[str, Any] = None):
+        self.time: str = None
+        self.desc_id: str = None
+        self.note: str = ""
+        self.baby_id: str = None
+        self.has_picture: bool = False
+        self.bath_type: BathType = None
+
+        super().__init__(data)
+        self.object_type = "Bath"
+
+    def from_dict(self, data: Dict[str, Any]) -> None:
+        """Load bath data from a dictionary"""
+        super().from_dict(data)
+        self.time = data.get("time", self.timestamp)
+        self.note = data.get("note", "")
+
+        # Handle bath type reference
+        bath_type_data = data.get("bathType", {})
+        if isinstance(bath_type_data, dict):
+            self.bath_type = BathType(bath_type_data)
+            self.desc_id = bath_type_data.get("objectID", "")
+        else:
+            self.desc_id = data.get("descID", "")
+
+        # Handle baby reference
+        baby_data = data.get("baby", {})
+        if isinstance(baby_data, dict):
+            self.baby_id = baby_data.get("objectID", "")
+        else:
+            self.baby_id = data.get("baby_id", "")
+
+        self.has_picture = bool(data.get("hasPicture", False))
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert bath model to a dictionary"""
+        data = super().to_dict()
+        data.update({
+            "time": self.time,
+            "descID": self.desc_id,
+            "note": self.note,
+            "hasPicture": self.has_picture
+        })
+        if self.baby_id:
+            data["baby"] = {"objectID": self.baby_id}
+
+        # Include bath type if available
+        if self.bath_type:
+            data["bathType"] = self.bath_type.to_dict()
+
+        return data

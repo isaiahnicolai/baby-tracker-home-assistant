@@ -181,7 +181,7 @@ class BabyTracker:
     def get_baby_info(self):
         """
         Get information about the baby.
-        
+
         Returns:
             dict: Baby information
         """
@@ -191,16 +191,52 @@ class BabyTracker:
                 self.api.local_db = self.db
             else:
                 return None
-                
+
         return self.db.get_baby_info()
+
+    def get_all_babies(self):
+        """
+        Get information about all babies.
+
+        Returns:
+            list: List of Baby objects
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return []
+
+        return self.db.get_all_babies()
+
+    def get_baby_by_name(self, name):
+        """
+        Get baby information by name.
+
+        Args:
+            name: Baby's name
+
+        Returns:
+            Baby: Baby object or None
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return None
+
+        return self.db.get_baby_by_name(name)
     
-    def get_feeding_summary(self, days=7):
+    def get_feeding_summary(self, days=7, baby_id=None):
         """
         Get a summary of feeding data.
-        
+
         Args:
             days: Number of days to include
-            
+            baby_id: Optional baby ID to filter by
+
         Returns:
             dict: Feeding summary statistics
         """
@@ -210,16 +246,17 @@ class BabyTracker:
                 self.api.local_db = self.db
             else:
                 return {}
-                
-        return self.db.get_feeding_summary(days)
-    
-    def get_diaper_summary(self, days=7):
+
+        return self.db.get_feeding_summary(days, baby_id)
+
+    def get_diaper_summary(self, days=7, baby_id=None):
         """
         Get a summary of diaper data.
-        
+
         Args:
             days: Number of days to include
-            
+            baby_id: Optional baby ID to filter by
+
         Returns:
             dict: Diaper summary statistics
         """
@@ -229,8 +266,8 @@ class BabyTracker:
                 self.api.local_db = self.db
             else:
                 return {}
-                
-        return self.db.get_diaper_summary(days)
+
+        return self.db.get_diaper_summary(days, baby_id)
 
     def get_all_pumped_sessions(self):
         """Get all pumped milk sessions."""
@@ -295,7 +332,7 @@ class BabyTracker:
     def get_last_temperature(self):
         """
         Get the most recent temperature reading.
-        
+
         Returns:
             dict: Temperature record
         """
@@ -305,8 +342,595 @@ class BabyTracker:
                 self.api.local_db = self.db
             else:
                 return None
-                
+
         return self.db.get_last_temperature()
+
+    def get_last_diaper(self):
+        """
+        Get the most recent diaper change by querying the Diaper table directly.
+        Does NOT rely on the Progress table.
+
+        Returns:
+            dict: Diaper record with time, status, and details
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return None
+
+        return self.db.get_last_diaper_direct()
+
+    def get_last_sleep(self):
+        """
+        Get the most recent sleep by querying the Sleep table directly.
+        Does NOT rely on the Progress table.
+
+        Returns:
+            dict: Sleep record with time, duration, and is_sleeping status
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return None
+
+        return self.db.get_last_sleep_direct()
+
+    def is_currently_sleeping(self):
+        """
+        Check if the baby is currently sleeping.
+
+        Returns:
+            bool: True if baby is currently sleeping (sleep duration=0), False otherwise
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return False
+
+        return self.db.is_currently_sleeping()
+
+    def get_last_nursing(self):
+        """
+        Get the most recent nursing session by querying the Nursing table directly.
+        Does NOT rely on the Progress table.
+
+        Returns:
+            dict: Nursing record with time and durations
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return None
+
+        return self.db.get_last_nursing_direct()
+
+    def get_last_feed_time(self):
+        """
+        Get the time of the most recent feeding (any type) by querying tables directly.
+        Does NOT rely on the Progress table.
+
+        Returns:
+            dict: Feed time info with type
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return None
+
+        return self.db.get_last_feed_time_direct()
+
+    def get_last_bath(self):
+        """
+        Get the most recent bath by querying the Bath table directly.
+
+        Returns:
+            dict: Bath record with time and type
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return None
+
+        return self.db.get_last_bath_direct()
+
+    def get_bath_records(self, limit=50):
+        """
+        Get bath records.
+
+        Args:
+            limit: Maximum number of records to return
+
+        Returns:
+            list: Bath records
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return []
+
+        return self.db.get_bath_records(limit)
+
+    def log_bath(self, bath_type=None, note="", time=None):
+        """
+        Log a new bath record.
+
+        Args:
+            bath_type: Optional bath type (Bubble Bath, Sponge Bath, etc.)
+            note: Optional note
+            time: Optional time (defaults to now)
+
+        Returns:
+            bool: True if successful
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return False
+
+        return self.db.log_bath(bath_type=bath_type, note=note, time=time)
+
+    def get_bath_types(self):
+        """
+        Get list of available bath types.
+
+        Returns:
+            list: Bath type names
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return []
+
+        return self.db.get_bath_types()
+
+    def get_last_pump(self, baby_id=None):
+        """
+        Get the most recent pump session by querying the Pump table directly.
+
+        Args:
+            baby_id: Optional baby ID to filter by
+
+        Returns:
+            dict: Pump session record with time, durations, and amounts
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return None
+
+        return self.db.get_last_pump_direct(baby_id)
+
+    def get_pump_records(self, limit=50, baby_id=None):
+        """
+        Get pump session records.
+
+        Args:
+            limit: Maximum number of records to return
+            baby_id: Optional baby ID to filter by
+
+        Returns:
+            list: Pump session records
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return []
+
+        return self.db.get_pump_records(limit, baby_id)
+
+    def log_pump(self, baby_id, left_duration, right_duration, left_amount, right_amount,
+                 is_english_scale, note, time=None):
+        """
+        Log a new pump session record directly to the database.
+
+        Args:
+            baby_id: Baby ID
+            left_duration: Duration on left side (minutes)
+            right_duration: Duration on right side (minutes)
+            left_amount: Amount from left side
+            right_amount: Amount from right side
+            is_english_scale: Whether amounts are in oz (True) or ml (False)
+            note: Optional note
+            time: Optional time (defaults to now)
+
+        Returns:
+            bool: True if successful
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return False
+
+        return self.db.log_pump(
+            baby_id=baby_id,
+            left_duration=left_duration,
+            right_duration=right_duration,
+            left_amount=left_amount,
+            right_amount=right_amount,
+            is_english_scale=is_english_scale,
+            note=note,
+            time=time
+        )
+
+    def get_pump_summary(self, days=7, baby_id=None):
+        """
+        Get a summary of pump session data.
+
+        Args:
+            days: Number of days to include
+            baby_id: Optional baby ID to filter by
+
+        Returns:
+            dict: Pump session summary statistics
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return {}
+
+        return self.db.get_pump_summary(days, baby_id)
+
+    def get_last_medicine(self):
+        """
+        Get the most recent medicine administration.
+
+        Returns:
+            dict: Medicine record with name, amount, unit, time, and note
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return None
+
+        return self.db.get_last_medicine()
+
+    def get_last_growth(self, baby_id=None):
+        """
+        Get the most recent growth measurement.
+
+        Args:
+            baby_id: Optional baby ID to filter by
+
+        Returns:
+            dict: Growth record with weight, length, head, and units
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return None
+
+        return self.db.get_last_growth_direct(baby_id)
+
+    def get_growth_records(self, limit=50, baby_id=None):
+        """
+        Get growth measurement records.
+
+        Args:
+            limit: Maximum number of records to return
+            baby_id: Optional baby ID to filter by
+
+        Returns:
+            list: Growth records
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return []
+
+        return self.db.get_growth_records(limit, baby_id)
+
+    def log_growth(self, baby_id, weight, length, head, is_english_weight_scale,
+                   is_english_length_scale, note="", time=None):
+        """
+        Log a new growth measurement record.
+
+        Args:
+            baby_id: Baby ID
+            weight: Weight measurement
+            length: Length/height measurement
+            head: Head circumference measurement
+            is_english_weight_scale: True for lbs, False for kg
+            is_english_length_scale: True for inches, False for cm
+            note: Optional note
+            time: Optional time (defaults to now)
+
+        Returns:
+            bool: True if successful
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return False
+
+        return self.db.log_growth(
+            baby_id=baby_id,
+            weight=weight,
+            length=length,
+            head=head,
+            is_english_weight_scale=is_english_weight_scale,
+            is_english_length_scale=is_english_length_scale,
+            note=note,
+            time=time
+        )
+
+    # ===== MILESTONE TRACKING =====
+
+    def get_last_milestone(self, baby_id=None):
+        """
+        Get the most recent milestone.
+
+        Args:
+            baby_id: Optional baby ID to filter by
+
+        Returns:
+            dict: Milestone record with milestone name and note
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return None
+
+        return self.db.get_last_milestone_direct(baby_id)
+
+    def get_milestone_records(self, limit=50, baby_id=None):
+        """
+        Get milestone records.
+
+        Args:
+            limit: Maximum number of records to return
+            baby_id: Optional baby ID to filter by
+
+        Returns:
+            list: Milestone records
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return []
+
+        return self.db.get_milestone_records(limit, baby_id)
+
+    def get_milestone_selections(self):
+        """
+        Get list of available milestones.
+
+        Returns:
+            list: Milestone selection records
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return []
+
+        return self.db.get_milestone_selections()
+
+    def log_milestone(self, baby_id, milestone_selection_id, note="", time=None):
+        """
+        Log a new milestone achievement.
+
+        Args:
+            baby_id: Baby ID
+            milestone_selection_id: Milestone selection ID
+            note: Optional note
+            time: Optional time (defaults to now)
+
+        Returns:
+            bool: True if successful
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return False
+
+        return self.db.log_milestone(
+            baby_id=baby_id,
+            milestone_selection_id=milestone_selection_id,
+            note=note,
+            time=time
+        )
+
+    # ===== DOCTOR VISIT TRACKING =====
+
+    def get_last_doctor_visit(self, baby_id=None):
+        """
+        Get the most recent doctor visit.
+
+        Args:
+            baby_id: Optional baby ID to filter by
+
+        Returns:
+            dict: Doctor visit record with visit details
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return None
+
+        return self.db.get_last_doctor_visit_direct(baby_id)
+
+    def get_doctor_visit_records(self, limit=50, baby_id=None):
+        """
+        Get doctor visit records.
+
+        Args:
+            limit: Maximum number of records to return
+            baby_id: Optional baby ID to filter by
+
+        Returns:
+            list: Doctor visit records
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return []
+
+        return self.db.get_doctor_visit_records(limit, baby_id)
+
+    def log_doctor_visit(self, baby_id, is_appointment=True, visit_type=0,
+                        note="", doctor_note="", symptom="", time=None):
+        """
+        Log a new doctor visit.
+
+        Args:
+            baby_id: Baby ID
+            is_appointment: Whether this is a scheduled appointment
+            visit_type: Type of visit
+            note: Optional note
+            doctor_note: Doctor's notes
+            symptom: Symptoms
+            time: Optional time (defaults to now)
+
+        Returns:
+            bool: True if successful
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return False
+
+        return self.db.log_doctor_visit(
+            baby_id=baby_id,
+            is_appointment=is_appointment,
+            visit_type=visit_type,
+            note=note,
+            doctor_note=doctor_note,
+            symptom=symptom,
+            time=time
+        )
+
+    # ===== VACCINE TRACKING =====
+
+    def get_last_vaccine(self, baby_id=None):
+        """
+        Get the most recent vaccine.
+
+        Args:
+            baby_id: Optional baby ID to filter by
+
+        Returns:
+            dict: Vaccine record with vaccine name and note
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return None
+
+        return self.db.get_last_vaccine_direct(baby_id)
+
+    def get_vaccine_records(self, limit=50, baby_id=None):
+        """
+        Get vaccine records.
+
+        Args:
+            limit: Maximum number of records to return
+            baby_id: Optional baby ID to filter by
+
+        Returns:
+            list: Vaccine records
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return []
+
+        return self.db.get_vaccine_records(limit, baby_id)
+
+    def get_vaccine_selections(self):
+        """
+        Get list of available vaccines.
+
+        Returns:
+            list: Vaccine selection records
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return []
+
+        return self.db.get_vaccine_selections()
+
+    def log_vaccine(self, baby_id, vacc_id, note="", doc_visit_id="", time=None):
+        """
+        Log a new vaccine administration.
+
+        Args:
+            baby_id: Baby ID
+            vacc_id: Vaccine selection ID
+            note: Optional note
+            doc_visit_id: Optional doctor visit ID
+            time: Optional time (defaults to now)
+
+        Returns:
+            bool: True if successful
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return False
+
+        return self.db.log_vaccine(
+            baby_id=baby_id,
+            vacc_id=vacc_id,
+            note=note,
+            doc_visit_id=doc_visit_id,
+            time=time
+        )
 
     def get_medicine_selections(self):
         """

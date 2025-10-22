@@ -91,9 +91,15 @@ class BabyTrackerAPI:
                 self.account_id = account_data.get("AccountID")
                 _LOGGER.info(f"Logged in successfully with account ID: {self.account_id}")
                 self.is_authenticated = True
+
+                # Initialize transaction handler if we have a local database
+                if self.local_db and not self.transaction_handler:
+                    from .transaction import TransactionHandler
+                    self.transaction_handler = TransactionHandler(self.local_db)
+                    _LOGGER.info("Initialized transaction handler")
             except:
                 _LOGGER.warning("Could not extract account ID from login response")
-            
+
             return True
         else:
             raise Exception("No session ID found in response cookies")

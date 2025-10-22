@@ -1,6 +1,6 @@
 #transaction.py
 
-from .models import Baby, Diaper, Medication, MedicationSelection, Medicine, MedicineSelection, Nursing, Formula, OtherActivity, OtherActivityDesc, Pump, Pumped, Temperature, Sleep, OtherFeed
+from .models import Baby, Diaper, Medication, MedicationSelection, Medicine, MedicineSelection, Nursing, Formula, OtherActivity, OtherActivityDesc, Pump, Pumped, Temperature, Sleep, OtherFeed, Milestone, MilestoneSelection, DoctorVisit, Vaccine, VaccineSelection, Growth, Bath, BathType
 from .database import BabyTrackerLocalDatabase
 import logging
 import base64
@@ -38,10 +38,10 @@ class TransactionHandler:
             
             # Create the appropriate model object
             model_obj = self._create_model_from_data(decoded_data)
-       
+
             if not model_obj:
-                logger.warning(f"Unsupported object type: {object_type}")
-                return False
+                logger.debug(f"Skipping unsupported object type: {object_type}")
+                return True  # Return True to skip unsupported types (not a failure)
                 
             # Process based on operation code
             if op_code == 0:  # INSERT
@@ -65,9 +65,10 @@ class TransactionHandler:
         
         # Check if this object type requires a baby reference
         baby_required_types = [
-            "Diaper", "Nursing", "Pumped", "Formula", 
-            "Temperature", "Sleep", "OtherFeed", "Medication", 
-            "OtherActivity"
+            "Diaper", "Nursing", "Pumped", "Formula",
+            "Temperature", "Sleep", "OtherFeed", "Medication", "Medicine",
+            "OtherActivity", "Pump", "Milestone", "DoctorVisit", "Vaccine",
+            "Growth", "Bath"
         ]
         
         # Verify baby information is present for types that require it
@@ -90,8 +91,20 @@ class TransactionHandler:
             "Sleep": Sleep,
             "OtherFeed": OtherFeed,
             "Medication": Medication,
+            "Medicine": Medicine,  # Support both Medication and Medicine
             "MedicationSelection": MedicationSelection,
+            "MedicineSelection": MedicineSelection,  # Support both names
             "OtherActivity": OtherActivity,
+            "OtherActivityDesc": OtherActivityDesc,
+            "OtherActivityDescription": OtherActivityDesc,  # Support both names
+            "Milestone": Milestone,
+            "MilestoneSelection": MilestoneSelection,
+            "DoctorVisit": DoctorVisit,
+            "Vaccine": Vaccine,
+            "VaccineSelection": VaccineSelection,
+            "Growth": Growth,
+            "Bath": Bath,
+            "BathType": BathType,
         }
         
         # Create and return the appropriate model
@@ -121,16 +134,24 @@ class TransactionHandler:
             "Sleep": self.db.insert_sleep_transaction,
             "OtherFeed": self.db.insert_other_feed_transaction,
             "Pump": self.db.insert_pump_transaction,
-            "Medication": self.db.insert_medicine_transaction,                # Maps to Medicine table
-            "MedicationSelection": self.db.insert_medicine_selection_transaction,  #
-            "OtherActivity": self.db.insert_other_activity_transaction,  
+            "Medication": self.db.insert_medicine_transaction,
+            "Medicine": self.db.insert_medicine_transaction,  # Support both names
+            "MedicationSelection": self.db.insert_medicine_selection_transaction,
+            "MedicineSelection": self.db.insert_medicine_selection_transaction,  # Support both names
+            "OtherActivity": self.db.insert_other_activity_transaction,
+            "Milestone": self.db.insert_milestone_transaction,
+            "DoctorVisit": self.db.insert_doctor_visit_transaction,
+            "Vaccine": self.db.insert_vaccine_transaction,
+            "Growth": self.db.insert_growth_transaction,
+            "Bath": self.db.insert_bath_transaction,
         }
-        
+
         # Get the handler and call it
         handler = handlers.get(model_obj.object_type)
         if handler:
             return handler(model_obj.to_dict())
-        return False
+        logger.debug(f"No insert handler for object type: {model_obj.object_type}")
+        return True  # Skip unsupported types gracefully
     def _handle_update(self, model_obj):
         """Handle UPDATE operations"""
         # Map model types to database update methods
@@ -144,16 +165,25 @@ class TransactionHandler:
             "OtherFeed": self.db.update_other_feed_transaction,
             "Pump": self.db.update_pump_transaction,
             "Medication": self.db.update_medicine_transaction,
+            "Medicine": self.db.update_medicine_transaction,  # Support both names
             "MedicationSelection": self.db.update_medicine_selection_transaction,
+            "MedicineSelection": self.db.update_medicine_selection_transaction,  # Support both names
             "OtherActivity": self.db.update_other_activity_transaction,
-            "OtherActivityDescription": self.db.update_other_activity_desc_transaction
+            "OtherActivityDesc": self.db.update_other_activity_desc_transaction,
+            "OtherActivityDescription": self.db.update_other_activity_desc_transaction,
+            "Milestone": self.db.update_milestone_transaction,
+            "DoctorVisit": self.db.update_doctor_visit_transaction,
+            "Vaccine": self.db.update_vaccine_transaction,
+            "Growth": self.db.update_growth_transaction,
+            "Bath": self.db.update_bath_transaction,
         }
-        
+
         # Get the handler and call it
         handler = handlers.get(model_obj.object_type)
         if handler:
             return handler(model_obj.to_dict())
-        return False
+        logger.debug(f"No update handler for object type: {model_obj.object_type}")
+        return True  # Skip unsupported types gracefully
         
     def _handle_delete(self, model_obj):
         """Handle DELETE operations"""
@@ -167,17 +197,26 @@ class TransactionHandler:
             "Sleep": self.db.delete_sleep_transaction,
             "OtherFeed": self.db.delete_other_feed_transaction,
             "Pump": self.db.delete_pump_transaction,
-            "Medicine": self.db.delete_medicine_transaction,
-            "MedicineSelection": self.db.delete_medicine_selection_transaction,
-            "OtherActivity": self.db.delete_other_activity_transaction,    
-            "OtherActivityDescription": self.db.delete_other_activity_desc_transaction 
+            "Medication": self.db.delete_medicine_transaction,
+            "Medicine": self.db.delete_medicine_transaction,  # Support both names
+            "MedicationSelection": self.db.delete_medicine_selection_transaction,
+            "MedicineSelection": self.db.delete_medicine_selection_transaction,  # Support both names
+            "OtherActivity": self.db.delete_other_activity_transaction,
+            "OtherActivityDesc": self.db.delete_other_activity_desc_transaction,
+            "OtherActivityDescription": self.db.delete_other_activity_desc_transaction,
+            "Milestone": self.db.delete_milestone_transaction,
+            "DoctorVisit": self.db.delete_doctor_visit_transaction,
+            "Vaccine": self.db.delete_vaccine_transaction,
+            "Growth": self.db.delete_growth_transaction,
+            "Bath": self.db.delete_bath_transaction,
         }
-        
+
         # Get the handler and call it
         handler = handlers.get(model_obj.object_type)
         if handler:
             return handler(model_obj.to_dict())
-        return False
+        logger.debug(f"No delete handler for object type: {model_obj.object_type}")
+        return True  # Skip unsupported types gracefully
 class SyncCallback:
     """Callback for asynchronous API operations"""
     def sync_done(self, result):
