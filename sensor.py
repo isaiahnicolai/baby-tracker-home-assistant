@@ -116,6 +116,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
         # Create all sensor types for this baby
         baby_sensors = [
+            BabyTrackerInfoSensor(coordinator, baby_name),  # New sensor for baby info
             BabyTrackerLastFeedingSensor(coordinator, baby_name),
             BabyTrackerLastDiaperSensor(coordinator, baby_name),
             BabyTrackerLastSleepSensor(coordinator, baby_name),
@@ -197,6 +198,100 @@ class BabyTrackerSensor(CoordinatorEntity, SensorEntity):
         """Handle updated data from the coordinator."""
         # Implement in child classes
         self.async_write_ha_state()
+
+
+class BabyTrackerInfoSensor(CoordinatorEntity, SensorEntity):
+    """Sensor that displays baby information including age."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._baby_name = baby_name
+        safe_baby_name = baby_name.lower().replace(" ", "_")
+        self._attr_name = f"{baby_name} Info"
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_{safe_baby_name}_baby_info"
+        self._attr_icon = "mdi:baby-face"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{coordinator.email}_{safe_baby_name}")},
+            "name": f"Baby Tracker ({baby_name})",
+            "manufacturer": "Baby Tracker",
+            "model": "API Integration",
+            "sw_version": "0.1.0",
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.last_update_success and self.coordinator.data is not None
+
+    @property
+    def state(self):
+        """Return the baby's age in days."""
+        babies = self.coordinator.data.get("babies", [])
+        if not babies:
+            baby_info = self.coordinator.data.get("baby_info")
+            if baby_info:
+                babies = [baby_info]
+
+        for baby in babies:
+            if baby and hasattr(baby, 'name') and baby.name == self._baby_name:
+                if hasattr(baby, 'dob') and baby.dob:
+                    try:
+                        # Parse DOB and calculate age in days
+                        dob = datetime.strptime(baby.dob, "%Y-%m-%d %H:%M:%S %z")
+                        age_delta = datetime.now(timezone.utc) - dob
+                        age_days = age_delta.days
+
+                        # Return age in appropriate format
+                        if age_days < 30:
+                            return f"{age_days} days"
+                        elif age_days < 365:
+                            months = age_days // 30
+                            return f"{months} months"
+                        else:
+                            years = age_days // 365
+                            remaining_months = (age_days % 365) // 30
+                            if remaining_months > 0:
+                                return f"{years}y {remaining_months}m"
+                            return f"{years} years"
+                    except:
+                        return "Unknown"
+
+        return "Unknown"
+
+    @property
+    def extra_state_attributes(self):
+        """Return the baby's attributes."""
+        babies = self.coordinator.data.get("babies", [])
+        if not babies:
+            baby_info = self.coordinator.data.get("baby_info")
+            if baby_info:
+                babies = [baby_info]
+
+        for baby in babies:
+            if baby and hasattr(baby, 'name') and baby.name == self._baby_name:
+                attrs = {
+                    "name": baby.name if hasattr(baby, 'name') else None,
+                    "date_of_birth": baby.dob if hasattr(baby, 'dob') else None,
+                    "due_date": baby.due_day if hasattr(baby, 'due_day') else None,
+                    "gender": "Male" if (hasattr(baby, 'gender') and baby.gender) else "Female",
+                    "baby_id": baby.object_id if hasattr(baby, 'object_id') else None,
+                }
+
+                # Calculate exact age if DOB is available
+                if hasattr(baby, 'dob') and baby.dob:
+                    try:
+                        dob = datetime.strptime(baby.dob, "%Y-%m-%d %H:%M:%S %z")
+                        age_delta = datetime.now(timezone.utc) - dob
+                        attrs["age_days"] = age_delta.days
+                        attrs["age_weeks"] = age_delta.days // 7
+                        attrs["age_months"] = age_delta.days // 30
+                    except:
+                        pass
+
+                return attrs
+
+        return {}
 
 
 class BabyTrackerTimeSinceLastFeedingSensor(BabyTrackerSensor):

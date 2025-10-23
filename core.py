@@ -70,15 +70,35 @@ class BabyTracker:
                 # Just log in
                 _LOGGER.info(f"Already in a group, logging in with {email}")
                 login_result = self.api.login(email, password, device_uuid)
-                
+
                 if not login_result:
                     return {
                         "status": "error",
                         "message": "Login failed"
                     }
-            
+
+                # After login, populate baby_info from database for the API
+                baby_info_from_db = self.get_baby_info()
+                if baby_info_from_db:
+                    # Convert Baby model to dict for API
+                    self.api.baby_info = {
+                        "objectID": baby_info_from_db.object_id,
+                        "name": baby_info_from_db.name,
+                        "dob": baby_info_from_db.dob,
+                        "dueDay": baby_info_from_db.due_day,
+                        "gender": baby_info_from_db.gender,
+                        "pictureName": baby_info_from_db.picture_name,
+                        "timestamp": baby_info_from_db.timestamp,
+                        "BCObjectType": "Baby"
+                    }
+                    _LOGGER.info(f"Loaded baby info from database for API: {baby_info_from_db.name}")
+                else:
+                    # If no baby in database, try to get from devices
+                    _LOGGER.warning("No baby found in database, attempting to get from devices")
+                    self.api.get_baby_info_from_devices()
+
             self.is_authenticated = True
-            
+
             # Get baby info
             baby_info = self.get_baby_info()
             
