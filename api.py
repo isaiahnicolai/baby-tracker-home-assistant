@@ -922,10 +922,13 @@ class BabyTrackerAPI:
         Returns:
             dict: API response
         """
+        _LOGGER.warning(f"=== api.post_bath called: bath_type={bath_type}, note={note}")
         if not self.is_authenticated:
+            _LOGGER.error("=== post_bath: Not authenticated")
             raise Exception("Not authenticated")
 
         if not self.baby_info:
+            _LOGGER.error("=== post_bath: Baby information not available")
             raise Exception("Baby information not available")
 
         # Use current time if not provided
@@ -971,11 +974,13 @@ class BabyTrackerAPI:
         if bath_desc:
             bath_data["desc"] = bath_desc
 
+        _LOGGER.warning(f"=== Posting bath transaction: {bath_data}")
         try:
             response = self.post_transaction(bath_data)
+            _LOGGER.warning(f"=== Bath transaction posted successfully")
             return {"status": "success"}
         except Exception as e:
-            _LOGGER.error(f"Failed to post bath: {e}")
+            _LOGGER.error(f"=== Failed to post bath: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
 
     def post_sleep(self, time_str=None, duration=0, note=""):

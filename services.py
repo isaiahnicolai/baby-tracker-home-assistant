@@ -271,6 +271,7 @@ async def async_register_services(hass: HomeAssistant):
     @callback
     async def log_bath(call: ServiceCall):
         """Log a bath record."""
+        _LOGGER.warning(f"=== log_bath service called with data: {call.data}")
         data = call.data
         coordinator = _get_coordinator(hass)
 
@@ -368,6 +369,7 @@ async def async_register_services(hass: HomeAssistant):
     @callback
     async def log_sleep(call: ServiceCall):
         """Log a sleep start or end event."""
+        _LOGGER.warning(f"=== log_sleep service called with data: {call.data}")
         data = call.data
         coordinator = _get_coordinator(hass)
 

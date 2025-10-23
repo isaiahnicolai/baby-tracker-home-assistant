@@ -496,7 +496,9 @@ class BabyTracker:
         Returns:
             dict: Result of the operation
         """
+        _LOGGER.warning(f"=== core.log_bath called: bath_type={bath_type}, note={note}")
         if not self.is_authenticated:
+            _LOGGER.error("=== log_bath: Not authenticated")
             return {"status": "error", "message": "Not authenticated"}
 
         # Use current time if not provided

@@ -173,19 +173,23 @@ class BabyTrackerBathButton(CoordinatorEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press."""
-        _LOGGER.info(f"Logging bath for {self._baby_name}")
+        _LOGGER.warning(f"=== BATH BUTTON PRESSED for {self._baby_name}")
 
         # Call the log_bath service
-        await self.hass.services.async_call(
-            DOMAIN,
-            "log_bath",
-            {
-                "baby_name": self._baby_name,
-                "bath_type": None,  # No specific type - just a general bath
-                "note": "Added from Home Assistant"
-            },
-            blocking=True
-        )
+        try:
+            await self.hass.services.async_call(
+                DOMAIN,
+                "log_bath",
+                {
+                    "baby_name": self._baby_name,
+                    "bath_type": None,  # No specific type - just a general bath
+                    "note": "Added from Home Assistant"
+                },
+                blocking=True
+            )
+            _LOGGER.warning(f"=== BATH BUTTON service call completed")
+        except Exception as e:
+            _LOGGER.error(f"=== BATH BUTTON error: {str(e)}", exc_info=True)
 
         # Refresh coordinator data
         await self.coordinator.async_request_refresh()
@@ -217,19 +221,23 @@ class BabyTrackerSleepButton(CoordinatorEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press."""
-        _LOGGER.info(f"{self._label} for {self._baby_name}")
+        _LOGGER.warning(f"=== SLEEP BUTTON PRESSED: {self._label} for {self._baby_name}, is_start={self._is_start}")
 
         # Call the log_sleep service
-        await self.hass.services.async_call(
-            DOMAIN,
-            "log_sleep",
-            {
-                "baby_name": self._baby_name,
-                "is_start": self._is_start,
-                "note": "Added from Home Assistant"
-            },
-            blocking=True
-        )
+        try:
+            await self.hass.services.async_call(
+                DOMAIN,
+                "log_sleep",
+                {
+                    "baby_name": self._baby_name,
+                    "is_start": self._is_start,
+                    "note": "Added from Home Assistant"
+                },
+                blocking=True
+            )
+            _LOGGER.warning(f"=== SLEEP BUTTON service call completed")
+        except Exception as e:
+            _LOGGER.error(f"=== SLEEP BUTTON error: {str(e)}", exc_info=True)
 
         # Refresh coordinator data
         await self.coordinator.async_request_refresh()
