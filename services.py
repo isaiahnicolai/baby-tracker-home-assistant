@@ -114,6 +114,11 @@ SYNC_SCHEMA = vol.Schema({})
 async def async_register_services(hass: HomeAssistant):
     """Register services for Baby Tracker."""
 
+    # Check if services are already registered
+    if hass.services.has_service(DOMAIN, "add_formula"):
+        _LOGGER.debug("Services already registered, skipping registration")
+        return
+
     async def _get_baby_id(coordinator, data):
         """Helper to get baby_id from baby_name or use default."""
         baby_name = data.get("baby_name")

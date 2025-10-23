@@ -73,6 +73,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
+    # Register services (will only register once even if multiple entries exist)
+    await async_register_services(hass)
+
     # Set up all platforms for this device/entry
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
