@@ -97,6 +97,16 @@ class BabyTrackerAPI:
                     from .transaction import TransactionHandler
                     self.transaction_handler = TransactionHandler(self.local_db)
                     _LOGGER.info("Initialized transaction handler")
+
+                # Get devices and use an existing device UUID if our generated one doesn't exist
+                self.get_devices()
+                if self.devices:
+                    # Check if our device_uuid is in the list
+                    device_found = any(d["DeviceUUID"] == self.device_uuid for d in self.devices)
+                    if not device_found:
+                        # Use the first registered device's UUID instead
+                        self.device_uuid = self.devices[0]["DeviceUUID"]
+                        _LOGGER.info(f"Using existing device UUID: {self.device_uuid}")
             except:
                 _LOGGER.warning("Could not extract account ID from login response")
 
