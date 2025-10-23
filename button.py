@@ -49,6 +49,13 @@ async def async_setup_entry(
             BabyTrackerDiaperButton(coordinator, baby_name, "Wet", pee=True, poo=False),
             BabyTrackerDiaperButton(coordinator, baby_name, "Dirty", pee=False, poo=True),
             BabyTrackerDiaperButton(coordinator, baby_name, "Mixed", pee=True, poo=True),
+            # Bath buttons
+            BabyTrackerBathButton(coordinator, baby_name, "Bubble Bath"),
+            BabyTrackerBathButton(coordinator, baby_name, "Sponge Bath"),
+            BabyTrackerBathButton(coordinator, baby_name, "Shower"),
+            # Sleep buttons
+            BabyTrackerSleepButton(coordinator, baby_name, "Start Sleep", is_start=True),
+            BabyTrackerSleepButton(coordinator, baby_name, "End Sleep", is_start=False),
         ])
 
     async_add_entities(buttons, True)
@@ -89,7 +96,7 @@ class BabyTrackerBottleButton(CoordinatorEntity, ButtonEntity):
                 "baby_name": self._baby_name,
                 "amount": self._amount_oz,
                 "is_english_measure": True,
-                "note": f"Quick add {self._size_label}"
+                "note": "Added from Home Assistant"
             },
             blocking=True
         )
@@ -135,7 +142,94 @@ class BabyTrackerDiaperButton(CoordinatorEntity, ButtonEntity):
                 "baby_name": self._baby_name,
                 "pee": self._pee,
                 "poo": self._poo,
-                "note": f"Quick add {self._diaper_type.lower()}"
+                "note": "Added from Home Assistant"
+            },
+            blocking=True
+        )
+
+        # Refresh coordinator data
+        await self.coordinator.async_request_refresh()
+
+
+class BabyTrackerBathButton(CoordinatorEntity, ButtonEntity):
+    """Button to quickly log a bath."""
+
+    def __init__(self, coordinator, baby_name, bath_type):
+        """Initialize the button."""
+        super().__init__(coordinator)
+        self._baby_name = baby_name
+        self._bath_type = bath_type
+
+        safe_baby_name = baby_name.lower().replace(" ", "_")
+        safe_bath_type = bath_type.lower().replace(" ", "_")
+        self._attr_name = f"{baby_name} Log {bath_type}"
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_{safe_baby_name}_log_{safe_bath_type}"
+        self._attr_icon = "mdi:shower"
+
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{coordinator.email}_{safe_baby_name}")},
+            "name": f"Baby Tracker ({baby_name})",
+            "manufacturer": "Baby Tracker",
+            "model": "API Integration",
+            "sw_version": "0.1.0",
+        }
+
+    async def async_press(self) -> None:
+        """Handle button press."""
+        _LOGGER.info(f"Logging {self._bath_type} for {self._baby_name}")
+
+        # Call the log_bath service
+        await self.hass.services.async_call(
+            DOMAIN,
+            "log_bath",
+            {
+                "baby_name": self._baby_name,
+                "bath_type": self._bath_type,
+                "note": "Added from Home Assistant"
+            },
+            blocking=True
+        )
+
+        # Refresh coordinator data
+        await self.coordinator.async_request_refresh()
+
+
+class BabyTrackerSleepButton(CoordinatorEntity, ButtonEntity):
+    """Button to start or end sleep tracking."""
+
+    def __init__(self, coordinator, baby_name, label, is_start):
+        """Initialize the button."""
+        super().__init__(coordinator)
+        self._baby_name = baby_name
+        self._label = label
+        self._is_start = is_start
+
+        safe_baby_name = baby_name.lower().replace(" ", "_")
+        action = "start" if is_start else "end"
+        self._attr_name = f"{baby_name} {label}"
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_{safe_baby_name}_{action}_sleep"
+        self._attr_icon = "mdi:sleep" if is_start else "mdi:sleep-off"
+
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{coordinator.email}_{safe_baby_name}")},
+            "name": f"Baby Tracker ({baby_name})",
+            "manufacturer": "Baby Tracker",
+            "model": "API Integration",
+            "sw_version": "0.1.0",
+        }
+
+    async def async_press(self) -> None:
+        """Handle button press."""
+        _LOGGER.info(f"{self._label} for {self._baby_name}")
+
+        # Call the log_sleep service
+        await self.hass.services.async_call(
+            DOMAIN,
+            "log_sleep",
+            {
+                "baby_name": self._baby_name,
+                "is_start": self._is_start,
+                "note": "Added from Home Assistant"
             },
             blocking=True
         )

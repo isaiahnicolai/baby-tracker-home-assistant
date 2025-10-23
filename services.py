@@ -75,6 +75,12 @@ MEDICINE_SCHEMA = vol.Schema({
     vol.Optional("note", default=""): cv.string,
 })
 
+SLEEP_SCHEMA = vol.Schema({
+    vol.Optional("baby_name"): cv.string,
+    vol.Required("is_start"): cv.boolean,
+    vol.Optional("note", default=""): cv.string,
+})
+
 GROWTH_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
     vol.Optional("weight", default=0): vol.All(vol.Coerce(float), vol.Range(min=0)),
@@ -356,6 +362,36 @@ async def async_register_services(hass: HomeAssistant):
         return True
 
     @callback
+    async def log_sleep(call: ServiceCall):
+        """Log a sleep start or end event."""
+        data = call.data
+        coordinator = _get_coordinator(hass)
+
+        # Get baby_id using helper
+        baby_id = await _get_baby_id(coordinator, data)
+        if not baby_id:
+            return False
+
+        is_start = data.get("is_start", True)
+        note = data.get("note", "")
+
+        result = await hass.async_add_executor_job(
+            coordinator.baby_tracker.log_sleep_event,
+            baby_id,
+            is_start,
+            note
+        )
+
+        if result.get("status") != "success":
+            _LOGGER.error(f"Failed to log sleep: {result.get('message')}")
+            return False
+
+        action = "started" if is_start else "ended"
+        _LOGGER.info(f"Successfully logged sleep {action}")
+        await coordinator.async_refresh()
+        return True
+
+    @callback
     async def log_growth(call: ServiceCall):
         """Log a growth measurement record."""
         data = call.data
@@ -587,6 +623,9 @@ async def async_register_services(hass: HomeAssistant):
     )
     hass.services.async_register(
         DOMAIN, "log_medicine", log_medicine, schema=MEDICINE_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "log_sleep", log_sleep, schema=SLEEP_SCHEMA
     )
     hass.services.async_register(
         DOMAIN, "log_growth", log_growth, schema=GROWTH_SCHEMA

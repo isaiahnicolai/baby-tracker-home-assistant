@@ -1242,7 +1242,75 @@ class BabyTracker:
         except Exception as e:
             _LOGGER.error(f"Failed to add medicine record: {str(e)}")
             return {"status": "error", "message": f"Failed to add medicine record: {str(e)}"}
-            
+
+    def log_sleep_event(self, baby_id, is_start=True, note=""):
+        """
+        Log a sleep start or end event.
+
+        Args:
+            baby_id: Baby's ID
+            is_start: True for sleep start, False for sleep end/wake up
+            note: Optional note text
+
+        Returns:
+            dict: Result of the operation
+        """
+        if not self.is_authenticated:
+            return {"status": "error", "message": "Not authenticated"}
+
+        if not self.db:
+            return {"status": "error", "message": "Database not initialized"}
+
+        try:
+            import uuid
+            from datetime import datetime, timezone
+
+            # Get current timestamp
+            current_time = datetime.now(timezone.utc)
+            time_unix = int(current_time.timestamp())
+            time_str = current_time.strftime("%Y-%m-%d %H:%M:%S +0000")
+
+            if is_start:
+                # Starting sleep: duration = 0
+                sleep_id = str(uuid.uuid4())
+                self.db.conn.execute('''
+                    INSERT INTO Sleep (ID, Timestamp, Time, Note, HasPicture, BabyID, Duration, LocationID, DescID)
+                    VALUES (?, ?, ?, ?, 0, ?, 0, NULL, NULL)
+                ''', (sleep_id, time_unix, time_unix, note, baby_id))
+                self.db.conn.commit()
+                _LOGGER.info(f"Sleep started for baby {baby_id}")
+            else:
+                # Ending sleep: update the most recent sleep record with duration
+                cursor = self.db.conn.execute('''
+                    SELECT ID, Time FROM Sleep
+                    WHERE BabyID = ? AND Duration = 0
+                    ORDER BY Time DESC
+                    LIMIT 1
+                ''', (baby_id,))
+
+                row = cursor.fetchone()
+                if row:
+                    sleep_id, start_time = row
+                    duration_seconds = time_unix - start_time
+
+                    self.db.conn.execute('''
+                        UPDATE Sleep
+                        SET Duration = ?, Timestamp = ?
+                        WHERE ID = ?
+                    ''', (duration_seconds, time_unix, sleep_id))
+                    self.db.conn.commit()
+                    _LOGGER.info(f"Sleep ended for baby {baby_id}, duration: {duration_seconds}s")
+                else:
+                    _LOGGER.warning(f"No active sleep session found for baby {baby_id}")
+                    return {"status": "error", "message": "No active sleep session found"}
+
+            # Trigger a sync
+            self.sync()
+            return {"status": "success", "message": "Sleep event logged"}
+        except Exception as e:
+            _LOGGER.error(f"Failed to log sleep event: {str(e)}")
+            return {"status": "error", "message": f"Failed to log sleep event: {str(e)}"}
+
     def add_activity(self, time_str=None, activity_name="Tummy Time", duration=0, location_id=None, note=""):
         """
         Add an other activity record through the API.

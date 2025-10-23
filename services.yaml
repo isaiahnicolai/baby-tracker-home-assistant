@@ -593,3 +593,26 @@ add_xlarge_bottle:
       required: false
       selector:
         text:
+
+log_sleep:
+  name: Log Sleep
+  description: Log a sleep start or end event to Baby Tracker
+  fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
+    is_start:
+      name: Is Start
+      description: Whether this is starting sleep (true) or ending/waking up (false)
+      required: true
+      selector:
+        boolean:
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
