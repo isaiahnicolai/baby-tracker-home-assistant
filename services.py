@@ -274,20 +274,24 @@ async def async_register_services(hass: HomeAssistant):
         data = call.data
         coordinator = _get_coordinator(hass)
 
-        result = await hass.async_add_executor_job(
-            coordinator.baby_tracker.log_bath,
-            data.get("bath_type"),
-            data.get("note", ""),
-            None  # time (defaults to now)
-        )
+        try:
+            result = await hass.async_add_executor_job(
+                coordinator.baby_tracker.log_bath,
+                data.get("bath_type"),
+                data.get("note", ""),
+                None  # time (defaults to now)
+            )
 
-        if not result:
-            _LOGGER.error("Failed to log bath")
+            if result.get("status") != "success":
+                _LOGGER.error(f"Failed to log bath: {result.get('message')}")
+                return False
+
+            _LOGGER.info(f"Successfully logged bath: type={data.get('bath_type')}, note={data.get('note')}")
+            await coordinator.async_refresh()
+            return True
+        except Exception as e:
+            _LOGGER.error(f"Exception in log_bath service: {str(e)}", exc_info=True)
             return False
-
-        _LOGGER.info(f"Successfully logged bath: type={data.get('bath_type')}, note={data.get('note')}")
-        await coordinator.async_refresh()
-        return True
 
     @callback
     async def log_pump(call: ServiceCall):
@@ -367,29 +371,34 @@ async def async_register_services(hass: HomeAssistant):
         data = call.data
         coordinator = _get_coordinator(hass)
 
-        # Get baby_id using helper
-        baby_id = await _get_baby_id(coordinator, data)
-        if not baby_id:
+        try:
+            # Get baby_id using helper
+            baby_id = await _get_baby_id(coordinator, data)
+            if not baby_id:
+                _LOGGER.error("Could not determine baby_id for sleep event")
+                return False
+
+            is_start = data.get("is_start", True)
+            note = data.get("note", "")
+
+            result = await hass.async_add_executor_job(
+                coordinator.baby_tracker.log_sleep_event,
+                baby_id,
+                is_start,
+                note
+            )
+
+            if result.get("status") != "success":
+                _LOGGER.error(f"Failed to log sleep: {result.get('message')}")
+                return False
+
+            action = "started" if is_start else "ended"
+            _LOGGER.info(f"Successfully logged sleep {action}")
+            await coordinator.async_refresh()
+            return True
+        except Exception as e:
+            _LOGGER.error(f"Exception in log_sleep service: {str(e)}", exc_info=True)
             return False
-
-        is_start = data.get("is_start", True)
-        note = data.get("note", "")
-
-        result = await hass.async_add_executor_job(
-            coordinator.baby_tracker.log_sleep_event,
-            baby_id,
-            is_start,
-            note
-        )
-
-        if result.get("status") != "success":
-            _LOGGER.error(f"Failed to log sleep: {result.get('message')}")
-            return False
-
-        action = "started" if is_start else "ended"
-        _LOGGER.info(f"Successfully logged sleep {action}")
-        await coordinator.async_refresh()
-        return True
 
     @callback
     async def log_growth(call: ServiceCall):

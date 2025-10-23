@@ -910,14 +910,13 @@ class BabyTrackerAPI:
             _LOGGER.error(f"Failed to post activity: {e}")
             return {"status": "error", "message": str(e)}
 
-    def post_bath(self, time_str=None, bath_type=None, duration=0, note=""):
+    def post_bath(self, time_str=None, bath_type=None, note=""):
         """
         Post a bath record
 
         Args:
             time_str: Time of bath in format 'YYYY-MM-DD HH:MM:SS +0000'
             bath_type: Type of bath (optional) - "Bubble Bath", "Sponge Bath", "Shower", "Washed Hair"
-            duration: Duration in minutes
             note: Optional note text
 
         Returns:
@@ -932,9 +931,6 @@ class BabyTrackerAPI:
         # Use current time if not provided
         if not time_str:
             time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
-
-        # Convert duration from minutes to seconds
-        duration_seconds = duration * 60
 
         # Create bath description if bath_type provided
         bath_desc = None
@@ -957,12 +953,11 @@ class BabyTrackerAPI:
                 "BCObjectType": "BathDesc"
             }
 
-        # Create the bath transaction
+        # Create the bath transaction (Bath objects don't have duration field)
         bath_data = {
             "BCObjectType": "Bath",
             "note": note,
             "time": time_str,
-            "duration": duration_seconds,
             "timezone": -21600,  # This should be dynamic based on user's timezone
             "pictureNote": [],
             "pictureLoaded": "true",

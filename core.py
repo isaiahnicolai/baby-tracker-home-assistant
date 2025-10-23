@@ -517,7 +517,6 @@ class BabyTracker:
             response = self.api.post_bath(
                 time_str=time_str,
                 bath_type=bath_type,
-                duration=10,  # Default 10 minutes
                 note=note
             )
             # Trigger a sync to update local database right after posting
