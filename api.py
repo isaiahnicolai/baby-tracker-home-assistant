@@ -908,11 +908,94 @@ class BabyTrackerAPI:
             return {"status": "success"}
         except Exception as e:
             _LOGGER.error(f"Failed to post activity: {e}")
-            return {"status": "error", "message": str(e)} 
-        except Exception as e:
-            _LOGGER.error(f"Failed to post diaper: {e}")
             return {"status": "error", "message": str(e)}
-    
+
+    def post_bath(self, time_str=None, note=""):
+        """
+        Post a bath record
+
+        Args:
+            time_str: Time of bath in format 'YYYY-MM-DD HH:MM:SS +0000'
+            note: Optional note text
+
+        Returns:
+            dict: API response
+        """
+        if not self.is_authenticated:
+            raise Exception("Not authenticated")
+
+        if not self.baby_info:
+            raise Exception("Baby information not available")
+
+        # Use current time if not provided
+        if not time_str:
+            time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
+
+        # Create the bath transaction
+        bath_data = {
+            "BCObjectType": "Bath",
+            "note": note,
+            "time": time_str,
+            "timezone": -21600,  # This should be dynamic based on user's timezone
+            "pictureNote": [],
+            "pictureLoaded": "true",
+            "newFlage": "true",
+            "objectID": str(uuid.uuid4()),
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000"),
+            "baby": self.baby_info
+        }
+
+        try:
+            response = self.post_transaction(bath_data)
+            return {"status": "success"}
+        except Exception as e:
+            _LOGGER.error(f"Failed to post bath: {e}")
+            return {"status": "error", "message": str(e)}
+
+    def post_sleep(self, time_str=None, duration=0, note=""):
+        """
+        Post a sleep record
+
+        Args:
+            time_str: Time of sleep start in format 'YYYY-MM-DD HH:MM:SS +0000'
+            duration: Duration in seconds (0 for sleep start, >0 for completed sleep)
+            note: Optional note text
+
+        Returns:
+            dict: API response
+        """
+        if not self.is_authenticated:
+            raise Exception("Not authenticated")
+
+        if not self.baby_info:
+            raise Exception("Baby information not available")
+
+        # Use current time if not provided
+        if not time_str:
+            time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
+
+        # Create the sleep transaction
+        sleep_data = {
+            "BCObjectType": "Sleep",
+            "note": note,
+            "time": time_str,
+            "duration": duration,
+            "timezone": -21600,  # This should be dynamic based on user's timezone
+            "pictureNote": [],
+            "pictureLoaded": "true",
+            "newFlage": "true",
+            "objectID": str(uuid.uuid4()),
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000"),
+            "baby": self.baby_info
+        }
+
+        try:
+            response = self.post_transaction(sleep_data)
+            return {"status": "success"}
+        except Exception as e:
+            _LOGGER.error(f"Failed to post sleep: {e}")
+            return {"status": "error", "message": str(e)}
+
     def post_nursing(self, time_str=None, left_duration=0, right_duration=0, both_duration=0, finish_side=1, note=""):
         """
         Post a nursing session record

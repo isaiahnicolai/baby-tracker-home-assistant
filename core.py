@@ -494,16 +494,36 @@ class BabyTracker:
             time: Optional time (defaults to now)
 
         Returns:
-            bool: True if successful
+            dict: Result of the operation
         """
-        if not self.db:
-            if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
-                self.api.local_db = self.db
-            else:
-                return False
+        if not self.is_authenticated:
+            return {"status": "error", "message": "Not authenticated"}
 
-        return self.db.log_bath(bath_type=bath_type, note=note, time=time)
+        # Use current time if not provided
+        if not time:
+            time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
+        else:
+            time_str = time.strftime("%Y-%m-%d %H:%M:%S +0000") if isinstance(time, datetime) else time
+
+        # Include bath type in the note if provided
+        if bath_type and note:
+            full_note = f"{bath_type}: {note}"
+        elif bath_type:
+            full_note = bath_type
+        else:
+            full_note = note
+
+        try:
+            response = self.api.post_bath(
+                time_str=time_str,
+                note=full_note
+            )
+            # Trigger a sync to update local database right after posting
+            self.sync()
+            return {"status": "success", "message": "Bath record added"}
+        except Exception as e:
+            _LOGGER.error(f"Failed to add bath record: {str(e)}")
+            return {"status": "error", "message": f"Failed to add bath record: {str(e)}"}
 
     def get_bath_types(self):
         """
@@ -1258,11 +1278,7 @@ class BabyTracker:
         if not self.is_authenticated:
             return {"status": "error", "message": "Not authenticated"}
 
-        if not self.db:
-            return {"status": "error", "message": "Database not initialized"}
-
         try:
-            import uuid
             from datetime import datetime, timezone
 
             # Get current timestamp
@@ -1271,16 +1287,22 @@ class BabyTracker:
             time_str = current_time.strftime("%Y-%m-%d %H:%M:%S +0000")
 
             if is_start:
-                # Starting sleep: duration = 0
-                sleep_id = str(uuid.uuid4())
-                self.db.conn.execute('''
-                    INSERT INTO Sleep (ID, Timestamp, Time, Note, HasPicture, BabyID, Duration, LocationID, DescID)
-                    VALUES (?, ?, ?, ?, 0, ?, 0, NULL, NULL)
-                ''', (sleep_id, time_unix, time_unix, note, baby_id))
-                self.db.conn.commit()
+                # Starting sleep: post with duration = 0
+                response = self.api.post_sleep(
+                    time_str=time_str,
+                    duration=0,
+                    note=note
+                )
                 _LOGGER.info(f"Sleep started for baby {baby_id}")
             else:
-                # Ending sleep: update the most recent sleep record with duration
+                # Ending sleep: get start time from local DB, calculate duration, post complete record
+                if not self.db:
+                    if os.path.exists(self.db_path):
+                        self.db = BabyTrackerLocalDatabase(self.db_path)
+                        self.api.local_db = self.db
+                    else:
+                        return {"status": "error", "message": "Database not initialized"}
+
                 cursor = self.db.conn.execute('''
                     SELECT ID, Time FROM Sleep
                     WHERE BabyID = ? AND Duration = 0
@@ -1293,18 +1315,19 @@ class BabyTracker:
                     sleep_id, start_time = row
                     duration_seconds = time_unix - start_time
 
-                    self.db.conn.execute('''
-                        UPDATE Sleep
-                        SET Duration = ?, Timestamp = ?
-                        WHERE ID = ?
-                    ''', (duration_seconds, time_unix, sleep_id))
-                    self.db.conn.commit()
+                    # Post the completed sleep with the start time and duration
+                    start_time_str = datetime.fromtimestamp(start_time, timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
+                    response = self.api.post_sleep(
+                        time_str=start_time_str,
+                        duration=duration_seconds,
+                        note=note
+                    )
                     _LOGGER.info(f"Sleep ended for baby {baby_id}, duration: {duration_seconds}s")
                 else:
                     _LOGGER.warning(f"No active sleep session found for baby {baby_id}")
                     return {"status": "error", "message": "No active sleep session found"}
 
-            # Trigger a sync
+            # Trigger a sync to update local database
             self.sync()
             return {"status": "success", "message": "Sleep event logged"}
         except Exception as e:
