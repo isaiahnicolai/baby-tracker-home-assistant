@@ -88,6 +88,79 @@ class BabyTrackerLocalDatabase:
         finally:
             conn.close()
 
+    def get_all_babies(self) -> List[Baby]:
+        """
+        Retrieve all babies from the database.
+
+        :return: List of Baby objects
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT ID, Name, DOB, DueDay, Gender, Picture FROM Baby ORDER BY Name")
+
+            babies = []
+            for baby_row in cursor.fetchall():
+                dob = self._format_timestamp(baby_row[2]) if baby_row[2] else None
+                due_day = self._format_timestamp(baby_row[3]) if baby_row[3] else None
+
+                baby_data = {
+                    "objectID": baby_row[0],
+                    "name": baby_row[1],
+                    "dob": dob,
+                    "dueDay": due_day,
+                    "gender": bool(baby_row[4]) if baby_row[4] is not None else False,
+                    "pictureName": baby_row[5] if baby_row[5] else "",
+                    "timestamp": "1970-01-01 00:00:00 +0000",
+                    "BCObjectType": "Baby"
+                }
+
+                babies.append(Baby(baby_data))
+
+            return babies
+        finally:
+            conn.close()
+
+    def get_baby_by_name(self, name: str) -> Optional[Baby]:
+        """
+        Retrieve baby by name from the database.
+
+        :param name: Baby's name
+        :return: Baby object or None if not found
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT ID, Name, DOB, DueDay, Gender, Picture FROM Baby WHERE Name = ? COLLATE NOCASE", (name,))
+
+            baby_row = cursor.fetchone()
+            if baby_row:
+                dob = self._format_timestamp(baby_row[2]) if baby_row[2] else None
+                due_day = self._format_timestamp(baby_row[3]) if baby_row[3] else None
+
+                baby_data = {
+                    "objectID": baby_row[0],
+                    "name": baby_row[1],
+                    "dob": dob,
+                    "dueDay": due_day,
+                    "gender": bool(baby_row[4]) if baby_row[4] is not None else False,
+                    "pictureName": baby_row[5] if baby_row[5] else "",
+                    "timestamp": "1970-01-01 00:00:00 +0000",
+                    "BCObjectType": "Baby"
+                }
+
+                return Baby(baby_data)
+
+            return None
+        finally:
+            conn.close()
+
     def get_feedings(self, limit=50) -> List[Dict]:
         """
         Retrieve all feeding records (nursing, formula, pumped milk, supplements)
@@ -279,32 +352,34 @@ class BabyTrackerLocalDatabase:
         feedings = self.get_feedings(limit=1)
         return feedings[0] if feedings else None
 
-    def get_feeding_summary(self, days=7) -> Dict:
+    def get_feeding_summary(self, days=7, baby_id: Optional[str] = None) -> Dict:
         """
         Generate feeding summary statistics for the specified number of days
-        
+
         :param days: Number of days to include in summary
+        :param baby_id: Optional baby ID to filter by (defaults to first baby)
         :return: Dictionary with feeding statistics
         """
         if not os.path.exists(self.db_path):
             raise ValueError("No database loaded")
-        
+
         # Calculate date range
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
-        
+
         # Get timestamp values for the date range
         start_timestamp = float(start_date.timestamp())
         end_timestamp = float(end_date.timestamp())
-        
+
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.cursor()
-            
-            # Get baby ID
-            cursor.execute("SELECT ID FROM Baby LIMIT 1")
-            baby_id_row = cursor.fetchone()
-            baby_id = baby_id_row[0] if baby_id_row else None
+
+            # Get baby ID if not provided
+            if not baby_id:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_id_row = cursor.fetchone()
+                baby_id = baby_id_row[0] if baby_id_row else None
             if not baby_id:
                 return {}
                 
@@ -414,32 +489,34 @@ class BabyTrackerLocalDatabase:
             return summary
         finally:
             conn.close()
-    def get_diaper_summary(self, days=7) -> Dict:
+    def get_diaper_summary(self, days=7, baby_id: Optional[str] = None) -> Dict:
         """
         Generate diaper summary statistics for the specified number of days
-        
+
         :param days: Number of days to include in summary
+        :param baby_id: Optional baby ID to filter by (defaults to first baby)
         :return: Dictionary with diaper statistics
         """
         if not os.path.exists(self.db_path):
             raise ValueError("No database loaded")
-        
+
         # Calculate date range
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
-        
+
         # Get timestamp values for the date range
         start_timestamp = int(start_date.timestamp())
         end_timestamp = int(end_date.timestamp())
-        
+
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.cursor()
-            
-            # Get baby ID
-            cursor.execute("SELECT ID FROM Baby LIMIT 1")
-            baby_id_row = cursor.fetchone()
-            baby_id = baby_id_row[0] if baby_id_row else None
+
+            # Get baby ID if not provided
+            if not baby_id:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_id_row = cursor.fetchone()
+                baby_id = baby_id_row[0] if baby_id_row else None
             if not baby_id:
                 return {}
             
@@ -3016,6 +3093,460 @@ class BabyTrackerLocalDatabase:
             return False
         finally:
             conn.close()
+
+    # ===== MILESTONE TRANSACTION METHODS =====
+
+    def insert_milestone_transaction(self, transaction_data: Dict) -> bool:
+        """Insert a milestone transaction into the Milestone table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            timestamp = self.convert_timestamp(transaction_data.get('timestamp', '1970-01-01 00:00:00 +0000'))
+            time = self.convert_timestamp(transaction_data.get('time', '1970-01-01 00:00:00 +0000'))
+
+            cursor.execute('''
+                INSERT OR REPLACE INTO Milestone (
+                    ID, Timestamp, Time, Note, HasPicture, BabyID, MilestoneSelectionID
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                transaction_data.get('objectID', ''),
+                timestamp,
+                time,
+                transaction_data.get('note', ''),
+                1 if transaction_data.get('pictureNote') else 0,
+                transaction_data.get('baby', {}).get('objectID', ''),
+                transaction_data.get('milestoneSelectionID', '')
+            ))
+
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error inserting milestone transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def update_milestone_transaction(self, transaction_data: Dict) -> bool:
+        """Update a milestone in the Milestone table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            time = self.convert_timestamp(transaction_data.get('time', '1970-01-01 00:00:00 +0000'))
+
+            cursor.execute('''
+                UPDATE Milestone SET
+                    Time = ?, Note = ?, HasPicture = ?, MilestoneSelectionID = ?
+                WHERE ID = ?
+            ''', (
+                time,
+                transaction_data.get('note', ''),
+                1 if transaction_data.get('pictureNote') else 0,
+                transaction_data.get('milestoneSelectionID', ''),
+                transaction_data.get('objectID', '')
+            ))
+
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"Error updating milestone transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def delete_milestone_transaction(self, transaction_data: Dict) -> bool:
+        """Delete a milestone from the Milestone table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM Milestone WHERE ID = ?', (transaction_data.get('objectID', ''),))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"Error deleting milestone transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    # ===== DOCTOR VISIT TRANSACTION METHODS =====
+
+    def insert_doctor_visit_transaction(self, transaction_data: Dict) -> bool:
+        """Insert a doctor visit transaction into the DoctorVisit table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            timestamp = self.convert_timestamp(transaction_data.get('timestamp', '1970-01-01 00:00:00 +0000'))
+            time = self.convert_timestamp(transaction_data.get('time', '1970-01-01 00:00:00 +0000'))
+
+            cursor.execute('''
+                INSERT OR REPLACE INTO DoctorVisit (
+                    ID, Timestamp, Time, Note, HasPicture, BabyID,
+                    IsAppointment, VisitType, DoctorID, DoctorNote,
+                    Symptom, GrowthID, SickID
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                transaction_data.get('objectID', ''),
+                timestamp,
+                time,
+                transaction_data.get('note', ''),
+                1 if transaction_data.get('pictureNote') else 0,
+                transaction_data.get('baby', {}).get('objectID', ''),
+                1 if transaction_data.get('isAppointment', True) else 0,
+                transaction_data.get('visitType', 0),
+                transaction_data.get('doctorID', ''),
+                transaction_data.get('doctorNote', ''),
+                transaction_data.get('symptom', ''),
+                transaction_data.get('growthID', ''),
+                transaction_data.get('sickID', '')
+            ))
+
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error inserting doctor visit transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def update_doctor_visit_transaction(self, transaction_data: Dict) -> bool:
+        """Update a doctor visit in the DoctorVisit table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            time = self.convert_timestamp(transaction_data.get('time', '1970-01-01 00:00:00 +0000'))
+
+            cursor.execute('''
+                UPDATE DoctorVisit SET
+                    Time = ?, Note = ?, HasPicture = ?, IsAppointment = ?,
+                    VisitType = ?, DoctorID = ?, DoctorNote = ?, Symptom = ?,
+                    GrowthID = ?, SickID = ?
+                WHERE ID = ?
+            ''', (
+                time,
+                transaction_data.get('note', ''),
+                1 if transaction_data.get('pictureNote') else 0,
+                1 if transaction_data.get('isAppointment', True) else 0,
+                transaction_data.get('visitType', 0),
+                transaction_data.get('doctorID', ''),
+                transaction_data.get('doctorNote', ''),
+                transaction_data.get('symptom', ''),
+                transaction_data.get('growthID', ''),
+                transaction_data.get('sickID', ''),
+                transaction_data.get('objectID', '')
+            ))
+
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"Error updating doctor visit transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def delete_doctor_visit_transaction(self, transaction_data: Dict) -> bool:
+        """Delete a doctor visit from the DoctorVisit table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM DoctorVisit WHERE ID = ?', (transaction_data.get('objectID', ''),))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"Error deleting doctor visit transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    # ===== VACCINE TRANSACTION METHODS =====
+
+    def insert_vaccine_transaction(self, transaction_data: Dict) -> bool:
+        """Insert a vaccine transaction into the Vaccine table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            timestamp = self.convert_timestamp(transaction_data.get('timestamp', '1970-01-01 00:00:00 +0000'))
+            time = self.convert_timestamp(transaction_data.get('time', '1970-01-01 00:00:00 +0000'))
+
+            cursor.execute('''
+                INSERT OR REPLACE INTO Vaccine (
+                    ID, Timestamp, Time, Note, HasPicture, BabyID, VaccID, DocVisitID
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                transaction_data.get('objectID', ''),
+                timestamp,
+                time,
+                transaction_data.get('note', ''),
+                1 if transaction_data.get('pictureNote') else 0,
+                transaction_data.get('baby', {}).get('objectID', ''),
+                transaction_data.get('vaccID', ''),
+                transaction_data.get('docVisitID', '')
+            ))
+
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error inserting vaccine transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def update_vaccine_transaction(self, transaction_data: Dict) -> bool:
+        """Update a vaccine in the Vaccine table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            time = self.convert_timestamp(transaction_data.get('time', '1970-01-01 00:00:00 +0000'))
+
+            cursor.execute('''
+                UPDATE Vaccine SET
+                    Time = ?, Note = ?, HasPicture = ?, VaccID = ?, DocVisitID = ?
+                WHERE ID = ?
+            ''', (
+                time,
+                transaction_data.get('note', ''),
+                1 if transaction_data.get('pictureNote') else 0,
+                transaction_data.get('vaccID', ''),
+                transaction_data.get('docVisitID', ''),
+                transaction_data.get('objectID', '')
+            ))
+
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"Error updating vaccine transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def delete_vaccine_transaction(self, transaction_data: Dict) -> bool:
+        """Delete a vaccine from the Vaccine table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM Vaccine WHERE ID = ?', (transaction_data.get('objectID', ''),))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"Error deleting vaccine transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    # ===== GROWTH TRANSACTION METHODS =====
+
+    def insert_growth_transaction(self, transaction_data: Dict) -> bool:
+        """Insert a growth transaction into the Growth table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            timestamp = self.convert_timestamp(transaction_data.get('timestamp', '1970-01-01 00:00:00 +0000'))
+            time = self.convert_timestamp(transaction_data.get('time', '1970-01-01 00:00:00 +0000'))
+
+            cursor.execute('''
+                INSERT OR REPLACE INTO Growth (
+                    ID, Timestamp, Time, Note, HasPicture, BabyID,
+                    Weight, Length, Head, IsEnglishWeightScale, IsEnglishLengthScale
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                transaction_data.get('objectID', ''),
+                timestamp,
+                time,
+                transaction_data.get('note', ''),
+                1 if transaction_data.get('pictureNote') else 0,
+                transaction_data.get('baby', {}).get('objectID', ''),
+                transaction_data.get('weight', 0.0),
+                transaction_data.get('length', 0.0),
+                transaction_data.get('head', 0.0),
+                1 if transaction_data.get('isEnglishWeightScale', True) else 0,
+                1 if transaction_data.get('isEnglishLengthScale', True) else 0
+            ))
+
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error inserting growth transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def update_growth_transaction(self, transaction_data: Dict) -> bool:
+        """Update a growth record in the Growth table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            time = self.convert_timestamp(transaction_data.get('time', '1970-01-01 00:00:00 +0000'))
+
+            cursor.execute('''
+                UPDATE Growth SET
+                    Time = ?, Note = ?, HasPicture = ?, Weight = ?, Length = ?,
+                    Head = ?, IsEnglishWeightScale = ?, IsEnglishLengthScale = ?
+                WHERE ID = ?
+            ''', (
+                time,
+                transaction_data.get('note', ''),
+                1 if transaction_data.get('pictureNote') else 0,
+                transaction_data.get('weight', 0.0),
+                transaction_data.get('length', 0.0),
+                transaction_data.get('head', 0.0),
+                1 if transaction_data.get('isEnglishWeightScale', True) else 0,
+                1 if transaction_data.get('isEnglishLengthScale', True) else 0,
+                transaction_data.get('objectID', '')
+            ))
+
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"Error updating growth transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def delete_growth_transaction(self, transaction_data: Dict) -> bool:
+        """Delete a growth record from the Growth table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM Growth WHERE ID = ?', (transaction_data.get('objectID', ''),))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"Error deleting growth transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    # ===== BATH TRANSACTION METHODS =====
+
+    def insert_bath_transaction(self, transaction_data: Dict) -> bool:
+        """Insert a bath transaction into the Bath table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            timestamp = self.convert_timestamp(transaction_data.get('timestamp', '1970-01-01 00:00:00 +0000'))
+            time = self.convert_timestamp(transaction_data.get('time', '1970-01-01 00:00:00 +0000'))
+
+            cursor.execute('''
+                INSERT OR REPLACE INTO Bath (
+                    ID, Timestamp, Time, Note, HasPicture, BabyID, DescID
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                transaction_data.get('objectID', ''),
+                timestamp,
+                time,
+                transaction_data.get('note', ''),
+                1 if transaction_data.get('pictureNote') else 0,
+                transaction_data.get('baby', {}).get('objectID', ''),
+                transaction_data.get('descID', '')
+            ))
+
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error inserting bath transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def update_bath_transaction(self, transaction_data: Dict) -> bool:
+        """Update a bath in the Bath table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            time = self.convert_timestamp(transaction_data.get('time', '1970-01-01 00:00:00 +0000'))
+
+            cursor.execute('''
+                UPDATE Bath SET
+                    Time = ?, Note = ?, HasPicture = ?, DescID = ?
+                WHERE ID = ?
+            ''', (
+                time,
+                transaction_data.get('note', ''),
+                1 if transaction_data.get('pictureNote') else 0,
+                transaction_data.get('descID', ''),
+                transaction_data.get('objectID', '')
+            ))
+
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"Error updating bath transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def delete_bath_transaction(self, transaction_data: Dict) -> bool:
+        """Delete a bath from the Bath table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM Bath WHERE ID = ?', (transaction_data.get('objectID', ''),))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"Error deleting bath transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
     def time_since_last_feeding(self) -> Optional[Dict]:
         """
         Retrieve the time since the last feeding with precision for infant care
@@ -3080,33 +3611,1708 @@ class BabyTrackerLocalDatabase:
             "friendly_time": friendly_time,
             "status": status
         }
+    def get_progress_data(self, progress_type: int, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """
+        Retrieve progress data from the Progress table for a specific progress type.
+
+        The Progress table is used by the Android app to cache "last activity" information.
+
+        ProgressType values (from Android app):
+        - 0: FeedCount (last feed count)
+        - 1: NursingCount (last nursing count)
+        - 2: NursingMinute (last nursing duration)
+        - 3: ExpressedCount (last pumped milk count)
+        - 4: ExpressedAmount (last pumped milk amount)
+        - 5: FormulaCount (last formula count)
+        - 6: FormulaAmount (last formula amount)
+        - 7: DiaperCount (last diaper count)
+        - 8: SleepMaxMinute (last max sleep duration)
+        - 9: PumpCount (last pump count)
+        - 10: PumpMinute (last pump duration)
+        - 11: PumpAmount (last pump amount)
+
+        :param progress_type: Integer 0-11 identifying the progress type
+        :param baby_id: Optional baby ID. If None, uses first baby in database
+        :return: Dictionary with progress data or None if not found
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+
+                if baby_id is None:
+                    return None
+
+            # Query the Progress table
+            cursor.execute("""
+                SELECT ProgressID, ProgressTime, ProgressValue
+                FROM Progress
+                WHERE BabyID = ? AND ProgressType = ?
+            """, (baby_id, progress_type))
+
+            row = cursor.fetchone()
+
+            if row:
+                return {
+                    "progress_id": row[0],
+                    "progress_time": row[1],
+                    "progress_time_formatted": self._format_timestamp(row[1]) if row[1] else None,
+                    "progress_value": row[2]
+                }
+            return None
+        finally:
+            conn.close()
+
+    def get_last_diaper_from_progress(self, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get the last diaper change info from the Progress table.
+
+        :param baby_id: Optional baby ID
+        :return: Dictionary with last diaper info or None
+        """
+        progress_data = self.get_progress_data(7, baby_id)  # ProgressType 7 = DiaperCount
+        if not progress_data:
+            return None
+
+        # Get additional details from the Diaper table if needed
+        if not os.path.exists(self.db_path):
+            return None
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get the diaper record details
+            cursor.execute("""
+                SELECT Status, Note, PeeColor, PooColor, Amount, Texture
+                FROM Diaper
+                WHERE ID = ?
+            """, (progress_data["progress_id"],))
+
+            diaper_row = cursor.fetchone()
+
+            if diaper_row:
+                return {
+                    "id": progress_data["progress_id"],
+                    "time": progress_data["progress_time_formatted"],
+                    "raw_time": progress_data["progress_time"],
+                    "status": self._get_diaper_status(diaper_row[0]),
+                    "status_code": diaper_row[0],
+                    "note": diaper_row[1] if diaper_row[1] else "",
+                    "pee_color": diaper_row[2],
+                    "poo_color": diaper_row[3],
+                    "amount": diaper_row[4],
+                    "texture": diaper_row[5],
+                    "count": progress_data["progress_value"]
+                }
+
+            # If diaper record not found, return basic progress data
+            return {
+                "time": progress_data["progress_time_formatted"],
+                "raw_time": progress_data["progress_time"],
+                "count": progress_data["progress_value"]
+            }
+        finally:
+            conn.close()
+
+    def get_last_sleep_from_progress(self, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get the last sleep info from the Progress table.
+
+        :param baby_id: Optional baby ID
+        :return: Dictionary with last sleep info or None
+        """
+        progress_data = self.get_progress_data(8, baby_id)  # ProgressType 8 = SleepMaxMinute
+        if not progress_data:
+            return None
+
+        # Get additional details from the Sleep table if needed
+        if not os.path.exists(self.db_path):
+            return None
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get the sleep record details
+            cursor.execute("""
+                SELECT Duration, Note, LocationID, DescID
+                FROM Sleep
+                WHERE ID = ?
+            """, (progress_data["progress_id"],))
+
+            sleep_row = cursor.fetchone()
+
+            if sleep_row:
+                return {
+                    "id": progress_data["progress_id"],
+                    "time": progress_data["progress_time_formatted"],
+                    "raw_time": progress_data["progress_time"],
+                    "duration": sleep_row[0],
+                    "max_duration_minutes": progress_data["progress_value"],
+                    "note": sleep_row[1] if sleep_row[1] else "",
+                    "location_id": sleep_row[2],
+                    "desc_id": sleep_row[3]
+                }
+
+            # If sleep record not found, return basic progress data
+            return {
+                "time": progress_data["progress_time_formatted"],
+                "raw_time": progress_data["progress_time"],
+                "duration": progress_data["progress_value"]
+            }
+        finally:
+            conn.close()
+
+    def get_last_nursing_from_progress(self, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get the last nursing info from the Progress table.
+
+        :param baby_id: Optional baby ID
+        :return: Dictionary with last nursing info or None
+        """
+        # Get both nursing count and nursing minutes from Progress table
+        count_data = self.get_progress_data(1, baby_id)  # ProgressType 1 = NursingCount
+        minute_data = self.get_progress_data(2, baby_id)  # ProgressType 2 = NursingMinute
+
+        if not count_data and not minute_data:
+            return None
+
+        # Use whichever has data, preferring count_data
+        progress_data = count_data if count_data else minute_data
+
+        # Get additional details from the Nursing table
+        if not os.path.exists(self.db_path):
+            return None
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get the nursing record details
+            cursor.execute("""
+                SELECT LeftDuration, RightDuration, BothDuration, FinishSide, Note
+                FROM Nursing
+                WHERE ID = ?
+            """, (progress_data["progress_id"],))
+
+            nursing_row = cursor.fetchone()
+
+            if nursing_row:
+                # Calculate total duration using same logic as get_feedings()
+                left_duration = nursing_row[0] or 0
+                right_duration = nursing_row[1] or 0
+                both_duration = nursing_row[2] or 0
+
+                if left_duration == 0 and right_duration == 0:
+                    total_duration = both_duration
+                elif left_duration == 0 and right_duration > 0:
+                    total_duration = right_duration
+                elif left_duration > 0 and right_duration == 0:
+                    total_duration = left_duration
+                else:
+                    total_duration = left_duration + right_duration
+
+                return {
+                    "id": progress_data["progress_id"],
+                    "time": progress_data["progress_time_formatted"],
+                    "raw_time": progress_data["progress_time"],
+                    "type": "Nursing",
+                    "left_duration": left_duration,
+                    "right_duration": right_duration,
+                    "both_duration": both_duration,
+                    "total_duration": total_duration,
+                    "finish_side": nursing_row[3],
+                    "note": nursing_row[4] if nursing_row[4] else "",
+                    "count": count_data["progress_value"] if count_data else None
+                }
+
+            # If nursing record not found, return basic progress data
+            return {
+                "time": progress_data["progress_time_formatted"],
+                "raw_time": progress_data["progress_time"],
+                "type": "Nursing",
+                "total_duration": minute_data["progress_value"] if minute_data else 0,
+                "count": count_data["progress_value"] if count_data else None
+            }
+        finally:
+            conn.close()
+
+    def get_last_feed_time_from_progress(self, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get the last feeding time from the Progress table.
+        This looks across all feed types to find the most recent.
+
+        :param baby_id: Optional baby ID
+        :return: Dictionary with last feed time or None
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        # Get all feed-related progress types and find the most recent
+        feed_types = [
+            (0, "Feed"),  # FeedCount
+            (1, "Nursing"),  # NursingCount
+            (5, "Formula"),  # FormulaCount
+            (3, "Pumped"),  # ExpressedCount (Pumped milk)
+        ]
+
+        most_recent = None
+        most_recent_time = 0
+
+        for progress_type, feed_name in feed_types:
+            progress_data = self.get_progress_data(progress_type, baby_id)
+            if progress_data and progress_data["progress_time"] > most_recent_time:
+                most_recent_time = progress_data["progress_time"]
+                most_recent = {
+                    "time": progress_data["progress_time_formatted"],
+                    "raw_time": progress_data["progress_time"],
+                    "type": feed_name,
+                    "count": progress_data["progress_value"]
+                }
+
+        return most_recent
+
+    # ===== DIRECT QUERY METHODS (Don't rely on Progress table) =====
+    # These methods query activity tables directly and will work even if
+    # the Progress table is not being maintained by sync logic
+
+    def get_last_diaper_direct(self, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get the last diaper change by querying the Diaper table directly.
+        This method does NOT rely on the Progress table.
+
+        :param baby_id: Optional baby ID
+        :return: Dictionary with last diaper info or None
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+
+                if baby_id is None:
+                    return None
+
+            # Query Diaper table directly - same logic as Android app's getLastActivityForBabyBefore
+            cursor.execute("""
+                SELECT ID, Time, Status, Note, PeeColor, PooColor, Amount, Texture
+                FROM Diaper
+                WHERE BabyID = ?
+                ORDER BY Time DESC
+                LIMIT 1
+            """, (baby_id,))
+
+            row = cursor.fetchone()
+
+            if row:
+                return {
+                    "id": row[0],
+                    "time": self._format_timestamp(row[1]) if row[1] else None,
+                    "raw_time": row[1],
+                    "status": self._get_diaper_status(row[2]),
+                    "status_code": row[2],
+                    "note": row[3] if row[3] else "",
+                    "pee_color": row[4],
+                    "poo_color": row[5],
+                    "amount": row[6],
+                    "texture": row[7]
+                }
+            return None
+        finally:
+            conn.close()
+
+    def get_last_sleep_direct(self, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get the last sleep by querying the Sleep table directly.
+        This method does NOT rely on the Progress table.
+
+        :param baby_id: Optional baby ID
+        :return: Dictionary with last sleep info or None
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+
+                if baby_id is None:
+                    return None
+
+            # Query Sleep table directly
+            cursor.execute("""
+                SELECT ID, Time, Duration, Note, LocationID, DescID
+                FROM Sleep
+                WHERE BabyID = ?
+                ORDER BY Time DESC
+                LIMIT 1
+            """, (baby_id,))
+
+            row = cursor.fetchone()
+
+            if row:
+                duration = row[2] or 0
+                start_time = row[1]
+
+                # CRITICAL: duration == 0 means sleep is IN PROGRESS (currently sleeping)
+                # duration > 0 means sleep is COMPLETED
+                is_sleeping = (duration == 0)
+
+                # If sleep is in progress, calculate current duration
+                current_duration = duration
+                if is_sleeping and start_time:
+                    # Calculate how long they've been sleeping
+                    current_time = datetime.now(timezone.utc).timestamp()
+                    current_duration = int((current_time - start_time) / 60)  # minutes
+
+                return {
+                    "id": row[0],
+                    "time": self._format_timestamp(row[1]) if row[1] else None,
+                    "raw_time": row[1],
+                    "duration": duration,  # Original duration from database
+                    "current_duration": current_duration,  # Real-time duration if sleeping
+                    "is_sleeping": is_sleeping,  # True if currently sleeping
+                    "status": "sleeping" if is_sleeping else "awake",
+                    "note": row[3] if row[3] else "",
+                    "location_id": row[4],
+                    "desc_id": row[5]
+                }
+            return None
+        finally:
+            conn.close()
+
+    def is_currently_sleeping(self, baby_id: Optional[str] = None) -> bool:
+        """
+        Check if the baby is currently sleeping (has an in-progress sleep).
+
+        In Baby Tracker, a sleep with duration=0 indicates "in progress" sleep.
+
+        :param baby_id: Optional baby ID
+        :return: True if baby is currently sleeping, False otherwise
+        """
+        last_sleep = self.get_last_sleep_direct(baby_id)
+        if not last_sleep:
+            return False
+
+        # duration == 0 means sleep is in progress
+        return last_sleep.get("is_sleeping", False)
+
+    def get_last_nursing_direct(self, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get the last nursing session by querying the Nursing table directly.
+        This method does NOT rely on the Progress table.
+
+        :param baby_id: Optional baby ID
+        :return: Dictionary with last nursing info or None
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+
+                if baby_id is None:
+                    return None
+
+            # Query Nursing table directly
+            cursor.execute("""
+                SELECT ID, Time, LeftDuration, RightDuration, BothDuration, FinishSide, Note
+                FROM Nursing
+                WHERE BabyID = ?
+                ORDER BY Time DESC
+                LIMIT 1
+            """, (baby_id,))
+
+            row = cursor.fetchone()
+
+            if row:
+                # Calculate total duration using same logic as get_feedings()
+                left_duration = row[2] or 0
+                right_duration = row[3] or 0
+                both_duration = row[4] or 0
+
+                if left_duration == 0 and right_duration == 0:
+                    total_duration = both_duration
+                elif left_duration == 0 and right_duration > 0:
+                    total_duration = right_duration
+                elif left_duration > 0 and right_duration == 0:
+                    total_duration = left_duration
+                else:
+                    total_duration = left_duration + right_duration
+
+                return {
+                    "id": row[0],
+                    "time": self._format_timestamp(row[1]) if row[1] else None,
+                    "raw_time": row[1],
+                    "type": "Nursing",
+                    "left_duration": left_duration,
+                    "right_duration": right_duration,
+                    "both_duration": both_duration,
+                    "total_duration": total_duration,
+                    "finish_side": row[5],
+                    "note": row[6] if row[6] else ""
+                }
+            return None
+        finally:
+            conn.close()
+
+    def get_last_feed_time_direct(self, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get the time of the most recent feeding (any type) by querying tables directly.
+        This method does NOT rely on the Progress table.
+
+        :param baby_id: Optional baby ID
+        :return: Dictionary with last feed time or None
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+
+                if baby_id is None:
+                    return None
+
+            # Query all feed types and find the most recent
+            most_recent = None
+            most_recent_time = 0
+
+            # Check Nursing
+            cursor.execute("SELECT Time FROM Nursing WHERE BabyID = ? ORDER BY Time DESC LIMIT 1", (baby_id,))
+            nursing_row = cursor.fetchone()
+            if nursing_row and nursing_row[0] > most_recent_time:
+                most_recent_time = nursing_row[0]
+                most_recent = {"time": self._format_timestamp(nursing_row[0]), "raw_time": nursing_row[0], "type": "Nursing"}
+
+            # Check Formula
+            cursor.execute("SELECT Time FROM Formula WHERE BabyID = ? ORDER BY Time DESC LIMIT 1", (baby_id,))
+            formula_row = cursor.fetchone()
+            if formula_row and formula_row[0] > most_recent_time:
+                most_recent_time = formula_row[0]
+                most_recent = {"time": self._format_timestamp(formula_row[0]), "raw_time": formula_row[0], "type": "Formula"}
+
+            # Check Pumped
+            cursor.execute("SELECT Time FROM Pumped WHERE BabyID = ? ORDER BY Time DESC LIMIT 1", (baby_id,))
+            pumped_row = cursor.fetchone()
+            if pumped_row and pumped_row[0] > most_recent_time:
+                most_recent_time = pumped_row[0]
+                most_recent = {"time": self._format_timestamp(pumped_row[0]), "raw_time": pumped_row[0], "type": "Pumped"}
+
+            # Check OtherFeed
+            cursor.execute("SELECT Time FROM OtherFeed WHERE BabyID = ? ORDER BY Time DESC LIMIT 1", (baby_id,))
+            other_row = cursor.fetchone()
+            if other_row and other_row[0] > most_recent_time:
+                most_recent_time = other_row[0]
+                most_recent = {"time": self._format_timestamp(other_row[0]), "raw_time": other_row[0], "type": "Supplement"}
+
+            return most_recent
+        finally:
+            conn.close()
+
+    def get_last_bath_direct(self, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get the last bath by querying the Bath table directly.
+        This method does NOT rely on the Progress table.
+
+        :param baby_id: Optional baby ID
+        :return: Dictionary with last bath info or None
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+
+                if baby_id is None:
+                    return None
+
+            # Query Bath table directly with optional bath description
+            cursor.execute("""
+                SELECT b.ID, b.Time, b.Note, b.DescID, bd.Name as DescName
+                FROM Bath b
+                LEFT JOIN BathDesc bd ON b.DescID = bd.ID
+                WHERE b.BabyID = ?
+                ORDER BY b.Time DESC
+                LIMIT 1
+            """, (baby_id,))
+
+            row = cursor.fetchone()
+
+            if row:
+                return {
+                    "id": row[0],
+                    "time": self._format_timestamp(row[1]) if row[1] else None,
+                    "raw_time": row[1],
+                    "note": row[2] if row[2] else "",
+                    "desc_id": row[3],
+                    "bath_type": row[4] if row[4] else "Bath"  # Default to "Bath" if no description
+                }
+            return None
+        finally:
+            conn.close()
+
+    def get_bath_records(self, limit=50, baby_id: Optional[str] = None) -> List[Dict]:
+        """
+        Get bath records for a baby.
+
+        :param limit: Maximum number of records to return
+        :param baby_id: Optional baby ID
+        :return: List of dictionaries with bath details
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+
+                if baby_id is None:
+                    return []
+
+            # Query Bath table with bath descriptions
+            cursor.execute(f"""
+                SELECT b.ID, b.Time, b.Note, b.HasPicture, b.DescID, bd.Name as DescName
+                FROM Bath b
+                LEFT JOIN BathDesc bd ON b.DescID = bd.ID
+                WHERE b.BabyID = ?
+                ORDER BY b.Time DESC
+                LIMIT {limit}
+            """, (baby_id,))
+
+            records = []
+            for row in cursor.fetchall():
+                records.append({
+                    "id": row[0],
+                    "time": self._format_timestamp(row[1]) if row[1] else None,
+                    "raw_time": row[1],
+                    "note": row[2] if row[2] else "",
+                    "has_picture": bool(row[3]),
+                    "desc_id": row[4],
+                    "bath_type": row[5] if row[5] else "Bath"
+                })
+
+            return records
+        finally:
+            conn.close()
+
+    def log_bath(self, baby_id: Optional[str] = None, bath_type: Optional[str] = None,
+                 note: str = "", time: Optional[datetime] = None) -> bool:
+        """
+        Log a new bath record.
+
+        :param baby_id: Optional baby ID (uses first baby if not provided)
+        :param bath_type: Optional bath type name (e.g., "Bubble Bath", "Sponge Bath")
+        :param note: Optional note
+        :param time: Optional time (defaults to now)
+        :return: True if successful, False otherwise
+        """
+        import uuid
+
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+
+                if baby_id is None:
+                    _LOGGER.error("No baby found in database")
+                    return False
+
+            # Get bath description ID if bath_type is provided
+            desc_id = None
+            if bath_type:
+                cursor.execute("SELECT ID FROM BathDesc WHERE Name = ?", (bath_type,))
+                desc_row = cursor.fetchone()
+                if desc_row:
+                    desc_id = desc_row[0]
+
+            # Use provided time or current time
+            if time is None:
+                time = datetime.now(timezone.utc)
+
+            bath_time = time.timestamp()
+            timestamp = datetime.now(timezone.utc).timestamp()
+
+            # Insert bath record
+            cursor.execute("""
+                INSERT INTO Bath (
+                    ID, Timestamp, Time, Note, HasPicture, BabyID, DescID
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                str(uuid.uuid4()),  # Generate new ID
+                timestamp,
+                bath_time,
+                note,
+                0,  # HasPicture
+                baby_id,
+                desc_id
+            ))
+
+            conn.commit()
+            _LOGGER.info(f"Logged bath: type={bath_type}, time={time}, note={note}")
+            return True
+
+        except Exception as e:
+            _LOGGER.error(f"Error logging bath: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def get_bath_types(self) -> List[str]:
+        """
+        Get list of available bath types/descriptions.
+
+        :return: List of bath type names
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT Name FROM BathDesc ORDER BY Name")
+            return [row[0] for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    # ===== PUMP SESSION TRACKING =====
+
+    def get_last_pump_direct(self, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get the last pump session by querying the Pump table directly.
+
+        :param baby_id: Optional baby ID
+        :return: Dictionary with last pump session info or None
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+                if baby_id is None:
+                    return None
+
+            # Query Pump table - note: no BabyID column in Pump table!
+            # The app links pumping to baby through the Pumped table via PumpedID
+            cursor.execute("""
+                SELECT ID, Time, LeftDuration, RightDuration, LeftAmount, RightAmount,
+                       Amount, IsEnglishScale, Note, FinishSide, Sides
+                FROM Pump
+                ORDER BY Time DESC
+                LIMIT 1
+            """)
+
+            row = cursor.fetchone()
+            if row:
+                left_duration = row[2] or 0
+                right_duration = row[3] or 0
+                total_duration = left_duration + right_duration
+
+                return {
+                    "id": row[0],
+                    "time": self._format_timestamp(row[1]) if row[1] else None,
+                    "raw_time": row[1],
+                    "left_duration": left_duration,
+                    "right_duration": right_duration,
+                    "total_duration": total_duration,
+                    "left_amount": row[4] or 0,
+                    "right_amount": row[5] or 0,
+                    "total_amount": row[6] or 0,
+                    "is_english_scale": bool(row[7]),
+                    "unit": "oz" if row[7] else "ml",
+                    "note": row[8] if row[8] else "",
+                    "finish_side": row[9],  # 0=Right, 1=Left, 2=Both
+                    "sides": row[10]  # Which sides were pumped
+                }
+            return None
+        finally:
+            conn.close()
+
+    def get_pump_records(self, limit=50, baby_id: Optional[str] = None) -> List[Dict]:
+        """
+        Get pump session records.
+
+        :param limit: Maximum number of records to return
+        :param baby_id: Optional baby ID (currently not used as Pump table has no BabyID)
+        :return: List of dictionaries with pump session details
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            cursor.execute(f"""
+                SELECT ID, Time, LeftDuration, RightDuration, LeftAmount, RightAmount,
+                       Amount, IsEnglishScale, Note, FinishSide, Sides
+                FROM Pump
+                ORDER BY Time DESC
+                LIMIT {limit}
+            """)
+
+            records = []
+            for row in cursor.fetchall():
+                left_duration = row[2] or 0
+                right_duration = row[3] or 0
+                total_duration = left_duration + right_duration
+
+                records.append({
+                    "id": row[0],
+                    "time": self._format_timestamp(row[1]) if row[1] else None,
+                    "raw_time": row[1],
+                    "left_duration": left_duration,
+                    "right_duration": right_duration,
+                    "total_duration": total_duration,
+                    "left_amount": row[4] or 0,
+                    "right_amount": row[5] or 0,
+                    "total_amount": row[6] or 0,
+                    "is_english_scale": bool(row[7]),
+                    "unit": "oz" if row[7] else "ml",
+                    "note": row[8] if row[8] else "",
+                    "finish_side": row[9],
+                    "sides": row[10]
+                })
+
+            return records
+        finally:
+            conn.close()
+
+    def log_pump(self, baby_id: Optional[str] = None, left_duration: int = 0,
+                 right_duration: int = 0, left_amount: float = 0, right_amount: float = 0,
+                 is_english_scale: bool = False, note: str = "",
+                 time: Optional[datetime] = None) -> bool:
+        """
+        Log a new pump session.
+
+        :param baby_id: Optional baby ID (for future multi-baby support)
+        :param left_duration: Duration on left side (minutes)
+        :param right_duration: Duration on right side (minutes)
+        :param left_amount: Amount from left side (ml or oz)
+        :param right_amount: Amount from right side (ml or oz)
+        :param is_english_scale: True if amounts are in oz, False for ml
+        :param note: Optional note
+        :param time: Optional time (defaults to now)
+        :return: True if successful, False otherwise
+        """
+        import uuid
+
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Use provided time or current time
+            if time is None:
+                time = datetime.now(timezone.utc)
+
+            pump_time = time.timestamp()
+            timestamp = datetime.now(timezone.utc).timestamp()
+
+            # Calculate totals
+            total_amount = left_amount + right_amount
+            total_duration = left_duration + right_duration
+
+            # Determine finish side
+            if left_duration > 0 and right_duration == 0:
+                finish_side = 1  # Left
+            elif right_duration > 0 and left_duration == 0:
+                finish_side = 0  # Right
+            else:
+                finish_side = 2  # Both
+
+            # Determine sides (bitmask: 1=Right, 2=Left, 3=Both)
+            if left_duration > 0 and right_duration > 0:
+                sides = 3  # Both
+            elif left_duration > 0:
+                sides = 2  # Left only
+            elif right_duration > 0:
+                sides = 1  # Right only
+            else:
+                sides = 0  # None
+
+            # Insert pump record
+            cursor.execute("""
+                INSERT INTO Pump (
+                    ID, Timestamp, Time, LeftDuration, RightDuration,
+                    LeftAmount, RightAmount, Amount, IsEnglishScale,
+                    Note, FinishSide, Sides, HasPicture, Label, PumpedID
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                str(uuid.uuid4()),
+                timestamp,
+                pump_time,
+                left_duration,
+                right_duration,
+                left_amount,
+                right_amount,
+                total_amount,
+                1 if is_english_scale else 0,
+                note,
+                finish_side,
+                sides,
+                0,  # HasPicture
+                "",  # Label
+                None  # PumpedID (link to stored milk if needed)
+            ))
+
+            conn.commit()
+            unit = "oz" if is_english_scale else "ml"
+            _LOGGER.info(f"Logged pump session: {total_amount}{unit} in {total_duration} minutes")
+            return True
+
+        except Exception as e:
+            _LOGGER.error(f"Error logging pump session: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def get_pump_summary(self, days: int = 7, baby_id: Optional[str] = None) -> Dict:
+        """
+        Get pump session summary statistics.
+
+        :param days: Number of days to include in summary
+        :param baby_id: Optional baby ID
+        :return: Dictionary with pump statistics
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        # Get cutoff time
+        cutoff_time = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff_timestamp = cutoff_time.timestamp()
+
+        records = self.get_pump_records(limit=500, baby_id=baby_id)
+
+        # Filter to time range
+        recent_records = [r for r in records if r["raw_time"] >= cutoff_timestamp]
+
+        if not recent_records:
+            return {
+                "total_sessions": 0,
+                "total_amount": 0,
+                "total_duration": 0,
+                "avg_amount_per_session": 0,
+                "avg_duration_per_session": 0,
+                "sessions_per_day": 0
+            }
+
+        total_sessions = len(recent_records)
+        total_amount = sum(r["total_amount"] for r in recent_records)
+        total_duration = sum(r["total_duration"] for r in recent_records)
+
+        # Check unit from most recent record
+        unit = recent_records[0]["unit"]
+
+        return {
+            "total_sessions": total_sessions,
+            "total_amount": round(total_amount, 1),
+            "total_duration": total_duration,
+            "avg_amount_per_session": round(total_amount / total_sessions, 1) if total_sessions > 0 else 0,
+            "avg_duration_per_session": round(total_duration / total_sessions, 1) if total_sessions > 0 else 0,
+            "sessions_per_day": round(total_sessions / days, 1),
+            "unit": unit,
+            "days": days
+        }
+
+    def get_last_growth_direct(self, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get the most recent growth measurement by querying the Growth table directly.
+
+        :param baby_id: Optional baby ID to filter by
+        :return: Dictionary with growth details
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Build query
+            query = """
+                SELECT ID, Time, Weight, Length, Head,
+                       IsEnglishWeightScale, IsEnglishLengthScale, Note
+                FROM Growth
+                ORDER BY Time DESC
+                LIMIT 1
+            """
+
+            cursor.execute(query)
+            row = cursor.fetchone()
+
+            if not row:
+                return None
+
+            # Parse data
+            time_val = row[1]
+            weight = row[2] or 0
+            length = row[3] or 0
+            head = row[4] or 0
+            is_english_weight = bool(row[5])
+            is_english_length = bool(row[6])
+            note = row[7] or ""
+
+            return {
+                "id": row[0],
+                "time": self._format_timestamp(time_val),
+                "raw_time": time_val,
+                "weight": weight,
+                "length": length,
+                "head": head,
+                "weight_unit": "lbs" if is_english_weight else "kg",
+                "length_unit": "in" if is_english_length else "cm",
+                "is_english_weight": is_english_weight,
+                "is_english_length": is_english_length,
+                "note": note
+            }
+        finally:
+            conn.close()
+
+    def get_growth_records(self, limit: int = 50, baby_id: Optional[str] = None) -> List[Dict]:
+        """
+        Get growth measurement records.
+
+        :param limit: Maximum number of records to return
+        :param baby_id: Optional baby ID to filter by
+        :return: List of dictionaries with growth details
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Build query
+            query = f"""
+                SELECT ID, Time, Weight, Length, Head,
+                       IsEnglishWeightScale, IsEnglishLengthScale, Note
+                FROM Growth
+                ORDER BY Time DESC
+                LIMIT {limit}
+            """
+
+            cursor.execute(query)
+            records = []
+
+            for row in cursor.fetchall():
+                time_val = row[1]
+                weight = row[2] or 0
+                length = row[3] or 0
+                head = row[4] or 0
+                is_english_weight = bool(row[5])
+                is_english_length = bool(row[6])
+                note = row[7] or ""
+
+                records.append({
+                    "id": row[0],
+                    "time": self._format_timestamp(time_val),
+                    "raw_time": time_val,
+                    "weight": weight,
+                    "length": length,
+                    "head": head,
+                    "weight_unit": "lbs" if is_english_weight else "kg",
+                    "length_unit": "in" if is_english_length else "cm",
+                    "is_english_weight": is_english_weight,
+                    "is_english_length": is_english_length,
+                    "note": note
+                })
+
+            return records
+        finally:
+            conn.close()
+
+    def log_growth(self, baby_id: str, weight: float, length: float, head: float,
+                   is_english_weight_scale: bool, is_english_length_scale: bool,
+                   note: str = "", time: Optional[float] = None) -> bool:
+        """
+        Log a new growth measurement record.
+
+        :param baby_id: Baby ID
+        :param weight: Weight measurement
+        :param length: Length/height measurement
+        :param head: Head circumference measurement
+        :param is_english_weight_scale: True for lbs, False for kg
+        :param is_english_length_scale: True for inches, False for cm
+        :param note: Optional note
+        :param time: Optional time (defaults to now)
+        :return: True if successful
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        import uuid
+
+        if time is None:
+            time = datetime.now(timezone.utc).timestamp()
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Generate new ID
+            record_id = str(uuid.uuid4()).upper()
+
+            # Insert growth record
+            cursor.execute("""
+                INSERT INTO Growth (
+                    ID, Timestamp, Time, Note, HasPicture, BabyID,
+                    Weight, Length, Head, IsEnglishWeightScale, IsEnglishLengthScale
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                record_id,
+                time,  # Timestamp
+                time,  # Time
+                note,
+                0,  # HasPicture
+                baby_id,
+                weight,
+                length,
+                head,
+                1 if is_english_weight_scale else 0,
+                1 if is_english_length_scale else 0
+            ))
+
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error logging growth: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    # ===== MILESTONE TRACKING =====
+
+    def get_last_milestone_direct(self, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get the most recent milestone by querying the Milestone table directly.
+
+        :param baby_id: Optional baby ID to filter by
+        :return: Dictionary with milestone details or None
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+                if baby_id is None:
+                    return None
+
+            # Query Milestone table with baby filter
+            cursor.execute("""
+                SELECT m.ID, m.Time, m.Note, m.MilestoneSelectionID, ms.Name, ms.Description
+                FROM Milestone m
+                LEFT JOIN MilestoneSelection ms ON m.MilestoneSelectionID = ms.ID
+                WHERE m.BabyID = ?
+                ORDER BY m.Time DESC
+                LIMIT 1
+            """, (baby_id,))
+
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "id": row[0],
+                    "time": self._format_timestamp(row[1]) if row[1] else None,
+                    "raw_time": row[1],
+                    "note": row[2] if row[2] else "",
+                    "milestone_selection_id": row[3],
+                    "milestone_name": row[4] if row[4] else "Unknown",
+                    "milestone_description": row[5] if row[5] else ""
+                }
+            return None
+        finally:
+            conn.close()
+
+    def get_milestone_records(self, limit: int = 50, baby_id: Optional[str] = None) -> List[Dict]:
+        """
+        Get milestone records.
+
+        :param limit: Maximum number of records to return
+        :param baby_id: Optional baby ID to filter by
+        :return: List of dictionaries with milestone details
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+                if baby_id is None:
+                    return []
+
+            # Query with baby filter
+            cursor.execute(f"""
+                SELECT m.ID, m.Time, m.Note, m.MilestoneSelectionID, ms.Name, ms.Description
+                FROM Milestone m
+                LEFT JOIN MilestoneSelection ms ON m.MilestoneSelectionID = ms.ID
+                WHERE m.BabyID = ?
+                ORDER BY m.Time DESC
+                LIMIT {limit}
+            """, (baby_id,))
+
+            records = []
+            for row in cursor.fetchall():
+                records.append({
+                    "id": row[0],
+                    "time": self._format_timestamp(row[1]) if row[1] else None,
+                    "raw_time": row[1],
+                    "note": row[2] if row[2] else "",
+                    "milestone_selection_id": row[3],
+                    "milestone_name": row[4] if row[4] else "Unknown",
+                    "milestone_description": row[5] if row[5] else ""
+                })
+            return records
+        finally:
+            conn.close()
+
+    def get_milestone_selections(self) -> List[Dict]:
+        """
+        Get available milestone selections.
+
+        :return: List of dictionaries with milestone selection details
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT ID, Name, Description, ForAge
+                FROM MilestoneSelection
+                WHERE BabyID IS NULL OR BabyID = ''
+                ORDER BY ForAge ASC, Name ASC
+            """)
+
+            selections = []
+            for row in cursor.fetchall():
+                selections.append({
+                    "id": row[0],
+                    "name": row[1],
+                    "description": row[2] if row[2] else "",
+                    "for_age": row[3] or 0
+                })
+            return selections
+        finally:
+            conn.close()
+
+    def log_milestone(
+        self,
+        baby_id: str,
+        milestone_selection_id: str,
+        note: str = "",
+        time: Optional[float] = None
+    ) -> bool:
+        """
+        Log a milestone achievement to the database.
+
+        :param baby_id: Baby ID
+        :param milestone_selection_id: Milestone selection ID
+        :param note: Optional note
+        :param time: Optional timestamp (defaults to current time)
+        :return: True if successful, False otherwise
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        import uuid
+
+        if time is None:
+            time = datetime.now(timezone.utc).timestamp()
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Generate new ID
+            record_id = str(uuid.uuid4()).upper()
+
+            # Insert milestone record
+            cursor.execute("""
+                INSERT INTO Milestone (
+                    ID, Timestamp, Time, Note, HasPicture, BabyID, MilestoneSelectionID
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                record_id,
+                time,  # Timestamp
+                time,  # Time
+                note,
+                0,  # HasPicture
+                baby_id,
+                milestone_selection_id
+            ))
+
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error logging milestone: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    # ===== DOCTOR VISIT TRACKING =====
+
+    def get_last_doctor_visit_direct(self, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get the most recent doctor visit by querying the DoctorVisit table directly.
+
+        :param baby_id: Optional baby ID to filter by
+        :return: Dictionary with doctor visit details or None
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+                if baby_id is None:
+                    return None
+
+            # Query DoctorVisit table with baby filter
+            cursor.execute("""
+                SELECT ID, Time, Note, IsAppointment, VisitType, DoctorNote, Symptom
+                FROM DoctorVisit
+                WHERE BabyID = ?
+                ORDER BY Time DESC
+                LIMIT 1
+            """, (baby_id,))
+
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "id": row[0],
+                    "time": self._format_timestamp(row[1]) if row[1] else None,
+                    "raw_time": row[1],
+                    "note": row[2] if row[2] else "",
+                    "is_appointment": bool(row[3]),
+                    "visit_type": row[4] or 0,
+                    "doctor_note": row[5] if row[5] else "",
+                    "symptom": row[6] if row[6] else ""
+                }
+            return None
+        finally:
+            conn.close()
+
+    def get_doctor_visit_records(self, limit: int = 50, baby_id: Optional[str] = None) -> List[Dict]:
+        """
+        Get doctor visit records.
+
+        :param limit: Maximum number of records to return
+        :param baby_id: Optional baby ID to filter by
+        :return: List of dictionaries with doctor visit details
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+                if baby_id is None:
+                    return []
+
+            # Query with baby filter
+            cursor.execute(f"""
+                SELECT ID, Time, Note, IsAppointment, VisitType, DoctorNote, Symptom
+                FROM DoctorVisit
+                WHERE BabyID = ?
+                ORDER BY Time DESC
+                LIMIT {limit}
+            """, (baby_id,))
+
+            records = []
+            for row in cursor.fetchall():
+                records.append({
+                    "id": row[0],
+                    "time": self._format_timestamp(row[1]) if row[1] else None,
+                    "raw_time": row[1],
+                    "note": row[2] if row[2] else "",
+                    "is_appointment": bool(row[3]),
+                    "visit_type": row[4] or 0,
+                    "doctor_note": row[5] if row[5] else "",
+                    "symptom": row[6] if row[6] else ""
+                })
+            return records
+        finally:
+            conn.close()
+
+    def log_doctor_visit(
+        self,
+        baby_id: str,
+        is_appointment: bool = True,
+        visit_type: int = 0,
+        note: str = "",
+        doctor_note: str = "",
+        symptom: str = "",
+        time: Optional[float] = None
+    ) -> bool:
+        """
+        Log a doctor visit to the database.
+
+        :param baby_id: Baby ID
+        :param is_appointment: Whether this is a scheduled appointment
+        :param visit_type: Type of visit (0=General, etc.)
+        :param note: Optional note
+        :param doctor_note: Doctor's notes
+        :param symptom: Symptoms noted during visit
+        :param time: Optional timestamp (defaults to current time)
+        :return: True if successful, False otherwise
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        import uuid
+
+        if time is None:
+            time = datetime.now(timezone.utc).timestamp()
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Generate new ID
+            record_id = str(uuid.uuid4()).upper()
+
+            # Insert doctor visit record
+            cursor.execute("""
+                INSERT INTO DoctorVisit (
+                    ID, Timestamp, Time, Note, HasPicture, BabyID,
+                    IsAppointment, VisitType, DoctorNote, Symptom
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                record_id,
+                time,  # Timestamp
+                time,  # Time
+                note,
+                0,  # HasPicture
+                baby_id,
+                1 if is_appointment else 0,
+                visit_type,
+                doctor_note,
+                symptom
+            ))
+
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error logging doctor visit: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    # ===== VACCINE TRACKING =====
+
+    def get_last_vaccine_direct(self, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get the most recent vaccine by querying the Vaccine table directly.
+
+        :param baby_id: Optional baby ID to filter by
+        :return: Dictionary with vaccine details or None
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+                if baby_id is None:
+                    return None
+
+            # Query Vaccine table with baby filter
+            cursor.execute("""
+                SELECT v.ID, v.Time, v.Note, v.VaccID, vs.Name, vs.Description
+                FROM Vaccine v
+                LEFT JOIN VaccineSelection vs ON v.VaccID = vs.ID
+                WHERE v.BabyID = ?
+                ORDER BY v.Time DESC
+                LIMIT 1
+            """, (baby_id,))
+
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "id": row[0],
+                    "time": self._format_timestamp(row[1]) if row[1] else None,
+                    "raw_time": row[1],
+                    "note": row[2] if row[2] else "",
+                    "vacc_id": row[3],
+                    "vaccine_name": row[4] if row[4] else "Unknown",
+                    "vaccine_description": row[5] if row[5] else ""
+                }
+            return None
+        finally:
+            conn.close()
+
+    def get_vaccine_records(self, limit: int = 50, baby_id: Optional[str] = None) -> List[Dict]:
+        """
+        Get vaccine records.
+
+        :param limit: Maximum number of records to return
+        :param baby_id: Optional baby ID to filter by
+        :return: List of dictionaries with vaccine details
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+                if baby_id is None:
+                    return []
+
+            # Query with baby filter
+            cursor.execute(f"""
+                SELECT v.ID, v.Time, v.Note, v.VaccID, vs.Name, vs.Description
+                FROM Vaccine v
+                LEFT JOIN VaccineSelection vs ON v.VaccID = vs.ID
+                WHERE v.BabyID = ?
+                ORDER BY v.Time DESC
+                LIMIT {limit}
+            """, (baby_id,))
+
+            records = []
+            for row in cursor.fetchall():
+                records.append({
+                    "id": row[0],
+                    "time": self._format_timestamp(row[1]) if row[1] else None,
+                    "raw_time": row[1],
+                    "note": row[2] if row[2] else "",
+                    "vacc_id": row[3],
+                    "vaccine_name": row[4] if row[4] else "Unknown",
+                    "vaccine_description": row[5] if row[5] else ""
+                })
+            return records
+        finally:
+            conn.close()
+
+    def get_vaccine_selections(self) -> List[Dict]:
+        """
+        Get available vaccine selections.
+
+        :return: List of dictionaries with vaccine selection details
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT ID, Name, Description, ForAge
+                FROM VaccineSelection
+                ORDER BY ForAge ASC, Name ASC
+            """)
+
+            selections = []
+            for row in cursor.fetchall():
+                selections.append({
+                    "id": row[0],
+                    "name": row[1],
+                    "description": row[2] if row[2] else "",
+                    "for_age": row[3] or 0
+                })
+            return selections
+        finally:
+            conn.close()
+
+    def log_vaccine(
+        self,
+        baby_id: str,
+        vacc_id: str,
+        note: str = "",
+        doc_visit_id: str = "",
+        time: Optional[float] = None
+    ) -> bool:
+        """
+        Log a vaccine administration to the database.
+
+        :param baby_id: Baby ID
+        :param vacc_id: Vaccine selection ID
+        :param note: Optional note
+        :param doc_visit_id: Optional doctor visit ID to link to
+        :param time: Optional timestamp (defaults to current time)
+        :return: True if successful, False otherwise
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        import uuid
+
+        if time is None:
+            time = datetime.now(timezone.utc).timestamp()
+
+        # Generate empty doctor visit ID if not provided
+        if not doc_visit_id:
+            doc_visit_id = ""
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Generate new ID
+            record_id = str(uuid.uuid4()).upper()
+
+            # Insert vaccine record
+            cursor.execute("""
+                INSERT INTO Vaccine (
+                    ID, Timestamp, Time, Note, HasPicture, BabyID, VaccID, DocVisitID
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                record_id,
+                time,  # Timestamp
+                time,  # Time
+                note,
+                0,  # HasPicture
+                baby_id,
+                vacc_id,
+                doc_visit_id
+            ))
+
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error logging vaccine: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
     # Example usage
 def main():
     # Initialize the database from a seed file
     try:
         # Replace with the path to your seed file
         db = BabyTrackerLocalDatabase('path/to/seed.zip')
-        
+
         # Get baby info
         baby_info = db.get_baby_info()
         print("Baby Info:", baby_info)
-        
+
         # Get last feeding
         last_feeding = db.get_last_feeding()
         print("Last Feeding:", last_feeding)
-        
+
         # Get feedings from the last day
         recent_feedings = db.get_feedings(days_back=1)
         print("Recent Feedings:", recent_feedings)
-        
+
         # Get last diaper change
         last_diaper = db.get_last_diaper()
         print("Last Diaper:", last_diaper)
-        
+
         # Get diapers from the last day
         recent_diapers = db.get_diapers(days_back=1)
         print("Recent Diapers:", recent_diapers)
-        
+
     except Exception as e:
         print(f"An error occurred: {e}")
 

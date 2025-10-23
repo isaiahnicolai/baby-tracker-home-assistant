@@ -4,6 +4,12 @@ add_diaper:
   name: Add Diaper
   description: Add a diaper change record to Baby Tracker
   fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
     pee:
       name: Pee
       description: Whether the diaper was wet
@@ -28,6 +34,12 @@ add_nursing:
   name: Add Nursing
   description: Add a nursing session record to Baby Tracker
   fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
     left_duration:
       name: Left Duration
       description: Duration on left side (minutes)
@@ -80,6 +92,12 @@ add_formula:
   name: Add Formula
   description: Add a formula feeding record to Baby Tracker
   fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
     amount:
       name: Amount
       description: Amount in ml (or oz if is_english_measure is true)
@@ -106,6 +124,12 @@ add_pumped:
   name: Add Pumped Milk
   description: Add a pumped milk record to Baby Tracker
   fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
     amount:
       name: Amount
       description: Amount in ml (or oz if is_english_measure is true)
@@ -132,6 +156,12 @@ add_temperature:
   name: Add Temperature
   description: Add a temperature record to Baby Tracker
   fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
     temperature:
       name: Temperature
       description: Temperature value
@@ -155,7 +185,411 @@ add_temperature:
       selector:
         text:
 
+log_bath:
+  name: Log Bath
+  description: Log a bath time to Baby Tracker
+  fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
+    bath_type:
+      name: Bath Type
+      description: Type of bath (optional)
+      required: false
+      selector:
+        select:
+          options:
+            - "Bubble Bath"
+            - "Sponge Bath"
+            - "Shower"
+            - "Washed Hair"
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+
+log_pump:
+  name: Log Pump Session
+  description: Log a pumping session to Baby Tracker
+  fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
+    left_duration:
+      name: Left Duration
+      description: Duration on left side (minutes)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 120
+          unit_of_measurement: min
+    right_duration:
+      name: Right Duration
+      description: Duration on right side (minutes)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 120
+          unit_of_measurement: min
+    left_amount:
+      name: Left Amount
+      description: Amount from left side (ml or oz)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 500
+          step: 0.1
+    right_amount:
+      name: Right Amount
+      description: Amount from right side (ml or oz)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 500
+          step: 0.1
+    is_english_scale:
+      name: English Measure
+      description: Whether amounts are in oz (true) or ml (false)
+      required: false
+      default: false
+      selector:
+        boolean:
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+
+log_medicine:
+  name: Log Medicine
+  description: Log a medicine administration to Baby Tracker
+  fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
+    medicine_name:
+      name: Medicine Name
+      description: Name of the medicine (e.g., "Gas Drops", "Gripe Water", "Vitamin D")
+      required: true
+      example: "Vitamin D"
+      selector:
+        text:
+    amount:
+      name: Amount
+      description: Amount administered
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 0.1
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+
+log_growth:
+  name: Log Growth Measurement
+  description: Log a growth measurement (weight, length, head circumference) to Baby Tracker
+  fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
+    weight:
+      name: Weight
+      description: Weight measurement (lbs or kg depending on scale setting)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 0.1
+    length:
+      name: Length/Height
+      description: Length or height measurement (inches or cm depending on scale setting)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 0.1
+    head:
+      name: Head Circumference
+      description: Head circumference measurement (inches or cm depending on scale setting)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 0.1
+    is_english_weight_scale:
+      name: Weight in Pounds
+      description: Whether weight is in pounds (true) or kilograms (false)
+      required: false
+      default: true
+      selector:
+        boolean:
+    is_english_length_scale:
+      name: Length in Inches
+      description: Whether length/head is in inches (true) or centimeters (false)
+      required: false
+      default: true
+      selector:
+        boolean:
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+
+log_milestone:
+  name: Log Milestone
+  description: Log a milestone achievement to Baby Tracker
+  fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
+    milestone_name:
+      name: Milestone Name
+      description: Name of the milestone (e.g., "First smile", "Raise head", "First laugh")
+      required: true
+      example: "First smile"
+      selector:
+        text:
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+
+log_doctor_visit:
+  name: Log Doctor Visit
+  description: Log a doctor visit or appointment to Baby Tracker
+  fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
+    is_appointment:
+      name: Is Appointment
+      description: Whether this is a scheduled appointment (vs sick visit)
+      required: false
+      default: true
+      selector:
+        boolean:
+    visit_type:
+      name: Visit Type
+      description: Type of visit (0=General checkup, etc.)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 10
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+    doctor_note:
+      name: Doctor's Notes
+      description: Notes from the doctor
+      required: false
+      selector:
+        text:
+    symptom:
+      name: Symptoms
+      description: Symptoms noted during visit
+      required: false
+      selector:
+        text:
+
+log_vaccine:
+  name: Log Vaccine
+  description: Log a vaccine administration to Baby Tracker
+  fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
+    vaccine_name:
+      name: Vaccine Name
+      description: Name of the vaccine (e.g., "HepB", "DTaP", "MMR")
+      required: true
+      example: "DTaP"
+      selector:
+        text:
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+
+list_babies:
+  name: List Babies
+  description: List all babies in the database (returns list of babies with names and IDs)
+  fields: {}
+
 sync:
   name: Sync
   description: Sync data with the Baby Tracker server
   fields: {}
+
+# Quick action services for common bottle sizes
+add_4oz_bottle:
+  name: Add 4oz Bottle
+  description: Quick action to add a 4oz bottle feeding
+  fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+
+add_6oz_bottle:
+  name: Add 6oz Bottle
+  description: Quick action to add a 6oz bottle feeding
+  fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+
+add_8oz_bottle:
+  name: Add 8oz Bottle
+  description: Quick action to add an 8oz bottle feeding
+  fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+
+add_small_bottle:
+  name: Add Small Bottle (2oz)
+  description: Quick action to add a 2oz bottle feeding
+  fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+
+add_medium_bottle:
+  name: Add Medium Bottle (4oz)
+  description: Quick action to add a 4oz bottle feeding
+  fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+
+add_large_bottle:
+  name: Add Large Bottle (6oz)
+  description: Quick action to add a 6oz bottle feeding
+  fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:
+
+add_xlarge_bottle:
+  name: Add Extra Large Bottle (8oz)
+  description: Quick action to add an 8oz bottle feeding
+  fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby (leave empty for first/default baby)
+      required: false
+      selector:
+        text:
+    note:
+      name: Note
+      description: Optional note for this record
+      required: false
+      selector:
+        text:

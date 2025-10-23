@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any, Tuple
 
 
 from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -13,6 +14,19 @@ from .const import (
     DOMAIN,
     SENSOR_TYPE_LAST_FEEDING,
     SENSOR_TYPE_LAST_DIAPER,
+    SENSOR_TYPE_LAST_SLEEP,
+    SENSOR_TYPE_LAST_NURSING,
+    SENSOR_TYPE_LAST_BATH,
+    SENSOR_TYPE_LAST_PUMP,
+    SENSOR_TYPE_PUMP_SUMMARY,
+    SENSOR_TYPE_LAST_MEDICINE,
+    SENSOR_TYPE_LAST_GROWTH,
+    SENSOR_TYPE_LAST_MILESTONE,
+    SENSOR_TYPE_LAST_DOCTOR_VISIT,
+    SENSOR_TYPE_LAST_VACCINE,
+    SENSOR_TYPE_WEIGHT,
+    SENSOR_TYPE_LENGTH,
+    SENSOR_TYPE_HEAD,
     SENSOR_TYPE_LAST_TEMPERATURE,
     SENSOR_TYPE_FEEDING_COUNT,
     SENSOR_TYPE_NURSING_MINUTES,
@@ -82,27 +96,53 @@ def calculate_time_since(time_str: str) -> Tuple[Optional[int], Optional[int]]:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
     """Set up Baby Tracker sensors based on a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    
-    # Get baby info from coordinator to use in sensor naming
-    baby_info = coordinator.data.get("baby_info", {})
-    baby_name = baby_info.name if baby_info else "Baby"
-    
-    # Define all sensors to create
-    sensors = [
-        BabyTrackerLastFeedingSensor(coordinator, baby_name),
-        BabyTrackerLastDiaperSensor(coordinator, baby_name),
-        BabyTrackerLastTemperatureSensor(coordinator, baby_name),
-        BabyTrackerFeedingCountSensor(coordinator, baby_name),
-        BabyTrackerNursingMinutesSensor(coordinator, baby_name),
-        BabyTrackerBottleOzSensor(coordinator, baby_name),
-        BabyTrackerBottleMlSensor(coordinator, baby_name),
-        BabyTrackerDiaperCountSensor(coordinator, baby_name),
-        BabyTrackerPoopyCountSensor(coordinator, baby_name),
-        BabyTrackerWetCountSensor(coordinator, baby_name),
-        BabyTrackerTimeSinceLastFeedingSensor(coordinator, baby_name),
 
-    ]
-    
+    sensors = []
+
+    # Get list of all babies
+    babies = coordinator.data.get("babies", [])
+
+    if not babies:
+        # Fallback to single baby mode for backwards compatibility
+        baby_info = coordinator.data.get("baby_info")
+        if baby_info:
+            babies = [baby_info]
+
+    # Create sensors for each baby
+    for baby in babies:
+        if not baby:
+            continue
+        baby_name = baby.name if hasattr(baby, 'name') else "Baby"
+
+        # Create all sensor types for this baby
+        baby_sensors = [
+            BabyTrackerLastFeedingSensor(coordinator, baby_name),
+            BabyTrackerLastDiaperSensor(coordinator, baby_name),
+            BabyTrackerLastSleepSensor(coordinator, baby_name),
+            BabyTrackerLastNursingSensor(coordinator, baby_name),
+            BabyTrackerLastBathSensor(coordinator, baby_name),
+            BabyTrackerLastPumpSensor(coordinator, baby_name),
+            BabyTrackerPumpSummarySensor(coordinator, baby_name),
+            BabyTrackerLastMedicineSensor(coordinator, baby_name),
+            BabyTrackerLastMilestoneSensor(coordinator, baby_name),
+            BabyTrackerLastDoctorVisitSensor(coordinator, baby_name),
+            BabyTrackerLastVaccineSensor(coordinator, baby_name),
+            BabyTrackerWeightSensor(coordinator, baby_name),
+            BabyTrackerLengthSensor(coordinator, baby_name),
+            BabyTrackerHeadSensor(coordinator, baby_name),
+            BabyTrackerLastTemperatureSensor(coordinator, baby_name),
+            BabyTrackerFeedingCountSensor(coordinator, baby_name),
+            BabyTrackerNursingMinutesSensor(coordinator, baby_name),
+            BabyTrackerBottleOzSensor(coordinator, baby_name),
+            BabyTrackerBottleMlSensor(coordinator, baby_name),
+            BabyTrackerDiaperCountSensor(coordinator, baby_name),
+            BabyTrackerPoopyCountSensor(coordinator, baby_name),
+            BabyTrackerWetCountSensor(coordinator, baby_name),
+            BabyTrackerTimeSinceLastFeedingSensor(coordinator, baby_name),
+        ]
+
+        sensors.extend(baby_sensors)
+
     async_add_entities(sensors, True)
 
 
@@ -117,14 +157,31 @@ class BabyTrackerSensor(CoordinatorEntity, SensorEntity):
         self._attr_name = f"{baby_name} {sensor_name}"
         self._attr_unit_of_measurement = unit
         self._attr_extra_state_attributes = {}
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_{sensor_type}"
+        # Make unique_id baby-specific to support multiple babies
+        safe_baby_name = baby_name.lower().replace(" ", "_")
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_{safe_baby_name}_{sensor_type}"
+        # Set entity_id suggestion to include baby name
+        self._attr_entity_id = f"sensor.{safe_baby_name}_{sensor_type}"
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.email)},
+            "identifiers": {(DOMAIN, f"{coordinator.email}_{safe_baby_name}")},
             "name": f"Baby Tracker ({baby_name})",
             "manufacturer": "Baby Tracker",
             "model": "API Integration",
             "sw_version": "0.1.0",
         }
+
+    def _get_baby_data(self):
+        """Get data for this sensor's baby from coordinator."""
+        if not self.coordinator.data:
+            return None
+
+        # Try to get baby-specific data
+        baby_data = self.coordinator.data.get("baby_data", {})
+        if self._baby_name in baby_data:
+            return baby_data[self._baby_name]
+
+        # Fallback to backwards compatibility mode (single baby)
+        return self.coordinator.data
 
     @property
     def available(self) -> bool:
@@ -142,22 +199,12 @@ class BabyTrackerSensor(CoordinatorEntity, SensorEntity):
         self.async_write_ha_state()
 
 
-class BabyTrackerTimeSinceLastFeedingSensor(CoordinatorEntity, SensorEntity):
+class BabyTrackerTimeSinceLastFeedingSensor(BabyTrackerSensor):
     """Sensor that displays time since last feeding in hours and minutes."""
 
     def __init__(self, coordinator, baby_name):
         """Initialize the sensor."""
-        super().__init__(coordinator)
-        self._baby_name = baby_name
-        self._attr_name = f"{baby_name} Time Since Last Feeding"
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_time_since_last_feeding"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.email)},
-            "name": f"Baby Tracker ({baby_name})",
-            "manufacturer": "Baby Tracker",
-            "model": "API Integration",
-            "sw_version": "0.1.0",
-        }
+        super().__init__(coordinator, baby_name, "time_since_last_feeding", "Time Since Last Feeding", "min")
         # Define feeding status categories for Google Home integration
         self._feeding_status_categories = {
             30: "Recently fed",
@@ -169,17 +216,13 @@ class BabyTrackerTimeSinceLastFeedingSensor(CoordinatorEntity, SensorEntity):
         }
 
     @property
-    def available(self) -> bool:
-        """Return if entity is available."""
-        return self.coordinator.last_update_success and self.coordinator.data is not None
-
-    @property
     def state(self):
         """Return the state of the sensor."""
-        if not self.coordinator.data or "time_since_last_feeding" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "time_since_last_feeding" not in baby_data:
             return "Unknown"
             
-        feeding_data = self.coordinator.data["time_since_last_feeding"]
+        feeding_data = baby_data["time_since_last_feeding"]
         if not feeding_data:
             return "Unknown"
         
@@ -202,10 +245,11 @@ class BabyTrackerTimeSinceLastFeedingSensor(CoordinatorEntity, SensorEntity):
     @property
     def extra_state_attributes(self):
         """Return the state attributes."""
-        if not self.coordinator.data or "time_since_last_feeding" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "time_since_last_feeding" not in baby_data:
             return {}
             
-        feeding_data = self.coordinator.data["time_since_last_feeding"]
+        feeding_data = baby_data["time_since_last_feeding"]
         if not feeding_data:
             return {}
         
@@ -263,10 +307,11 @@ class BabyTrackerLastFeedingSensor(BabyTrackerSensor):
     @property
     def state(self):
         """Return the state of the sensor."""
-        if not self.coordinator.data or "last_feeding" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_feeding" not in baby_data:
             return None
             
-        feeding = self.coordinator.data["last_feeding"]
+        feeding = baby_data["last_feeding"]
         if not feeding:
             return "Unknown"
             
@@ -275,12 +320,13 @@ class BabyTrackerLastFeedingSensor(BabyTrackerSensor):
 
     def _handle_coordinator_update(self):
         """Handle updated data from the coordinator."""
-        if not self.coordinator.data or "last_feeding" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_feeding" not in baby_data:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
             return
             
-        feeding = self.coordinator.data["last_feeding"]
+        feeding = baby_data["last_feeding"]
         if not feeding:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
@@ -325,92 +371,253 @@ class BabyTrackerLastDiaperSensor(BabyTrackerSensor):
     @property
     def state(self):
         """Return the state of the sensor."""
-        if not self.coordinator.data or "diaper_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_diaper" not in baby_data:
             return None
-            
-        # For now, just report when the last poopy diaper was
-        diaper_summary = self.coordinator.data["diaper_summary"]
-        if not diaper_summary or "last_poopy_time" not in diaper_summary:
+
+        last_diaper = baby_data["last_diaper"]
+        if not last_diaper:
             return "Unknown"
-            
-        return diaper_summary.get("last_poopy_time", "Unknown")
+
+        # Return the diaper status (Wet, Poopy, Mixed, Dry)
+        return last_diaper.get("status", "Unknown")
 
     def _handle_coordinator_update(self):
         """Handle updated data from the coordinator."""
-        if not self.coordinator.data or "diaper_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_diaper" not in baby_data:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
             return
-            
-        diaper_summary = self.coordinator.data["diaper_summary"]
-        if not diaper_summary:
+
+        last_diaper = baby_data["last_diaper"]
+        if not last_diaper:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
             return
-            
-        # Set attributes
+
+        # Set attributes from Progress table data
         attrs = {
-            "hours_since_last_poopy": diaper_summary.get("hours_since_last_poopy"),
-            ATTR_POOPY_STREAK: diaper_summary.get("poopy_streak"),
-            "total_diapers": diaper_summary.get("total_diapers"),
-            "wet_count": diaper_summary.get("wet_count"),
-            "poopy_count": diaper_summary.get("poopy_count"),
-            "mixed_count": diaper_summary.get("mixed_count"),
+            ATTR_TIME: last_diaper.get("time"),
+            "status": last_diaper.get("status"),
+            "status_code": last_diaper.get("status_code"),
+            "pee_color": last_diaper.get("pee_color"),
+            "poo_color": last_diaper.get("poo_color"),
+            "amount": last_diaper.get("amount"),
+            "texture": last_diaper.get("texture"),
+            "count": last_diaper.get("count"),
         }
-        
+
+        # Add note if present
+        if last_diaper.get("note"):
+            attrs["note"] = last_diaper.get("note")
+
+        # Also include summary stats from diaper_summary if available
+        if "diaper_summary" in baby_data:
+            diaper_summary = baby_data["diaper_summary"]
+            if diaper_summary:
+                attrs["total_diapers_today"] = diaper_summary.get("total_diapers", 0)
+                attrs["poopy_streak"] = diaper_summary.get("poopy_streak", 0)
+
         self._attr_extra_state_attributes = attrs
         self.async_write_ha_state()
 
 
-class BabyTrackerLastDiaperSensor(BabyTrackerSensor):
-    """Sensor that displays info about the last diaper change."""
+class BabyTrackerLastSleepSensor(BabyTrackerSensor):
+    """Sensor that displays info about the last sleep."""
 
     def __init__(self, coordinator, baby_name):
         """Initialize the sensor."""
         super().__init__(
             coordinator,
             baby_name,
-            SENSOR_TYPE_LAST_DIAPER,
-            "Last Diaper",
-            None,  # No unit for this sensor
+            SENSOR_TYPE_LAST_SLEEP,
+            "Last Sleep",
+            None,  # No unit - will show "sleeping" or duration
         )
 
     @property
     def state(self):
         """Return the state of the sensor."""
-        if not self.coordinator.data or "diaper_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_sleep" not in baby_data:
             return None
-            
-        # For now, just report when the last poopy diaper was
-        diaper_summary = self.coordinator.data["diaper_summary"]
-        if not diaper_summary or "last_poopy_time" not in diaper_summary:
-            return "Unknown"
-            
-        return diaper_summary.get("last_poopy_time", "Unknown")
+
+        last_sleep = baby_data["last_sleep"]
+        if not last_sleep:
+            return "unknown"
+
+        # CRITICAL: Check if currently sleeping (duration == 0)
+        is_sleeping = last_sleep.get("is_sleeping", False)
+
+        if is_sleeping:
+            return "sleeping"
+        else:
+            # Return the completed sleep duration in minutes
+            return f"{last_sleep.get('duration', 0)} min"
 
     def _handle_coordinator_update(self):
         """Handle updated data from the coordinator."""
-        if not self.coordinator.data or "diaper_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_sleep" not in baby_data:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
             return
-            
-        diaper_summary = self.coordinator.data["diaper_summary"]
-        if not diaper_summary:
+
+        last_sleep = baby_data["last_sleep"]
+        if not last_sleep:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
             return
-            
+
+        is_sleeping = last_sleep.get("is_sleeping", False)
+        duration = last_sleep.get("duration", 0)
+        current_duration = last_sleep.get("current_duration", 0)
+
         # Set attributes
         attrs = {
-            "hours_since_last_poopy": diaper_summary.get("hours_since_last_poopy"),
-            ATTR_POOPY_STREAK: diaper_summary.get("poopy_streak"),
-            "total_diapers": diaper_summary.get("total_diapers"),
-            "wet_count": diaper_summary.get("wet_count"),
-            "poopy_count": diaper_summary.get("poopy_count"),
-            "mixed_count": diaper_summary.get("mixed_count"),
+            ATTR_TIME: last_sleep.get("time"),
+            "start_time": last_sleep.get("time"),
+            "is_sleeping": is_sleeping,  # Critical for automations!
+            "status": last_sleep.get("status", "unknown"),
+            ATTR_DURATION: duration,  # Original duration from DB
+            "current_duration": current_duration,  # Real-time if sleeping
         }
-        
+
+        # Add note if present
+        if last_sleep.get("note"):
+            attrs["note"] = last_sleep.get("note")
+
+        # Calculate hours and minutes for display
+        display_duration = current_duration if is_sleeping else duration
+        if display_duration:
+            hours = int(display_duration // 60)
+            minutes = int(display_duration % 60)
+            attrs["duration_hours"] = hours
+            attrs["duration_minutes"] = minutes
+            attrs["duration_formatted"] = f"{hours}h {minutes}m"
+
+            # Add friendly message
+            if is_sleeping:
+                attrs["message"] = f"Sleeping for {hours}h {minutes}m"
+            else:
+                attrs["message"] = f"Slept {hours}h {minutes}m"
+
+        self._attr_extra_state_attributes = attrs
+        self.async_write_ha_state()
+
+
+class BabyTrackerLastNursingSensor(BabyTrackerSensor):
+    """Sensor that displays info about the last nursing session."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            baby_name,
+            SENSOR_TYPE_LAST_NURSING,
+            "Last Nursing",
+            UNIT_MINUTES,
+        )
+
+    @property
+    def state(self):
+        """Return the state of the sensor."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_nursing" not in baby_data:
+            return None
+
+        last_nursing = baby_data["last_nursing"]
+        if not last_nursing:
+            return None
+
+        # Return the total nursing duration in minutes
+        return last_nursing.get("total_duration", 0)
+
+    def _handle_coordinator_update(self):
+        """Handle updated data from the coordinator."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_nursing" not in baby_data:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        last_nursing = baby_data["last_nursing"]
+        if not last_nursing:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        # Set attributes from Progress table data
+        attrs = {
+            ATTR_TIME: last_nursing.get("time"),
+            ATTR_DURATION: last_nursing.get("total_duration"),
+            "left_duration": last_nursing.get("left_duration"),
+            "right_duration": last_nursing.get("right_duration"),
+            "both_duration": last_nursing.get("both_duration"),
+            "finish_side": last_nursing.get("finish_side"),
+            "count": last_nursing.get("count"),
+        }
+
+        # Add note if present
+        if last_nursing.get("note"):
+            attrs["note"] = last_nursing.get("note")
+
+        self._attr_extra_state_attributes = attrs
+        self.async_write_ha_state()
+
+
+class BabyTrackerLastBathSensor(BabyTrackerSensor):
+    """Sensor that displays info about the last bath."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            baby_name,
+            SENSOR_TYPE_LAST_BATH,
+            "Last Bath",
+            None,  # No unit
+        )
+
+    @property
+    def state(self):
+        """Return the state of the sensor."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_bath" not in baby_data:
+            return None
+
+        last_bath = baby_data["last_bath"]
+        if not last_bath:
+            return "unknown"
+
+        # Return the bath type (Bubble Bath, Sponge Bath, etc.)
+        return last_bath.get("bath_type", "Bath")
+
+    def _handle_coordinator_update(self):
+        """Handle updated data from the coordinator."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_bath" not in baby_data:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        last_bath = baby_data["last_bath"]
+        if not last_bath:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        # Set attributes
+        attrs = {
+            ATTR_TIME: last_bath.get("time"),
+            "bath_type": last_bath.get("bath_type", "Bath"),
+        }
+
+        # Add note if present
+        if last_bath.get("note"):
+            attrs["note"] = last_bath.get("note")
+
         self._attr_extra_state_attributes = attrs
         self.async_write_ha_state()
 
@@ -431,10 +638,11 @@ class BabyTrackerLastTemperatureSensor(BabyTrackerSensor):
     @property
     def state(self):
         """Return the state of the sensor."""
-        if not self.coordinator.data or "last_temperature" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_temperature" not in baby_data:
             return None
             
-        temp = self.coordinator.data["last_temperature"]
+        temp = baby_data["last_temperature"]
         if not temp:
             return None
             
@@ -443,12 +651,13 @@ class BabyTrackerLastTemperatureSensor(BabyTrackerSensor):
 
     def _handle_coordinator_update(self):
         """Handle updated data from the coordinator."""
-        if not self.coordinator.data or "last_temperature" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_temperature" not in baby_data:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
             return
             
-        temp = self.coordinator.data["last_temperature"]
+        temp = baby_data["last_temperature"]
         if not temp:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
@@ -481,10 +690,11 @@ class BabyTrackerFeedingCountSensor(BabyTrackerSensor):
     @property
     def state(self):
         """Return the state of the sensor."""
-        if not self.coordinator.data or "feeding_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "feeding_summary" not in baby_data:
             return None
             
-        summary = self.coordinator.data["feeding_summary"]
+        summary = baby_data["feeding_summary"]
         if not summary:
             return None
             
@@ -492,12 +702,13 @@ class BabyTrackerFeedingCountSensor(BabyTrackerSensor):
 
     def _handle_coordinator_update(self):
         """Handle updated data from the coordinator."""
-        if not self.coordinator.data or "feeding_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "feeding_summary" not in baby_data:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
             return
             
-        summary = self.coordinator.data["feeding_summary"]
+        summary = baby_data["feeding_summary"]
         if not summary:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
@@ -532,10 +743,11 @@ class BabyTrackerNursingMinutesSensor(BabyTrackerSensor):
     @property
     def state(self):
         """Return the state of the sensor."""
-        if not self.coordinator.data or "feeding_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "feeding_summary" not in baby_data:
             return None
             
-        summary = self.coordinator.data["feeding_summary"]
+        summary = baby_data["feeding_summary"]
         if not summary:
             return None
             
@@ -543,12 +755,13 @@ class BabyTrackerNursingMinutesSensor(BabyTrackerSensor):
 
     def _handle_coordinator_update(self):
         """Handle updated data from the coordinator."""
-        if not self.coordinator.data or "feeding_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "feeding_summary" not in baby_data:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
             return
             
-        summary = self.coordinator.data["feeding_summary"]
+        summary = baby_data["feeding_summary"]
         if not summary:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
@@ -581,10 +794,11 @@ class BabyTrackerBottleOzSensor(BabyTrackerSensor):
     @property
     def state(self):
         """Return the state of the sensor."""
-        if not self.coordinator.data or "feeding_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "feeding_summary" not in baby_data:
             return None
             
-        summary = self.coordinator.data["feeding_summary"]
+        summary = baby_data["feeding_summary"]
         if not summary:
             return None
             
@@ -592,12 +806,13 @@ class BabyTrackerBottleOzSensor(BabyTrackerSensor):
 
     def _handle_coordinator_update(self):
         """Handle updated data from the coordinator."""
-        if not self.coordinator.data or "feeding_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "feeding_summary" not in baby_data:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
             return
             
-        summary = self.coordinator.data["feeding_summary"]
+        summary = baby_data["feeding_summary"]
         if not summary:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
@@ -630,10 +845,11 @@ class BabyTrackerBottleMlSensor(BabyTrackerSensor):
     @property
     def state(self):
         """Return the state of the sensor."""
-        if not self.coordinator.data or "feeding_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "feeding_summary" not in baby_data:
             return None
             
-        summary = self.coordinator.data["feeding_summary"]
+        summary = baby_data["feeding_summary"]
         if not summary:
             return None
             
@@ -641,12 +857,13 @@ class BabyTrackerBottleMlSensor(BabyTrackerSensor):
 
     def _handle_coordinator_update(self):
         """Handle updated data from the coordinator."""
-        if not self.coordinator.data or "feeding_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "feeding_summary" not in baby_data:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
             return
             
-        summary = self.coordinator.data["feeding_summary"]
+        summary = baby_data["feeding_summary"]
         if not summary:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
@@ -679,10 +896,11 @@ class BabyTrackerDiaperCountSensor(BabyTrackerSensor):
     @property
     def state(self):
         """Return the state of the sensor."""
-        if not self.coordinator.data or "diaper_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "diaper_summary" not in baby_data:
             return None
             
-        summary = self.coordinator.data["diaper_summary"]
+        summary = baby_data["diaper_summary"]
         if not summary:
             return None
             
@@ -690,12 +908,13 @@ class BabyTrackerDiaperCountSensor(BabyTrackerSensor):
 
     def _handle_coordinator_update(self):
         """Handle updated data from the coordinator."""
-        if not self.coordinator.data or "diaper_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "diaper_summary" not in baby_data:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
             return
             
-        summary = self.coordinator.data["diaper_summary"]
+        summary = baby_data["diaper_summary"]
         if not summary:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
@@ -726,10 +945,11 @@ class BabyTrackerPoopyCountSensor(BabyTrackerSensor):
     @property
     def state(self):
         """Return the state of the sensor."""
-        if not self.coordinator.data or "diaper_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "diaper_summary" not in baby_data:
             return None
             
-        summary = self.coordinator.data["diaper_summary"]
+        summary = baby_data["diaper_summary"]
         if not summary:
             return None
             
@@ -737,12 +957,13 @@ class BabyTrackerPoopyCountSensor(BabyTrackerSensor):
 
     def _handle_coordinator_update(self):
         """Handle updated data from the coordinator."""
-        if not self.coordinator.data or "diaper_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "diaper_summary" not in baby_data:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
             return
             
-        summary = self.coordinator.data["diaper_summary"]
+        summary = baby_data["diaper_summary"]
         if not summary:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
@@ -776,10 +997,11 @@ class BabyTrackerWetCountSensor(BabyTrackerSensor):
     @property
     def state(self):
         """Return the state of the sensor."""
-        if not self.coordinator.data or "diaper_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "diaper_summary" not in baby_data:
             return None
             
-        summary = self.coordinator.data["diaper_summary"]
+        summary = baby_data["diaper_summary"]
         if not summary:
             return None
             
@@ -787,12 +1009,13 @@ class BabyTrackerWetCountSensor(BabyTrackerSensor):
 
     def _handle_coordinator_update(self):
         """Handle updated data from the coordinator."""
-        if not self.coordinator.data or "diaper_summary" not in self.coordinator.data:
+        baby_data = self._get_baby_data()
+        if not baby_data or "diaper_summary" not in baby_data:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
             return
             
-        summary = self.coordinator.data["diaper_summary"]
+        summary = baby_data["diaper_summary"]
         if not summary:
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
@@ -803,6 +1026,563 @@ class BabyTrackerWetCountSensor(BabyTrackerSensor):
             "avg_wet_per_day": summary.get("avg_wet_per_day", 0),
             "pee_color_distribution": summary.get("pee_by_color", {}),
         }
-        
+
+        self._attr_extra_state_attributes = attrs
+        self.async_write_ha_state()
+
+
+class BabyTrackerLastPumpSensor(BabyTrackerSensor):
+    """Sensor that displays info about the last pump session."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            baby_name,
+            SENSOR_TYPE_LAST_PUMP,
+            "Last Pump",
+            None,  # No unit for the main state
+        )
+
+    @property
+    def state(self):
+        """Return the state of the sensor."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_pump" not in baby_data:
+            return None
+
+        last_pump = baby_data["last_pump"]
+        if not last_pump:
+            return "unknown"
+
+        # Return the total amount pumped
+        total_amount = last_pump.get("total_amount", 0)
+        unit = last_pump.get("unit", "ml")
+        return f"{total_amount} {unit}"
+
+    def _handle_coordinator_update(self):
+        """Handle updated data from the coordinator."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_pump" not in baby_data:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        last_pump = baby_data["last_pump"]
+        if not last_pump:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        # Set attributes
+        attrs = {
+            ATTR_TIME: last_pump.get("time"),
+            "left_duration": last_pump.get("left_duration", 0),
+            "right_duration": last_pump.get("right_duration", 0),
+            "total_duration": last_pump.get("total_duration", 0),
+            "left_amount": last_pump.get("left_amount", 0),
+            "right_amount": last_pump.get("right_amount", 0),
+            "total_amount": last_pump.get("total_amount", 0),
+            "unit": last_pump.get("unit", "ml"),
+            "finish_side": last_pump.get("finish_side", "Unknown"),
+        }
+
+        # Add note if present
+        if last_pump.get("note"):
+            attrs["note"] = last_pump.get("note")
+
+        self._attr_extra_state_attributes = attrs
+        self.async_write_ha_state()
+
+
+class BabyTrackerPumpSummarySensor(BabyTrackerSensor):
+    """Sensor that displays pump session statistics."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            baby_name,
+            SENSOR_TYPE_PUMP_SUMMARY,
+            "Pump Summary",
+            "sessions",  # Unit for total sessions
+        )
+
+    @property
+    def state(self):
+        """Return the state of the sensor."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "pump_summary" not in baby_data:
+            return None
+
+        pump_summary = baby_data["pump_summary"]
+        if not pump_summary:
+            return 0
+
+        # Return total number of sessions
+        return pump_summary.get("total_sessions", 0)
+
+    def _handle_coordinator_update(self):
+        """Handle updated data from the coordinator."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "pump_summary" not in baby_data:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        pump_summary = baby_data["pump_summary"]
+        if not pump_summary:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        # Set attributes
+        attrs = {
+            "total_sessions": pump_summary.get("total_sessions", 0),
+            "total_amount": pump_summary.get("total_amount", 0),
+            "total_duration": pump_summary.get("total_duration", 0),
+            "avg_amount_per_session": pump_summary.get("avg_amount_per_session", 0),
+            "avg_duration_per_session": pump_summary.get("avg_duration_per_session", 0),
+            "sessions_per_day": pump_summary.get("sessions_per_day", 0),
+            "unit": pump_summary.get("unit", "ml"),
+        }
+
+        self._attr_extra_state_attributes = attrs
+        self.async_write_ha_state()
+
+
+class BabyTrackerLastMedicineSensor(BabyTrackerSensor):
+    """Sensor that displays info about the last medicine dose."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            baby_name,
+            SENSOR_TYPE_LAST_MEDICINE,
+            "Last Medicine",
+            None,  # No unit for the main state
+        )
+
+    @property
+    def state(self):
+        """Return the state of the sensor."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_medicine" not in baby_data:
+            return None
+
+        last_medicine = baby_data["last_medicine"]
+        if not last_medicine:
+            return "unknown"
+
+        # Return the medicine name
+        return last_medicine.get("medicine_name", "Unknown Medicine")
+
+    def _handle_coordinator_update(self):
+        """Handle updated data from the coordinator."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_medicine" not in baby_data:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        last_medicine = baby_data["last_medicine"]
+        if not last_medicine:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        # Set attributes
+        attrs = {
+            ATTR_TIME: last_medicine.get("time"),
+            "medicine_name": last_medicine.get("medicine_name", "Unknown"),
+            ATTR_AMOUNT: last_medicine.get("amount", 0),
+            "unit": last_medicine.get("unit", ""),
+            "med_id": last_medicine.get("med_id"),
+        }
+
+        # Add note if present
+        if last_medicine.get("note"):
+            attrs["note"] = last_medicine.get("note")
+
+        self._attr_extra_state_attributes = attrs
+        self.async_write_ha_state()
+
+
+class BabyTrackerLastMilestoneSensor(BabyTrackerSensor):
+    """Sensor that displays info about the last milestone."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            baby_name,
+            SENSOR_TYPE_LAST_MILESTONE,
+            "Last Milestone",
+            None,  # No unit for the main state
+        )
+
+    @property
+    def state(self):
+        """Return the state of the sensor."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_milestone" not in baby_data:
+            return None
+
+        last_milestone = baby_data["last_milestone"]
+        if not last_milestone:
+            return "unknown"
+
+        # Return the milestone name
+        return last_milestone.get("milestone_name", "Unknown")
+
+    def _handle_coordinator_update(self):
+        """Handle updated data from the coordinator."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_milestone" not in baby_data:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        last_milestone = baby_data["last_milestone"]
+        if not last_milestone:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        # Set attributes
+        attrs = {
+            ATTR_TIME: last_milestone.get("time"),
+            "milestone_name": last_milestone.get("milestone_name", "Unknown"),
+            "milestone_description": last_milestone.get("milestone_description", ""),
+            "milestone_selection_id": last_milestone.get("milestone_selection_id"),
+        }
+
+        # Add note if present
+        if last_milestone.get("note"):
+            attrs["note"] = last_milestone.get("note")
+
+        self._attr_extra_state_attributes = attrs
+        self.async_write_ha_state()
+
+
+class BabyTrackerLastDoctorVisitSensor(BabyTrackerSensor):
+    """Sensor that displays info about the last doctor visit."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            baby_name,
+            SENSOR_TYPE_LAST_DOCTOR_VISIT,
+            "Last Doctor Visit",
+            None,  # No unit for the main state
+        )
+
+    @property
+    def state(self):
+        """Return the state of the sensor."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_doctor_visit" not in baby_data:
+            return None
+
+        last_doctor_visit = baby_data["last_doctor_visit"]
+        if not last_doctor_visit:
+            return "unknown"
+
+        # Return the time as the main state
+        return last_doctor_visit.get("time", "Unknown")
+
+    def _handle_coordinator_update(self):
+        """Handle updated data from the coordinator."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_doctor_visit" not in baby_data:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        last_doctor_visit = baby_data["last_doctor_visit"]
+        if not last_doctor_visit:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        # Set attributes
+        attrs = {
+            ATTR_TIME: last_doctor_visit.get("time"),
+            "is_appointment": last_doctor_visit.get("is_appointment", False),
+            "visit_type": last_doctor_visit.get("visit_type", 0),
+            "symptom": last_doctor_visit.get("symptom", ""),
+            "doctor_note": last_doctor_visit.get("doctor_note", ""),
+        }
+
+        # Add note if present
+        if last_doctor_visit.get("note"):
+            attrs["note"] = last_doctor_visit.get("note")
+
+        self._attr_extra_state_attributes = attrs
+        self.async_write_ha_state()
+
+
+class BabyTrackerLastVaccineSensor(BabyTrackerSensor):
+    """Sensor that displays info about the last vaccine."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            baby_name,
+            SENSOR_TYPE_LAST_VACCINE,
+            "Last Vaccine",
+            None,  # No unit for the main state
+        )
+
+    @property
+    def state(self):
+        """Return the state of the sensor."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_vaccine" not in baby_data:
+            return None
+
+        last_vaccine = baby_data["last_vaccine"]
+        if not last_vaccine:
+            return "unknown"
+
+        # Return the vaccine name
+        return last_vaccine.get("vaccine_name", "Unknown")
+
+    def _handle_coordinator_update(self):
+        """Handle updated data from the coordinator."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_vaccine" not in baby_data:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        last_vaccine = baby_data["last_vaccine"]
+        if not last_vaccine:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        # Set attributes
+        attrs = {
+            ATTR_TIME: last_vaccine.get("time"),
+            "vaccine_name": last_vaccine.get("vaccine_name", "Unknown"),
+            "vaccine_description": last_vaccine.get("vaccine_description", ""),
+            "vacc_id": last_vaccine.get("vacc_id"),
+        }
+
+        # Add note if present
+        if last_vaccine.get("note"):
+            attrs["note"] = last_vaccine.get("note")
+
+        self._attr_extra_state_attributes = attrs
+        self.async_write_ha_state()
+
+
+class BabyTrackerWeightSensor(BabyTrackerSensor):
+    """Sensor that displays the most recent weight measurement."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            baby_name,
+            SENSOR_TYPE_WEIGHT,
+            "Weight",
+            None,  # Unit will be set dynamically
+        )
+
+    @property
+    def state(self):
+        """Return the state of the sensor."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_growth" not in baby_data:
+            return None
+
+        last_growth = baby_data["last_growth"]
+        if not last_growth:
+            return None
+
+        # Return weight value
+        return last_growth.get("weight", 0)
+
+    @property
+    def unit_of_measurement(self):
+        """Return the unit of measurement."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_growth" not in baby_data:
+            return None
+
+        last_growth = baby_data["last_growth"]
+        if not last_growth:
+            return None
+
+        return last_growth.get("weight_unit", "lbs")
+
+    def _handle_coordinator_update(self):
+        """Handle updated data from the coordinator."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_growth" not in baby_data:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        last_growth = baby_data["last_growth"]
+        if not last_growth:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        # Set attributes
+        attrs = {
+            ATTR_TIME: last_growth.get("time"),
+            "weight": last_growth.get("weight", 0),
+            "unit": last_growth.get("weight_unit", "lbs"),
+        }
+
+        # Add note if present
+        if last_growth.get("note"):
+            attrs["note"] = last_growth.get("note")
+
+        self._attr_extra_state_attributes = attrs
+        self.async_write_ha_state()
+
+
+class BabyTrackerLengthSensor(BabyTrackerSensor):
+    """Sensor that displays the most recent length/height measurement."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            baby_name,
+            SENSOR_TYPE_LENGTH,
+            "Length",
+            None,  # Unit will be set dynamically
+        )
+
+    @property
+    def state(self):
+        """Return the state of the sensor."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_growth" not in baby_data:
+            return None
+
+        last_growth = baby_data["last_growth"]
+        if not last_growth:
+            return None
+
+        # Return length value
+        return last_growth.get("length", 0)
+
+    @property
+    def unit_of_measurement(self):
+        """Return the unit of measurement."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_growth" not in baby_data:
+            return None
+
+        last_growth = baby_data["last_growth"]
+        if not last_growth:
+            return None
+
+        return last_growth.get("length_unit", "in")
+
+    def _handle_coordinator_update(self):
+        """Handle updated data from the coordinator."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_growth" not in baby_data:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        last_growth = baby_data["last_growth"]
+        if not last_growth:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        # Set attributes
+        attrs = {
+            ATTR_TIME: last_growth.get("time"),
+            "length": last_growth.get("length", 0),
+            "unit": last_growth.get("length_unit", "in"),
+        }
+
+        # Add note if present
+        if last_growth.get("note"):
+            attrs["note"] = last_growth.get("note")
+
+        self._attr_extra_state_attributes = attrs
+        self.async_write_ha_state()
+
+
+class BabyTrackerHeadSensor(BabyTrackerSensor):
+    """Sensor that displays the most recent head circumference measurement."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            baby_name,
+            SENSOR_TYPE_HEAD,
+            "Head Circumference",
+            None,  # Unit will be set dynamically
+        )
+
+    @property
+    def state(self):
+        """Return the state of the sensor."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_growth" not in baby_data:
+            return None
+
+        last_growth = baby_data["last_growth"]
+        if not last_growth:
+            return None
+
+        # Return head value
+        return last_growth.get("head", 0)
+
+    @property
+    def unit_of_measurement(self):
+        """Return the unit of measurement."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_growth" not in baby_data:
+            return None
+
+        last_growth = baby_data["last_growth"]
+        if not last_growth:
+            return None
+
+        return last_growth.get("length_unit", "in")
+
+    def _handle_coordinator_update(self):
+        """Handle updated data from the coordinator."""
+        baby_data = self._get_baby_data()
+        if not baby_data or "last_growth" not in baby_data:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        last_growth = baby_data["last_growth"]
+        if not last_growth:
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
+            return
+
+        # Set attributes
+        attrs = {
+            ATTR_TIME: last_growth.get("time"),
+            "head": last_growth.get("head", 0),
+            "unit": last_growth.get("length_unit", "in"),
+        }
+
+        # Add note if present
+        if last_growth.get("note"):
+            attrs["note"] = last_growth.get("note")
+
         self._attr_extra_state_attributes = attrs
         self.async_write_ha_state()
