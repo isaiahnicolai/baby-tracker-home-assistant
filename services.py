@@ -54,7 +54,7 @@ TEMPERATURE_SCHEMA = vol.Schema({
 
 BATH_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
-    vol.Optional("bath_type"): vol.In(["Bubble Bath", "Sponge Bath", "Shower", "Washed Hair"]),
+    vol.Optional("bath_type"): vol.Any(None, vol.In(["Bubble Bath", "Sponge Bath", "Shower", "Washed Hair"])),
     vol.Optional("note", default=""): cv.string,
 })
 
