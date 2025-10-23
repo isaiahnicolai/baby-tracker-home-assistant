@@ -81,11 +81,15 @@ class BabyTracker:
                 baby_info_from_db = self.get_baby_info()
                 if baby_info_from_db:
                     # Convert Baby model to dict for API
+                    # Normalize timezone format (UTC -> +0000)
+                    dob = baby_info_from_db.dob.replace(" UTC", " +0000") if baby_info_from_db.dob else ""
+                    due_day = baby_info_from_db.due_day.replace(" UTC", " +0000") if baby_info_from_db.due_day else ""
+
                     self.api.baby_info = {
                         "objectID": baby_info_from_db.object_id,
                         "name": baby_info_from_db.name,
-                        "dob": baby_info_from_db.dob,
-                        "dueDay": baby_info_from_db.due_day,
+                        "dob": dob,
+                        "dueDay": due_day,
                         "gender": baby_info_from_db.gender,
                         "pictureName": baby_info_from_db.picture_name,
                         "timestamp": baby_info_from_db.timestamp,

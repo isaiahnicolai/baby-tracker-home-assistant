@@ -864,7 +864,7 @@ class BabyTrackerLocalDatabase:
     def _format_timestamp(self, timestamp):
         """
         Format a timestamp to a readable format
-        
+
         :param timestamp: Timestamp to format (can be integer or float)
         :return: Formatted timestamp string
         """
@@ -875,7 +875,8 @@ class BabyTrackerLocalDatabase:
             timestamp_float = float(timestamp)
             # Convert timestamp to datetime
             dt = datetime.fromtimestamp(timestamp_float, timezone.utc)
-            return dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+            # Use %z (lowercase) to get "+0000" format, not %Z which gives "UTC"
+            return dt.strftime("%Y-%m-%d %H:%M:%S %z")
         except Exception as e:
             print(f"Error formatting timestamp {timestamp}: {e}")
             return None

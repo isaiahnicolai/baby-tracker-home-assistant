@@ -315,11 +315,28 @@ class BabyTrackerAPI:
             _LOGGER.error(f"Error formatting timestamp: {e}")
             return ""
         
+    def _normalize_baby_info(self, baby_info):
+        """Normalize baby info to ensure correct timezone format"""
+        if not baby_info:
+            return baby_info
+
+        # Fix timezone format: "UTC" -> "+0000"
+        if "dob" in baby_info and baby_info["dob"]:
+            baby_info["dob"] = baby_info["dob"].replace(" UTC", " +0000")
+        if "dueDay" in baby_info and baby_info["dueDay"]:
+            baby_info["dueDay"] = baby_info["dueDay"].replace(" UTC", " +0000")
+
+        # Ensure BCObjectType is present
+        if "BCObjectType" not in baby_info:
+            baby_info["BCObjectType"] = "Baby"
+
+        return baby_info
+
     def get_baby_info_from_devices(self):
         """Alternate method to get baby info if seed download fails"""
         # If we can't get the baby info from the seed, let's try from transactions
         devices = self.get_devices()
-        
+
         # Try to get a transaction to extract baby info
         for device in devices:
             try:
@@ -329,10 +346,10 @@ class BabyTrackerAPI:
                 # Start with the most recent transaction and work backward if needed
                 start_id = max(0, last_sync_id - 1)
                 response = self.session.get(f"{BASE_URL}/account/transaction/{device_uuid}/{start_id}")
-                
+
                 if response.status_code in [200, 201] and response.content:
                     transactions = response.json()
-                    
+
                     # Look through transactions to find baby info
                     for transaction in transactions:
                         if "Transaction" in transaction:
@@ -340,10 +357,11 @@ class BabyTrackerAPI:
                             try:
                                 transaction_data = base64.b64decode(transaction["Transaction"])
                                 transaction_json = json.loads(transaction_data.decode('utf-8'))
-                                
+
                                 # If this transaction has baby info, use it
                                 if "baby" in transaction_json:
-                                    self.baby_info = transaction_json["baby"]
+                                    self.baby_info = self._normalize_baby_info(transaction_json["baby"])
+                                    _LOGGER.info(f"Loaded baby info from transaction: {self.baby_info.get('name')}")
                                     return self.baby_info
                             except Exception as e:
                                 _LOGGER.error(f"Error parsing transaction: {e}")
@@ -978,6 +996,23 @@ class BabyTrackerAPI:
         try:
             response = self.post_transaction(bath_data)
             _LOGGER.warning(f"=== Bath transaction posted successfully")
+
+            # Immediately write to local database so we don't have to wait for sync
+            if self.transaction_handler and self.local_db:
+                try:
+                    # Create a transaction object that the handler expects
+                    sync_id = self.get_next_sync_id(self.device_uuid) - 1  # Use the ID we just posted
+                    transaction_b64 = base64.b64encode(json.dumps(bath_data).encode('utf-8')).decode('utf-8')
+                    fake_transaction = {
+                        "SyncID": sync_id,
+                        "OPCode": 0,  # INSERT
+                        "Transaction": transaction_b64
+                    }
+                    self.transaction_handler.process_transaction(fake_transaction)
+                    _LOGGER.warning(f"=== Bath transaction written to local database")
+                except Exception as e:
+                    _LOGGER.warning(f"=== Failed to write bath to local database: {e}")
+
             return {"status": "success"}
         except Exception as e:
             _LOGGER.error(f"=== Failed to post bath: {e}", exc_info=True)
@@ -1022,6 +1057,23 @@ class BabyTrackerAPI:
 
         try:
             response = self.post_transaction(sleep_data)
+
+            # Immediately write to local database so we don't have to wait for sync
+            if self.transaction_handler and self.local_db:
+                try:
+                    # Create a transaction object that the handler expects
+                    sync_id = self.get_next_sync_id(self.device_uuid) - 1  # Use the ID we just posted
+                    transaction_b64 = base64.b64encode(json.dumps(sleep_data).encode('utf-8')).decode('utf-8')
+                    fake_transaction = {
+                        "SyncID": sync_id,
+                        "OPCode": 0,  # INSERT
+                        "Transaction": transaction_b64
+                    }
+                    self.transaction_handler.process_transaction(fake_transaction)
+                    _LOGGER.info(f"Sleep transaction written to local database")
+                except Exception as e:
+                    _LOGGER.warning(f"Failed to write sleep to local database: {e}")
+
             return {"status": "success"}
         except Exception as e:
             _LOGGER.error(f"Failed to post sleep: {e}")
