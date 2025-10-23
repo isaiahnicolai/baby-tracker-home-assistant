@@ -394,41 +394,9 @@ class BabyTrackerAPI:
                 "device_name": "",
                 "device_os_info": ""
             }
-        
+
         _LOGGER.info(f"Updated last sync ID for device {device_uuid} to {last_sync_id}")
-        
-        # Make sure the table exists
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS DeviceSyncInfo (
-                device_uuid TEXT PRIMARY KEY,
-                last_sync_id INTEGER,
-                device_name TEXT,
-                device_os_info TEXT
-            )
-        ''')
-        
-        # Update or insert the device sync info
-        cursor.execute('''
-            INSERT OR REPLACE INTO DeviceSyncInfo 
-            (device_uuid, last_sync_id) VALUES (?, ?)
-        ''', (device_uuid, last_sync_id))
-        
-        conn.commit()
-        conn.close()
-        
-        # Also update in-memory cache
-        if device_uuid in self.device_sync_info:
-            self.device_sync_info[device_uuid]["last_sync_id"] = last_sync_id
-        else:
-            self.device_sync_info[device_uuid] = {
-                "device_uuid": device_uuid,
-                "last_sync_id": last_sync_id,
-                "device_name": "",
-                "device_os_info": ""
-            }
-        
-        _LOGGER.info(f"Updated last sync ID for device {device_uuid} to {last_sync_id}")
-    
+
     def initialize_database(self, db_path=None):
         """Initialize or open the local database for transaction storage"""
         db_path = db_path or self.db_path
