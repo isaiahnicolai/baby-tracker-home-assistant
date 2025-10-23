@@ -910,12 +910,14 @@ class BabyTrackerAPI:
             _LOGGER.error(f"Failed to post activity: {e}")
             return {"status": "error", "message": str(e)}
 
-    def post_bath(self, time_str=None, note=""):
+    def post_bath(self, time_str=None, bath_type=None, duration=0, note=""):
         """
         Post a bath record
 
         Args:
             time_str: Time of bath in format 'YYYY-MM-DD HH:MM:SS +0000'
+            bath_type: Type of bath (optional) - "Bubble Bath", "Sponge Bath", "Shower", "Washed Hair"
+            duration: Duration in minutes
             note: Optional note text
 
         Returns:
@@ -931,11 +933,36 @@ class BabyTrackerAPI:
         if not time_str:
             time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
 
+        # Convert duration from minutes to seconds
+        duration_seconds = duration * 60
+
+        # Create bath description if bath_type provided
+        bath_desc = None
+        if bath_type:
+            # Map bath type to known IDs
+            bath_type_ids = {
+                "Sponge Bath": "EasyLogSeeda1b71e20-86a3-11e2-9e96-0800200c9a66",
+                "Bubble Bath": "EasyLogSeedb0bec620-86a3-11e2-9e96-0800200c9a66",
+                "Shower": "EasyLogSeed1d710590-bc09-11e2-9e96-0800200c9a66",
+                "Washed Hair": "EasyLogSeedc0395430-86a3-11e2-9e96-0800200c9a66"
+            }
+            desc_id = bath_type_ids.get(bath_type, f"EasyLogSeed{uuid.uuid4().hex[:24]}")
+
+            bath_desc = {
+                "objectID": desc_id,
+                "name": bath_type,
+                "desc": "",
+                "newFlage": "false",
+                "timestamp": "1970-01-01 00:00:00 +0000",
+                "BCObjectType": "BathDesc"
+            }
+
         # Create the bath transaction
         bath_data = {
             "BCObjectType": "Bath",
             "note": note,
             "time": time_str,
+            "duration": duration_seconds,
             "timezone": -21600,  # This should be dynamic based on user's timezone
             "pictureNote": [],
             "pictureLoaded": "true",
@@ -944,6 +971,10 @@ class BabyTrackerAPI:
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000"),
             "baby": self.baby_info
         }
+
+        # Add bath description if provided
+        if bath_desc:
+            bath_data["desc"] = bath_desc
 
         try:
             response = self.post_transaction(bath_data)
