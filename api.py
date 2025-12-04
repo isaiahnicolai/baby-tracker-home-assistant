@@ -118,28 +118,62 @@ class BabyTrackerAPI:
         """Get information about registered devices"""
         if not self.session_id:
             raise Exception("Not logged in")
-        
+
         response = self.session.get(f"{BASE_URL}/account/device")
-        
+
         if response.status_code not in [200, 201]:
             raise Exception(f"Failed to get devices: {response.status_code}")
-        
-        self.devices = response.json()
-        
+
+        server_devices = response.json()
+
+        # Build a map of our locally tracked SyncIDs (the highest we know about)
+        local_sync_ids = {}
+        if self.devices:
+            for device in self.devices:
+                local_sync_ids[device["DeviceUUID"]] = device["LastSyncID"]
+
+        # Update devices from server, but NEVER regress to a lower LastSyncID
+        # This handles race conditions where we've posted a transaction but the
+        # server returns stale data due to caching/replication lag
+        for device in server_devices:
+            device_uuid = device["DeviceUUID"]
+            server_sync_id = device["LastSyncID"]
+            local_sync_id = local_sync_ids.get(device_uuid, 0)
+
+            # Keep the higher of local vs server SyncID
+            if local_sync_id > server_sync_id:
+                _LOGGER.debug(f"Preserving local SyncID {local_sync_id} for device {device_uuid} (server returned {server_sync_id})")
+                device["LastSyncID"] = local_sync_id
+
+        self.devices = server_devices
+
         # Update device_sync_info with latest device information
+        # Again, never regress to a lower SyncID
         for device in self.devices:
             device_uuid = device["DeviceUUID"]
-            last_sync_id = device["LastSyncID"]
+            new_sync_id = device["LastSyncID"]
             device_name = device.get("DeviceName", "")
             device_os_info = device.get("DeviceOSInfo", "")
-            
+
+            # Check if we have an existing higher SyncID in device_sync_info
+            existing_sync_id = 0
+            if device_uuid in self.device_sync_info:
+                existing_sync_id = self.device_sync_info[device_uuid].get("last_sync_id", 0)
+
+            # Use the higher of existing vs new
+            final_sync_id = max(existing_sync_id, new_sync_id)
+
             self.device_sync_info[device_uuid] = {
                 "device_uuid": device_uuid,
-                "last_sync_id": last_sync_id,
+                "last_sync_id": final_sync_id,
                 "device_name": device_name,
                 "device_os_info": device_os_info
             }
-            
+
+            # Also update the device entry to stay consistent
+            if final_sync_id > device["LastSyncID"]:
+                device["LastSyncID"] = final_sync_id
+
         return self.devices
     
     def get_next_sync_id(self, device_uuid=None):
