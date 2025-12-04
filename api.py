@@ -995,18 +995,17 @@ class BabyTrackerAPI:
         if not time_str:
             time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
 
-        # Map bath type to known IDs (default to generic "Bath" type)
+        # Map bath type to known IDs (use Sponge Bath as default since it's a known type)
         bath_type_ids = {
             "Sponge Bath": "EasyLogSeeda1b71e20-86a3-11e2-9e96-0800200c9a66",
             "Bubble Bath": "EasyLogSeedb0bec620-86a3-11e2-9e96-0800200c9a66",
             "Shower": "EasyLogSeed1d710590-bc09-11e2-9e96-0800200c9a66",
             "Washed Hair": "EasyLogSeedc0395430-86a3-11e2-9e96-0800200c9a66",
-            "Bath": "EasyLogSeed00000000-0000-0000-0000-000000000001"  # Default bath type
         }
 
-        # Use provided bath_type or default to "Bath"
-        effective_bath_type = bath_type if bath_type else "Bath"
-        desc_id = bath_type_ids.get(effective_bath_type, f"EasyLogSeed{uuid.uuid4().hex[:24]}")
+        # Use provided bath_type or default to "Sponge Bath" (a known predefined type)
+        effective_bath_type = bath_type if bath_type else "Sponge Bath"
+        desc_id = bath_type_ids.get(effective_bath_type, bath_type_ids["Sponge Bath"])
 
         # Always create bath description (required for server sync)
         bath_desc = {
