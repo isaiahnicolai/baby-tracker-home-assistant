@@ -995,26 +995,28 @@ class BabyTrackerAPI:
         if not time_str:
             time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
 
-        # Create bath description if bath_type provided
-        bath_desc = None
-        if bath_type:
-            # Map bath type to known IDs
-            bath_type_ids = {
-                "Sponge Bath": "EasyLogSeeda1b71e20-86a3-11e2-9e96-0800200c9a66",
-                "Bubble Bath": "EasyLogSeedb0bec620-86a3-11e2-9e96-0800200c9a66",
-                "Shower": "EasyLogSeed1d710590-bc09-11e2-9e96-0800200c9a66",
-                "Washed Hair": "EasyLogSeedc0395430-86a3-11e2-9e96-0800200c9a66"
-            }
-            desc_id = bath_type_ids.get(bath_type, f"EasyLogSeed{uuid.uuid4().hex[:24]}")
+        # Map bath type to known IDs (default to generic "Bath" type)
+        bath_type_ids = {
+            "Sponge Bath": "EasyLogSeeda1b71e20-86a3-11e2-9e96-0800200c9a66",
+            "Bubble Bath": "EasyLogSeedb0bec620-86a3-11e2-9e96-0800200c9a66",
+            "Shower": "EasyLogSeed1d710590-bc09-11e2-9e96-0800200c9a66",
+            "Washed Hair": "EasyLogSeedc0395430-86a3-11e2-9e96-0800200c9a66",
+            "Bath": "EasyLogSeed00000000-0000-0000-0000-000000000001"  # Default bath type
+        }
 
-            bath_desc = {
-                "objectID": desc_id,
-                "name": bath_type,
-                "desc": "",
-                "newFlage": "false",
-                "timestamp": "1970-01-01 00:00:00 +0000",
-                "BCObjectType": "BathDesc"
-            }
+        # Use provided bath_type or default to "Bath"
+        effective_bath_type = bath_type if bath_type else "Bath"
+        desc_id = bath_type_ids.get(effective_bath_type, f"EasyLogSeed{uuid.uuid4().hex[:24]}")
+
+        # Always create bath description (required for server sync)
+        bath_desc = {
+            "objectID": desc_id,
+            "name": effective_bath_type,
+            "desc": "",
+            "newFlage": "false",
+            "timestamp": "1970-01-01 00:00:00 +0000",
+            "BCObjectType": "BathDesc"
+        }
 
         # Create the bath transaction (Bath objects don't have duration field)
         bath_data = {
@@ -1027,12 +1029,9 @@ class BabyTrackerAPI:
             "newFlage": "true",
             "objectID": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000"),
-            "baby": self.baby_info
+            "baby": self.baby_info,
+            "desc": bath_desc  # Always include desc for server sync
         }
-
-        # Add bath description if provided
-        if bath_desc:
-            bath_data["desc"] = bath_desc
 
         _LOGGER.warning(f"=== Posting bath transaction: {bath_data}")
         try:
