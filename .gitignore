@@ -79,3 +79,6 @@ home-assistant_v2.db
 .claude
 simple_sync.py
 sync_db.py
+package.json
+BUG_FIX.md
+IMPLEMENTATION_GUIDE.md

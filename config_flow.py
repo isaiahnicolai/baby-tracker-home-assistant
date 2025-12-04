@@ -7,7 +7,17 @@ from homeassistant import config_entries, core, exceptions
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN, CONF_EMAIL, CONF_PASSWORD, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+from .const import (
+    DOMAIN,
+    CONF_EMAIL,
+    CONF_PASSWORD,
+    CONF_SCAN_INTERVAL,
+    CONF_UNIT_SYSTEM,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_UNIT_SYSTEM,
+    UNIT_SYSTEM_IMPERIAL,
+    UNIT_SYSTEM_METRIC,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -16,6 +26,9 @@ DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_EMAIL): str,
         vol.Required(CONF_PASSWORD): str,
         vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): int,
+        vol.Optional(CONF_UNIT_SYSTEM, default=DEFAULT_UNIT_SYSTEM): vol.In(
+            [UNIT_SYSTEM_IMPERIAL, UNIT_SYSTEM_METRIC]
+        ),
     }
 )
 

@@ -1137,33 +1137,34 @@ class BabyTrackerAPI:
             _LOGGER.error(f"Failed to post nursing: {e}")
             return {"status": "error", "message": str(e)}
     
-    def post_formula(self, time_str=None, amount=0, note=""):
+    def post_formula(self, time_str=None, amount=0, is_english_measure=False, note=""):
         """
         Post a formula feeding record
-        
+
         Args:
             time_str: Time of feeding in format 'YYYY-MM-DD HH:MM:SS +0000'
-            amount: Amount in ml
+            amount: Amount (in oz if is_english_measure=True, ml if False)
+            is_english_measure: Whether amount is in oz (True) or ml (False)
             note: Optional note text
-            
+
         Returns:
             dict: API response
         """
         if not self.is_authenticated:
             raise Exception("Not authenticated")
-            
+
         if not self.baby_info:
             raise Exception("Baby information not available")
-            
+
         # Use current time if not provided
         if not time_str:
             time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
-            
+
         # Create the formula transaction
         formula_data = {
             "amount": {
                 "value": amount,
-                "englishMeasure": "false",
+                "englishMeasure": "true" if is_english_measure else "false",
                 "BCObjectType": "VolumeMeasure"
             },
             "BCObjectType": "Formula",
@@ -1184,5 +1185,52 @@ class BabyTrackerAPI:
         except Exception as e:
             _LOGGER.error(f"Failed to post formula: {e}")
             return {"status": "error", "message": str(e)}
-    
-    
+
+    def post_pumped(self, time_str=None, amount=0, is_english_measure=False, note=""):
+        """
+        Post a pumped milk feeding record (feeding expressed breast milk to baby)
+
+        Args:
+            time_str: Time of feeding in format 'YYYY-MM-DD HH:MM:SS +0000'
+            amount: Amount (in oz if is_english_measure=True, ml if False)
+            is_english_measure: Whether amount is in oz (True) or ml (False)
+            note: Optional note text
+
+        Returns:
+            dict: API response
+        """
+        if not self.is_authenticated:
+            raise Exception("Not authenticated")
+
+        if not self.baby_info:
+            raise Exception("Baby information not available")
+
+        # Use current time if not provided
+        if not time_str:
+            time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
+
+        # Create the pumped milk transaction
+        pumped_data = {
+            "amount": {
+                "value": amount,
+                "englishMeasure": "true" if is_english_measure else "false",
+                "BCObjectType": "VolumeMeasure"
+            },
+            "BCObjectType": "Pumped",
+            "note": note,
+            "time": time_str,
+            "timezone": -21600,  # This should be dynamic based on user's timezone
+            "newFlage": "true",
+            "pictureLoaded": "true",
+            "pictureNote": [],
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000"),
+            "baby": self.baby_info,
+            "objectID": str(uuid.uuid4())
+        }
+
+        try:
+            response = self.post_transaction(pumped_data)
+            return {"status": "success"}
+        except Exception as e:
+            _LOGGER.error(f"Failed to post pumped: {e}")
+            return {"status": "error", "message": str(e)}

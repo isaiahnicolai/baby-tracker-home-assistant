@@ -1160,6 +1160,7 @@ class BabyTracker:
             response = self.api.post_pumped(
                 time_str=time_str,
                 amount=amount,
+                is_english_measure=is_english_measure,
                 note=note
             )
             # Trigger a sync to update local database right after posting
@@ -1193,6 +1194,7 @@ class BabyTracker:
             response = self.api.post_formula(
                 time_str=time_str,
                 amount=amount,
+                is_english_measure=is_english_measure,
                 note=note
             )
             # Trigger a sync to update local database right after posting

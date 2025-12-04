@@ -6,7 +6,13 @@ DOMAIN = "baby_tracker"
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 CONF_SCAN_INTERVAL = "scan_interval"
+CONF_UNIT_SYSTEM = "unit_system"
 DEFAULT_SCAN_INTERVAL = 15  # minutes
+DEFAULT_UNIT_SYSTEM = "imperial"  # "imperial" (oz, lbs, F) or "metric" (ml, kg, C)
+
+# Unit system options
+UNIT_SYSTEM_IMPERIAL = "imperial"
+UNIT_SYSTEM_METRIC = "metric"
 
 # Sensor types
 SENSOR_TYPE_LAST_FEEDING = "last_feeding"
