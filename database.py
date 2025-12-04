@@ -3476,6 +3476,13 @@ class BabyTrackerLocalDatabase:
             timestamp = self.convert_timestamp(transaction_data.get('timestamp', '1970-01-01 00:00:00 +0000'))
             time = self.convert_timestamp(transaction_data.get('time', '1970-01-01 00:00:00 +0000'))
 
+            # Extract descID from various possible field names
+            desc_id = transaction_data.get('descID', '')
+            if not desc_id and 'bathType' in transaction_data:
+                desc_id = transaction_data['bathType'].get('objectID', '')
+            if not desc_id and 'desc' in transaction_data:
+                desc_id = transaction_data['desc'].get('objectID', '')
+
             cursor.execute('''
                 INSERT OR REPLACE INTO Bath (
                     ID, Timestamp, Time, Note, HasPicture, BabyID, DescID
@@ -3487,7 +3494,7 @@ class BabyTrackerLocalDatabase:
                 transaction_data.get('note', ''),
                 1 if transaction_data.get('pictureNote') else 0,
                 transaction_data.get('baby', {}).get('objectID', ''),
-                transaction_data.get('descID', '')
+                desc_id
             ))
 
             conn.commit()
@@ -3509,6 +3516,13 @@ class BabyTrackerLocalDatabase:
             cursor = conn.cursor()
             time = self.convert_timestamp(transaction_data.get('time', '1970-01-01 00:00:00 +0000'))
 
+            # Extract descID from various possible field names
+            desc_id = transaction_data.get('descID', '')
+            if not desc_id and 'bathType' in transaction_data:
+                desc_id = transaction_data['bathType'].get('objectID', '')
+            if not desc_id and 'desc' in transaction_data:
+                desc_id = transaction_data['desc'].get('objectID', '')
+
             cursor.execute('''
                 UPDATE Bath SET
                     Time = ?, Note = ?, HasPicture = ?, DescID = ?
@@ -3517,7 +3531,7 @@ class BabyTrackerLocalDatabase:
                 time,
                 transaction_data.get('note', ''),
                 1 if transaction_data.get('pictureNote') else 0,
-                transaction_data.get('descID', ''),
+                desc_id,
                 transaction_data.get('objectID', '')
             ))
 

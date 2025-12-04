@@ -1030,7 +1030,7 @@ class BabyTrackerAPI:
             "objectID": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000"),
             "baby": self.baby_info,
-            "desc": bath_desc  # Always include desc for server sync
+            "bathType": bath_desc  # Use bathType field as expected by server
         }
 
         _LOGGER.warning(f"=== Posting bath transaction: {bath_data}")
