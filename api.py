@@ -423,6 +423,14 @@ class BabyTrackerAPI:
                 "device_os_info": ""
             }
 
+        # CRITICAL: Also update self.devices cache so get_next_sync_id() returns correct value
+        # Without this, subsequent transactions would get the same SyncID and fail silently
+        if self.devices:
+            for device in self.devices:
+                if device["DeviceUUID"] == device_uuid:
+                    device["LastSyncID"] = last_sync_id
+                    break
+
         _LOGGER.info(f"Updated last sync ID for device {device_uuid} to {last_sync_id}")
 
     def initialize_database(self, db_path=None):
