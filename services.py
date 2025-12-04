@@ -6,7 +6,12 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    CONF_UNIT_SYSTEM,
+    DEFAULT_UNIT_SYSTEM,
+    UNIT_SYSTEM_IMPERIAL,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -151,6 +156,17 @@ async def async_register_services(hass: HomeAssistant):
                 return None
             return baby_id
 
+    def _get_unit_system_from_config():
+        """Get the configured unit system (imperial or metric)."""
+        for entry_id, entry_data in hass.data[DOMAIN].items():
+            if entry_id != "config" and hasattr(entry_data, "config_entry"):
+                return entry_data.config_entry.data.get(CONF_UNIT_SYSTEM, DEFAULT_UNIT_SYSTEM)
+        return DEFAULT_UNIT_SYSTEM
+
+    def _is_imperial_config():
+        """Check if the configured unit system is imperial (oz, lbs, F)."""
+        return _get_unit_system_from_config() == UNIT_SYSTEM_IMPERIAL
+
     @callback
     async def add_diaper(call: ServiceCall):
         """Add a diaper change record."""
@@ -210,40 +226,50 @@ async def async_register_services(hass: HomeAssistant):
         """Add a formula feeding record."""
         data = call.data
         coordinator = _get_coordinator(hass)
-        
+
+        # Use configured unit system as default if not explicitly provided
+        is_english = data.get("is_english_measure")
+        if is_english is None:
+            is_english = _is_imperial_config()
+
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.add_formula,
             None,  # time_str
             data.get("amount"),
-            data.get("is_english_measure", False),
+            is_english,
             data.get("note", "")
         )
-        
+
         if result["status"] != "success":
             _LOGGER.error(f"Failed to add formula: {result.get('message')}")
             return False
-            
+
         await coordinator.async_refresh()
         return True
-        
+
     @callback
     async def add_pumped(call: ServiceCall):
         """Add a pumped milk record."""
         data = call.data
         coordinator = _get_coordinator(hass)
-        
+
+        # Use configured unit system as default if not explicitly provided
+        is_english = data.get("is_english_measure")
+        if is_english is None:
+            is_english = _is_imperial_config()
+
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.add_pumped,
             None,  # time_str
             data.get("amount"),
-            data.get("is_english_measure", False),
+            is_english,
             data.get("note", "")
         )
-        
+
         if result["status"] != "success":
             _LOGGER.error(f"Failed to add pumped milk: {result.get('message')}")
             return False
-            
+
         await coordinator.async_refresh()
         return True
         
@@ -609,7 +635,7 @@ async def async_register_services(hass: HomeAssistant):
             if entry_id != "config":
                 return coordinator
         raise ValueError("No configured Baby Tracker entry found")
-    
+
     # Register the services
     hass.services.async_register(
         DOMAIN, "add_diaper", add_diaper, schema=DIAPER_SCHEMA
@@ -657,61 +683,85 @@ async def async_register_services(hass: HomeAssistant):
         DOMAIN, "sync", sync, schema=SYNC_SCHEMA
     )
 
+    # Bottle size mappings: oz -> ml (using nice round numbers)
+    BOTTLE_SIZES = {
+        "small": {"oz": 2, "ml": 60},
+        "medium": {"oz": 4, "ml": 120},
+        "large": {"oz": 6, "ml": 180},
+        "xlarge": {"oz": 8, "ml": 240},
+        "4oz": {"oz": 4, "ml": 120},
+        "6oz": {"oz": 6, "ml": 180},
+        "8oz": {"oz": 8, "ml": 240},
+    }
+
+    def _get_bottle_amount(size_key):
+        """Get the bottle amount based on configured unit system."""
+        is_imperial = _is_imperial_config()
+        size = BOTTLE_SIZES.get(size_key, BOTTLE_SIZES["medium"])
+        return (size["oz"], True) if is_imperial else (size["ml"], False)
+
     # Quick action bottle services
     @callback
     async def add_4oz_bottle(call: ServiceCall):
-        """Quick action: Add a 4oz bottle."""
+        """Quick action: Add a 4oz/120ml bottle based on unit config."""
         data = dict(call.data)
-        data["amount"] = 4
-        data["is_english_measure"] = True
+        amount, is_english = _get_bottle_amount("4oz")
+        data["amount"] = amount
+        data["is_english_measure"] = is_english
         await add_formula(ServiceCall(DOMAIN, "add_formula", data))
 
     @callback
     async def add_6oz_bottle(call: ServiceCall):
-        """Quick action: Add a 6oz bottle."""
+        """Quick action: Add a 6oz/180ml bottle based on unit config."""
         data = dict(call.data)
-        data["amount"] = 6
-        data["is_english_measure"] = True
+        amount, is_english = _get_bottle_amount("6oz")
+        data["amount"] = amount
+        data["is_english_measure"] = is_english
         await add_formula(ServiceCall(DOMAIN, "add_formula", data))
 
     @callback
     async def add_8oz_bottle(call: ServiceCall):
-        """Quick action: Add an 8oz bottle."""
+        """Quick action: Add an 8oz/240ml bottle based on unit config."""
         data = dict(call.data)
-        data["amount"] = 8
-        data["is_english_measure"] = True
+        amount, is_english = _get_bottle_amount("8oz")
+        data["amount"] = amount
+        data["is_english_measure"] = is_english
         await add_formula(ServiceCall(DOMAIN, "add_formula", data))
 
     @callback
     async def add_small_bottle(call: ServiceCall):
-        """Quick action: Add a 2oz bottle."""
+        """Quick action: Add a small (2oz/60ml) bottle based on unit config."""
         data = dict(call.data)
-        data["amount"] = 2
-        data["is_english_measure"] = True
+        amount, is_english = _get_bottle_amount("small")
+        data["amount"] = amount
+        data["is_english_measure"] = is_english
         await add_formula(ServiceCall(DOMAIN, "add_formula", data))
 
     @callback
     async def add_medium_bottle(call: ServiceCall):
-        """Quick action: Add a 4oz bottle."""
+        """Quick action: Add a medium (4oz/120ml) bottle based on unit config."""
         data = dict(call.data)
-        data["amount"] = 4
-        data["is_english_measure"] = True
+        amount, is_english = _get_bottle_amount("medium")
+        data["amount"] = amount
+        data["is_english_measure"] = is_english
         await add_formula(ServiceCall(DOMAIN, "add_formula", data))
 
     @callback
     async def add_large_bottle(call: ServiceCall):
-        """Quick action: Add a 6oz bottle."""
+        """Quick action: Add a large (6oz/180ml) bottle based on unit config."""
         data = dict(call.data)
-        data["amount"] = 6
-        data["is_english_measure"] = True
+        amount, is_english = _get_bottle_amount("large")
+        data["amount"] = amount
+        data["is_english_measure"] = is_english
         await add_formula(ServiceCall(DOMAIN, "add_formula", data))
 
     @callback
     async def add_xlarge_bottle(call: ServiceCall):
-        """Quick action: Add an 8oz bottle."""
+        """Quick action: Add an extra large (8oz/240ml) bottle based on unit config."""
         data = dict(call.data)
-        data["amount"] = 8
-        data["is_english_measure"] = True
+        amount, is_english = _get_bottle_amount("xlarge")
+        data["amount"] = amount
+        data["is_english_measure"] = is_english
         await add_formula(ServiceCall(DOMAIN, "add_formula", data))
 
     # Register quick action services
