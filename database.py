@@ -1916,7 +1916,7 @@ class BabyTrackerLocalDatabase:
     def insert_medicine_transaction(self, transaction_data: Dict) -> bool:
         """
         Insert a medicine administration record into the Medicine table
-        
+
         :param transaction_data: Decoded medicine transaction data (either Medication or Medicine)
         :return: True if insertion was successful, False otherwise
         """
@@ -1930,17 +1930,40 @@ class BabyTrackerLocalDatabase:
             # Extract and convert data
             timestamp = self.convert_timestamp(transaction_data.get('timestamp', '1970-01-01 00:00:00 +0000'))
             time = self.convert_timestamp(transaction_data.get('time', '1970-01-01 00:00:00 +0000'))
-            
-            # Get medicine ID - handle both naming conventions
+
+            # Get medicine ID - handle all naming conventions
             med_id = transaction_data.get('medID', '')
+            med_selection = None
             if not med_id:
+                # Try medicationSelection field naming (from Baby Tracker app)
+                if 'medicationSelection' in transaction_data:
+                    med_selection = transaction_data['medicationSelection']
+                    med_id = med_selection.get('objectID', '')
                 # Try medication field naming
-                if 'medication' in transaction_data:
-                    med_id = transaction_data['medication'].get('objectID', '')
+                elif 'medication' in transaction_data:
+                    med_selection = transaction_data['medication']
+                    med_id = med_selection.get('objectID', '')
                 # Try medicine field naming
                 elif 'medicine' in transaction_data:
-                    med_id = transaction_data['medicine'].get('objectID', '')
-            
+                    med_selection = transaction_data['medicine']
+                    med_id = med_selection.get('objectID', '')
+
+            # Ensure MedicineSelection exists if we have medication data
+            if med_id and med_selection and isinstance(med_selection, dict):
+                cursor.execute('''
+                    INSERT OR REPLACE INTO MedicineSelection (
+                        ID, Timestamp, Name, AmountPerTime, Interval, Unit, Prescription
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    med_id,
+                    self.convert_timestamp(med_selection.get('timestamp', '1970-01-01 00:00:00 +0000')),
+                    med_selection.get('name', ''),
+                    float(med_selection.get('amountPerTime', 0.0)),
+                    int(med_selection.get('interval', 0)),
+                    med_selection.get('unit', 'ml'),
+                    1 if med_selection.get('prescription', False) else 0
+                ))
+
             # Get baby ID
             baby_id = transaction_data.get('baby_id', '')
             if not baby_id and 'baby' in transaction_data:
@@ -2889,7 +2912,7 @@ class BabyTrackerLocalDatabase:
     def update_medicine_transaction(self, transaction_data):
         """
         Update a medicine transaction in the Medicine table
-        
+
         :param transaction_data: Updated medicine transaction data
         :return: True if update was successful, False otherwise
         """
@@ -2899,22 +2922,45 @@ class BabyTrackerLocalDatabase:
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.cursor()
-            
+
             # Extract and convert data
             object_id = transaction_data.get('objectID', '')
             timestamp = self.convert_timestamp(transaction_data.get('timestamp', '1970-01-01 00:00:00 +0000'))
             time = self.convert_timestamp(transaction_data.get('time', '1970-01-01 00:00:00 +0000'))
-            
-            # Get medicine ID - handle both naming conventions
+
+            # Get medicine ID - handle all naming conventions
             med_id = transaction_data.get('medID', '')
+            med_selection = None
             if not med_id:
+                # Try medicationSelection field naming (from Baby Tracker app)
+                if 'medicationSelection' in transaction_data:
+                    med_selection = transaction_data['medicationSelection']
+                    med_id = med_selection.get('objectID', '')
                 # Try medication field naming
-                if 'medication' in transaction_data:
-                    med_id = transaction_data['medication'].get('objectID', '')
+                elif 'medication' in transaction_data:
+                    med_selection = transaction_data['medication']
+                    med_id = med_selection.get('objectID', '')
                 # Try medicine field naming
                 elif 'medicine' in transaction_data:
-                    med_id = transaction_data['medicine'].get('objectID', '')
-            
+                    med_selection = transaction_data['medicine']
+                    med_id = med_selection.get('objectID', '')
+
+            # Ensure MedicineSelection exists if we have medication data
+            if med_id and med_selection and isinstance(med_selection, dict):
+                cursor.execute('''
+                    INSERT OR REPLACE INTO MedicineSelection (
+                        ID, Timestamp, Name, AmountPerTime, Interval, Unit, Prescription
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    med_id,
+                    self.convert_timestamp(med_selection.get('timestamp', '1970-01-01 00:00:00 +0000')),
+                    med_selection.get('name', ''),
+                    float(med_selection.get('amountPerTime', 0.0)),
+                    int(med_selection.get('interval', 0)),
+                    med_selection.get('unit', 'ml'),
+                    1 if med_selection.get('prescription', False) else 0
+                ))
+
             # Prepare update query
             cursor.execute('''
                 UPDATE Medicine SET
@@ -2935,10 +2981,10 @@ class BabyTrackerLocalDatabase:
                 object_id,
                 timestamp
             ))
-            
+
             conn.commit()
             return cursor.rowcount > 0
-        
+
         except Exception as e:
             print(f"Error updating medicine transaction: {e}")
             conn.rollback()
@@ -3483,6 +3529,14 @@ class BabyTrackerLocalDatabase:
             if not desc_id and 'desc' in transaction_data:
                 desc_id = transaction_data['desc'].get('objectID', '')
 
+            # Ensure BathDesc exists if we have a bathType with name
+            bath_type = transaction_data.get('bathType', {})
+            if desc_id and isinstance(bath_type, dict) and bath_type.get('name'):
+                cursor.execute('''
+                    INSERT OR IGNORE INTO BathDesc (ID, Name)
+                    VALUES (?, ?)
+                ''', (desc_id, bath_type.get('name', 'Bath')))
+
             cursor.execute('''
                 INSERT OR REPLACE INTO Bath (
                     ID, Timestamp, Time, Note, HasPicture, BabyID, DescID
@@ -3492,7 +3546,7 @@ class BabyTrackerLocalDatabase:
                 timestamp,
                 time,
                 transaction_data.get('note', ''),
-                1 if transaction_data.get('pictureNote') else 0,
+                1 if transaction_data.get('hasPicture') or transaction_data.get('pictureLoaded') else 0,
                 transaction_data.get('baby', {}).get('objectID', ''),
                 desc_id
             ))
@@ -3523,6 +3577,14 @@ class BabyTrackerLocalDatabase:
             if not desc_id and 'desc' in transaction_data:
                 desc_id = transaction_data['desc'].get('objectID', '')
 
+            # Ensure BathDesc exists if we have a bathType with name
+            bath_type = transaction_data.get('bathType', {})
+            if desc_id and isinstance(bath_type, dict) and bath_type.get('name'):
+                cursor.execute('''
+                    INSERT OR IGNORE INTO BathDesc (ID, Name)
+                    VALUES (?, ?)
+                ''', (desc_id, bath_type.get('name', 'Bath')))
+
             cursor.execute('''
                 UPDATE Bath SET
                     Time = ?, Note = ?, HasPicture = ?, DescID = ?
@@ -3530,7 +3592,7 @@ class BabyTrackerLocalDatabase:
             ''', (
                 time,
                 transaction_data.get('note', ''),
-                1 if transaction_data.get('pictureNote') else 0,
+                1 if transaction_data.get('hasPicture') or transaction_data.get('pictureLoaded') else 0,
                 desc_id,
                 transaction_data.get('objectID', '')
             ))

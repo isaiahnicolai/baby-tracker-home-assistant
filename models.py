@@ -775,43 +775,47 @@ class MedicationSelection(BaseModel):
 
 class Medication(BaseModel):
     """Model representing a medicine administration record"""
-    
+
     def __init__(self, data: Dict[str, Any] = None):
         self.time: str = None
         self.med_id: str = None
         self.amount: float = 0.0
+        self.unit: str = "ml"
         self.note: str = ""
         self.baby_id: str = None
         self.picture_loaded: bool = False
         self.medication_selection: MedicationSelection = None
-        
+
         super().__init__(data)
-        self.object_type = "Medication"  # Changed from Medicine
-    
+        self.object_type = "Medication"
+
     def from_dict(self, data: Dict[str, Any]) -> None:
         """Load medicine data from a dictionary"""
         super().from_dict(data)
         self.time = data.get("time", self.timestamp)
         self.amount = float(data.get("amount", 0.0))
         self.note = data.get("note", "")
-        
-        # Handle medicine selection reference
-        medicine_data = data.get("medicine", {})
-        if isinstance(medicine_data, dict):
-            self.medicine_selection = MedicineSelection(medicine_data)
+
+        # Handle medicine selection reference - support multiple field names
+        medicine_data = data.get("medicationSelection") or data.get("medication") or data.get("medicine", {})
+        if isinstance(medicine_data, dict) and medicine_data:
+            self.medication_selection = MedicationSelection(medicine_data)
             self.med_id = medicine_data.get("objectID", "")
+            self.unit = medicine_data.get("unit", "ml")
         else:
             self.med_id = data.get("medID", "")
-        
+
         # Handle baby reference
         baby_data = data.get("baby", {})
         if isinstance(baby_data, dict):
             self.baby_id = baby_data.get("objectID", "")
         else:
             self.baby_id = data.get("baby_id", "")
-        
-        self.picture_loaded = str(data.get("pictureLoaded", "false")).lower() == "true"
-    
+
+        self.picture_loaded = data.get("pictureLoaded", False)
+        if isinstance(self.picture_loaded, str):
+            self.picture_loaded = self.picture_loaded.lower() == "true"
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert medicine model to a dictionary"""
         data = super().to_dict()
@@ -821,15 +825,15 @@ class Medication(BaseModel):
             "amount": self.amount,
             "note": self.note,
             "pictureNote": [],
-            "pictureLoaded": str(self.picture_loaded).lower()
-       })
+            "pictureLoaded": self.picture_loaded
+        })
         if self.baby_id:
-                data["baby"] = {"objectID": self.baby_id}
-        
-        # Include medicine selection if available
-        if self.medicine_selection:
-            data["medicine"] = self.medicine_selection.to_dict()
-            
+            data["baby"] = {"objectID": self.baby_id}
+
+        # Include medication selection if available
+        if self.medication_selection:
+            data["medicationSelection"] = self.medication_selection.to_dict()
+
         return data
 class OtherActivityDesc(BaseModel):
     """Model representing an other activity description"""

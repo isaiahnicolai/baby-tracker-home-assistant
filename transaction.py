@@ -66,6 +66,31 @@ class TransactionHandler:
     def _create_model_from_data(self, data):
         """Create an appropriate model object based on data type"""
         object_type = data.get("BCObjectType", "")
+
+        # Special handling: OtherActivity with desc.name == "Bath" should be treated as a Bath
+        if object_type == "OtherActivity":
+            desc = data.get("desc", {})
+            desc_name = desc.get("name", "") if isinstance(desc, dict) else ""
+            if desc_name == "Bath":
+                logger.info(f"Converting OtherActivity with desc.name='Bath' to Bath record")
+                # Transform the data to Bath format
+                bath_data = {
+                    "BCObjectType": "Bath",
+                    "objectID": data.get("objectID", ""),
+                    "timestamp": data.get("timestamp", ""),
+                    "time": data.get("time", ""),
+                    "note": data.get("note", ""),
+                    "baby": data.get("baby", {}),
+                    "hasPicture": data.get("pictureLoaded", False),
+                    "descID": desc.get("objectID", ""),
+                    # Map desc to bathType format
+                    "bathType": {
+                        "objectID": desc.get("objectID", ""),
+                        "name": desc.get("name", "Bath"),
+                    }
+                }
+                object_type = "Bath"
+                data = bath_data
         
         # Check if this object type requires a baby reference
         baby_required_types = [
