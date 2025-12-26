@@ -1351,13 +1351,16 @@ class BabyTracker:
                 _LOGGER.info(f"Sleep started for baby {baby_id}, objectID: {response.get('objectID')}")
             else:
                 # Ending sleep: get start time and objectID from local DB, calculate duration, UPDATE existing record
+                _LOGGER.warning(f"=== Wake up requested for baby {baby_id}")
                 if not self.db:
                     if os.path.exists(self.db_path):
                         self.db = BabyTrackerLocalDatabase(self.db_path)
                         self.api.local_db = self.db
                     else:
+                        _LOGGER.error("=== Database not initialized")
                         return {"status": "error", "message": "Database not initialized"}
 
+                _LOGGER.warning(f"=== Querying for active sleep with BabyID={baby_id}")
                 cursor = self.db.conn.execute('''
                     SELECT ID, Time FROM Sleep
                     WHERE BabyID = ? AND Duration = 0
@@ -1366,11 +1369,14 @@ class BabyTracker:
                 ''', (baby_id,))
 
                 row = cursor.fetchone()
+                _LOGGER.warning(f"=== Database query result: {row}")
                 if row:
                     sleep_object_id, start_time = row
                     duration_seconds = time_unix - start_time
                     # Convert to minutes (API uses minutes, not seconds)
                     duration_minutes = duration_seconds // 60
+
+                    _LOGGER.warning(f"=== Found active sleep: objectID={sleep_object_id}, start_time={start_time}, duration={duration_minutes}min")
 
                     # UPDATE the existing sleep record (don't create a new one)
                     start_time_str = datetime.fromtimestamp(start_time, timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
@@ -1380,9 +1386,10 @@ class BabyTracker:
                         duration_minutes=duration_minutes,
                         note=note
                     )
+                    _LOGGER.warning(f"=== update_sleep response: {response}")
                     _LOGGER.info(f"Sleep ended for baby {baby_id}, duration: {duration_minutes} minutes (objectID: {sleep_object_id})")
                 else:
-                    _LOGGER.warning(f"No active sleep session found for baby {baby_id}")
+                    _LOGGER.warning(f"=== No active sleep session found for baby {baby_id}")
                     return {"status": "error", "message": "No active sleep session found"}
 
             # Trigger a sync to update local database

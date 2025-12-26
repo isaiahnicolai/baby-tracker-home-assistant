@@ -734,19 +734,22 @@ class BabyTrackerAPI:
         transaction_b64 = base64.b64encode(transaction_data.encode('utf-8')).decode('utf-8')
         
         # Prepare the payload
+        # Note: OPCode must be a string (e.g., "0" or "1"), not an integer
         payload = {
+            "OPCode": str(op_code),
             "SyncID": next_sync_id,
-            "OPCode": op_code,
             "Transaction": transaction_b64
         }
         
         # Post the transaction
+        _LOGGER.warning(f"=== post_transaction payload: OPCode={payload['OPCode']}, SyncID={payload['SyncID']}")
         response = self.session.post(
             f"{BASE_URL}/account/transaction",
             headers={'Content-Type': 'application/json'},
             json=payload
         )
-        
+
+        _LOGGER.warning(f"=== post_transaction response: status={response.status_code}, body={response.text[:200] if response.text else 'empty'}")
         if response.status_code not in [200, 201]:
             raise Exception(f"Failed to post transaction: {response.status_code} - {response.text}")
             
