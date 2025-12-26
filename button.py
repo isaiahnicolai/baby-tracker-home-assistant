@@ -54,6 +54,8 @@ async def async_setup_entry(
             # Sleep buttons
             BabyTrackerSleepButton(coordinator, baby_name, "Start Sleep", is_start=True),
             BabyTrackerSleepButton(coordinator, baby_name, "End Sleep", is_start=False),
+            # Medicine buttons
+            BabyTrackerMedicineButton(coordinator, baby_name, "Tylenol", 3.75),
         ])
 
     async_add_entities(buttons, True)
@@ -238,6 +240,55 @@ class BabyTrackerSleepButton(CoordinatorEntity, ButtonEntity):
             _LOGGER.warning(f"=== SLEEP BUTTON service call completed")
         except Exception as e:
             _LOGGER.error(f"=== SLEEP BUTTON error: {str(e)}", exc_info=True)
+
+        # Refresh coordinator data
+        await self.coordinator.async_request_refresh()
+
+
+class BabyTrackerMedicineButton(CoordinatorEntity, ButtonEntity):
+    """Button to quickly log a medicine dose."""
+
+    def __init__(self, coordinator, baby_name, medicine_name, amount):
+        """Initialize the button."""
+        super().__init__(coordinator)
+        self._baby_name = baby_name
+        self._medicine_name = medicine_name
+        self._amount = amount
+
+        safe_baby_name = baby_name.lower().replace(" ", "_")
+        safe_medicine = medicine_name.lower().replace(" ", "_")
+        self._attr_name = f"{baby_name} Give {medicine_name}"
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_{safe_baby_name}_give_{safe_medicine}"
+        self._attr_icon = "mdi:medical-bag"
+
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{coordinator.email}_{safe_baby_name}")},
+            "name": f"Baby Tracker ({baby_name})",
+            "manufacturer": "Baby Tracker",
+            "model": "API Integration",
+            "sw_version": "0.1.0",
+        }
+
+    async def async_press(self) -> None:
+        """Handle button press."""
+        _LOGGER.warning(f"=== MEDICINE BUTTON PRESSED: {self._medicine_name} ({self._amount}ml) for {self._baby_name}")
+
+        # Call the log_medicine service
+        try:
+            await self.hass.services.async_call(
+                DOMAIN,
+                "log_medicine",
+                {
+                    "baby_name": self._baby_name,
+                    "medicine_name": self._medicine_name,
+                    "amount": self._amount,
+                    "note": "Added from Home Assistant"
+                },
+                blocking=True
+            )
+            _LOGGER.warning(f"=== MEDICINE BUTTON service call completed")
+        except Exception as e:
+            _LOGGER.error(f"=== MEDICINE BUTTON error: {str(e)}", exc_info=True)
 
         # Refresh coordinator data
         await self.coordinator.async_request_refresh()

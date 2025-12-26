@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 import voluptuous as vol
 
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
@@ -167,7 +167,6 @@ async def async_register_services(hass: HomeAssistant):
         """Check if the configured unit system is imperial (oz, lbs, F)."""
         return _get_unit_system_from_config() == UNIT_SYSTEM_IMPERIAL
 
-    @callback
     async def add_diaper(call: ServiceCall):
         """Add a diaper change record."""
         data = call.data
@@ -194,7 +193,6 @@ async def async_register_services(hass: HomeAssistant):
         await coordinator.async_refresh()
         return True
         
-    @callback
     async def add_nursing(call: ServiceCall):
         """Add a nursing session record."""
         data = call.data
@@ -221,7 +219,6 @@ async def async_register_services(hass: HomeAssistant):
         await coordinator.async_refresh()
         return True
         
-    @callback
     async def add_formula(call: ServiceCall):
         """Add a formula feeding record."""
         data = call.data
@@ -247,7 +244,6 @@ async def async_register_services(hass: HomeAssistant):
         await coordinator.async_refresh()
         return True
 
-    @callback
     async def add_pumped(call: ServiceCall):
         """Add a pumped milk record."""
         data = call.data
@@ -273,7 +269,6 @@ async def async_register_services(hass: HomeAssistant):
         await coordinator.async_refresh()
         return True
         
-    @callback
     async def add_temperature(call: ServiceCall):
         """Add a temperature record."""
         data = call.data
@@ -294,7 +289,6 @@ async def async_register_services(hass: HomeAssistant):
         await coordinator.async_refresh()
         return True
 
-    @callback
     async def log_bath(call: ServiceCall):
         """Log a bath record."""
         _LOGGER.warning(f"=== log_bath service called with data: {call.data}")
@@ -320,7 +314,6 @@ async def async_register_services(hass: HomeAssistant):
             _LOGGER.error(f"Exception in log_bath service: {str(e)}", exc_info=True)
             return False
 
-    @callback
     async def log_pump(call: ServiceCall):
         """Log a pump session record."""
         data = call.data
@@ -351,7 +344,6 @@ async def async_register_services(hass: HomeAssistant):
         await coordinator.async_refresh()
         return True
 
-    @callback
     async def log_medicine(call: ServiceCall):
         """Log a medicine administration record."""
         data = call.data
@@ -392,7 +384,6 @@ async def async_register_services(hass: HomeAssistant):
         await coordinator.async_refresh()
         return True
 
-    @callback
     async def log_sleep(call: ServiceCall):
         """Log a sleep start or end event."""
         _LOGGER.warning(f"=== log_sleep service called with data: {call.data}")
@@ -428,7 +419,6 @@ async def async_register_services(hass: HomeAssistant):
             _LOGGER.error(f"Exception in log_sleep service: {str(e)}", exc_info=True)
             return False
 
-    @callback
     async def log_growth(call: ServiceCall):
         """Log a growth measurement record."""
         data = call.data
@@ -459,7 +449,6 @@ async def async_register_services(hass: HomeAssistant):
         await coordinator.async_refresh()
         return True
 
-    @callback
     async def log_milestone(call: ServiceCall):
         """Log a milestone achievement record."""
         data = call.data
@@ -505,7 +494,6 @@ async def async_register_services(hass: HomeAssistant):
         await coordinator.async_refresh()
         return True
 
-    @callback
     async def log_doctor_visit(call: ServiceCall):
         """Log a doctor visit record."""
         data = call.data
@@ -535,7 +523,6 @@ async def async_register_services(hass: HomeAssistant):
         await coordinator.async_refresh()
         return True
 
-    @callback
     async def log_vaccine(call: ServiceCall):
         """Log a vaccine administration record."""
         data = call.data
@@ -582,7 +569,6 @@ async def async_register_services(hass: HomeAssistant):
         await coordinator.async_refresh()
         return True
 
-    @callback
     async def list_babies(call: ServiceCall):
         """List all babies in the database."""
         coordinator = _get_coordinator(hass)
@@ -613,7 +599,6 @@ async def async_register_services(hass: HomeAssistant):
             "count": len(babies)
         }
 
-    @callback
     async def sync(call: ServiceCall):
         """Sync data with the server."""
         coordinator = _get_coordinator(hass)
@@ -701,7 +686,6 @@ async def async_register_services(hass: HomeAssistant):
         return (size["oz"], True) if is_imperial else (size["ml"], False)
 
     # Quick action bottle services
-    @callback
     async def add_4oz_bottle(call: ServiceCall):
         """Quick action: Add a 4oz/120ml bottle based on unit config."""
         data = dict(call.data)
@@ -710,7 +694,6 @@ async def async_register_services(hass: HomeAssistant):
         data["is_english_measure"] = is_english
         await add_formula(ServiceCall(DOMAIN, "add_formula", data))
 
-    @callback
     async def add_6oz_bottle(call: ServiceCall):
         """Quick action: Add a 6oz/180ml bottle based on unit config."""
         data = dict(call.data)
@@ -719,7 +702,6 @@ async def async_register_services(hass: HomeAssistant):
         data["is_english_measure"] = is_english
         await add_formula(ServiceCall(DOMAIN, "add_formula", data))
 
-    @callback
     async def add_8oz_bottle(call: ServiceCall):
         """Quick action: Add an 8oz/240ml bottle based on unit config."""
         data = dict(call.data)
@@ -728,7 +710,6 @@ async def async_register_services(hass: HomeAssistant):
         data["is_english_measure"] = is_english
         await add_formula(ServiceCall(DOMAIN, "add_formula", data))
 
-    @callback
     async def add_small_bottle(call: ServiceCall):
         """Quick action: Add a small (2oz/60ml) bottle based on unit config."""
         data = dict(call.data)
@@ -737,7 +718,6 @@ async def async_register_services(hass: HomeAssistant):
         data["is_english_measure"] = is_english
         await add_formula(ServiceCall(DOMAIN, "add_formula", data))
 
-    @callback
     async def add_medium_bottle(call: ServiceCall):
         """Quick action: Add a medium (4oz/120ml) bottle based on unit config."""
         data = dict(call.data)
@@ -746,7 +726,6 @@ async def async_register_services(hass: HomeAssistant):
         data["is_english_measure"] = is_english
         await add_formula(ServiceCall(DOMAIN, "add_formula", data))
 
-    @callback
     async def add_large_bottle(call: ServiceCall):
         """Quick action: Add a large (6oz/180ml) bottle based on unit config."""
         data = dict(call.data)
@@ -755,7 +734,6 @@ async def async_register_services(hass: HomeAssistant):
         data["is_english_measure"] = is_english
         await add_formula(ServiceCall(DOMAIN, "add_formula", data))
 
-    @callback
     async def add_xlarge_bottle(call: ServiceCall):
         """Quick action: Add an extra large (8oz/240ml) bottle based on unit config."""
         data = dict(call.data)
