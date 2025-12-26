@@ -1070,33 +1070,42 @@ class BabyTrackerAPI:
         Returns:
             dict: API response
         """
+        _LOGGER.warning(f"=== api.post_sleep called: duration={duration}, note={note}")
         if not self.is_authenticated:
+            _LOGGER.error("=== post_sleep: Not authenticated")
             raise Exception("Not authenticated")
 
         if not self.baby_info:
+            _LOGGER.error("=== post_sleep: Baby information not available")
             raise Exception("Baby information not available")
 
         # Use current time if not provided
         if not time_str:
             time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
 
+        # Generate objectID for tracking
+        object_id = str(uuid.uuid4())
+
         # Create the sleep transaction
+        # Note: pictureLoaded and newFlage must be booleans (not strings) for the API to accept
         sleep_data = {
             "BCObjectType": "Sleep",
-            "note": note,
-            "time": time_str,
             "duration": duration,
-            "timezone": -21600,  # This should be dynamic based on user's timezone
+            "baby": self.baby_info,
+            "note": note,
+            "pictureLoaded": True,
             "pictureNote": [],
-            "pictureLoaded": "true",
-            "newFlage": "true",
-            "objectID": str(uuid.uuid4()),
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000"),
-            "baby": self.baby_info
+            "time": time_str,
+            "timezone": -21600,  # This should be dynamic based on user's timezone
+            "newFlage": True,
+            "objectID": object_id,
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
         }
 
+        _LOGGER.warning(f"=== Posting sleep transaction: {sleep_data}")
         try:
             response = self.post_transaction(sleep_data)
+            _LOGGER.warning(f"=== Sleep transaction posted successfully with objectID: {object_id}")
 
             # Immediately write to local database so we don't have to wait for sync
             if self.transaction_handler and self.local_db:
@@ -1110,13 +1119,85 @@ class BabyTrackerAPI:
                         "Transaction": transaction_b64
                     }
                     self.transaction_handler.process_transaction(fake_transaction)
-                    _LOGGER.info(f"Sleep transaction written to local database")
+                    _LOGGER.warning(f"=== Sleep transaction written to local database")
                 except Exception as e:
-                    _LOGGER.warning(f"Failed to write sleep to local database: {e}")
+                    _LOGGER.warning(f"=== Failed to write sleep to local database: {e}")
+
+            return {"status": "success", "objectID": object_id}
+        except Exception as e:
+            _LOGGER.error(f"=== Failed to post sleep: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    def update_sleep(self, object_id, time_str, duration_minutes, note=""):
+        """
+        Update an existing sleep record (for wake-up/end sleep).
+        Uses OPCode 1 (UPDATE) to modify the existing record.
+
+        Args:
+            object_id: The objectID of the sleep record to update (from post_sleep)
+            time_str: Original sleep start time in format 'YYYY-MM-DD HH:MM:SS +0000'
+            duration_minutes: Duration in minutes
+            note: Optional note text
+
+        Returns:
+            dict: API response
+        """
+        _LOGGER.warning(f"=== api.update_sleep called: object_id={object_id}, duration_minutes={duration_minutes}")
+        if not self.is_authenticated:
+            _LOGGER.error("=== update_sleep: Not authenticated")
+            raise Exception("Not authenticated")
+
+        if not self.baby_info:
+            _LOGGER.error("=== update_sleep: Baby information not available")
+            raise Exception("Baby information not available")
+
+        # For updates, use minimal baby object (just gender, newFlage, objectID)
+        minimal_baby = {
+            "gender": self.baby_info.get("gender", False),
+            "newFlage": False,
+            "objectID": self.baby_info.get("objectID", "")
+        }
+
+        # Create the sleep update transaction
+        # For updates: newFlage is False, duration is the actual duration in minutes
+        sleep_data = {
+            "BCObjectType": "Sleep",
+            "duration": duration_minutes,
+            "baby": minimal_baby,
+            "note": note,
+            "pictureLoaded": True,
+            "pictureNote": [],
+            "time": time_str,
+            "timezone": -21600,  # This should be dynamic based on user's timezone
+            "newFlage": False,
+            "objectID": object_id,
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
+        }
+
+        _LOGGER.warning(f"=== Posting sleep UPDATE transaction: {sleep_data}")
+        try:
+            # Use OPCode 1 for UPDATE
+            response = self.post_transaction(sleep_data, op_code=1)
+            _LOGGER.warning(f"=== Sleep UPDATE transaction posted successfully")
+
+            # Update local database
+            if self.transaction_handler and self.local_db:
+                try:
+                    sync_id = self.get_next_sync_id(self.device_uuid) - 1
+                    transaction_b64 = base64.b64encode(json.dumps(sleep_data).encode('utf-8')).decode('utf-8')
+                    fake_transaction = {
+                        "SyncID": sync_id,
+                        "OPCode": 1,  # UPDATE
+                        "Transaction": transaction_b64
+                    }
+                    self.transaction_handler.process_transaction(fake_transaction)
+                    _LOGGER.warning(f"=== Sleep UPDATE transaction written to local database")
+                except Exception as e:
+                    _LOGGER.warning(f"=== Failed to write sleep update to local database: {e}")
 
             return {"status": "success"}
         except Exception as e:
-            _LOGGER.error(f"Failed to post sleep: {e}")
+            _LOGGER.error(f"=== Failed to post sleep update: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
 
     def post_nursing(self, time_str=None, left_duration=0, right_duration=0, both_duration=0, finish_side=1, note=""):
@@ -1217,6 +1298,46 @@ class BabyTrackerAPI:
         except Exception as e:
             _LOGGER.error(f"Failed to post formula: {e}")
             return {"status": "error", "message": str(e)}
+
+    def get_picture(self, picture_name):
+        """
+        Download a picture from the Baby Tracker server.
+
+        Args:
+            picture_name: The filename of the picture (e.g., '91B377F6-A50D-4576-B4ED-98028B5B1ABE.jpg')
+
+        Returns:
+            bytes: The raw image data, or None if the request fails
+        """
+        if not self.session_id:
+            raise Exception("Not logged in")
+
+        if not picture_name:
+            _LOGGER.debug("No picture name provided")
+            return None
+
+        try:
+            response = self.session.get(
+                f"{BASE_URL}/account/picture/{picture_name}",
+                headers={'User-Agent': self.USER_AGENT}
+            )
+
+            if response.status_code not in [200, 201]:
+                _LOGGER.error(f"Failed to get picture: {response.status_code}")
+                return None
+
+            # Check if we got an actual image (not an HTML error page)
+            content_type = response.headers.get('Content-Type', '')
+            if 'image' not in content_type.lower():
+                _LOGGER.warning(f"Picture request returned non-image content type: {content_type}")
+                return None
+
+            _LOGGER.info(f"Successfully downloaded picture: {picture_name}")
+            return response.content
+
+        except Exception as e:
+            _LOGGER.error(f"Error downloading picture {picture_name}: {e}")
+            return None
 
     def post_pumped(self, time_str=None, amount=0, is_english_measure=False, note=""):
         """

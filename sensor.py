@@ -225,6 +225,14 @@ class BabyTrackerInfoSensor(CoordinatorEntity, SensorEntity):
         return self.coordinator.last_update_success and self.coordinator.data is not None
 
     @property
+    def entity_picture(self) -> Optional[str]:
+        """Return the baby's picture URL."""
+        if not self.coordinator.data:
+            return None
+        baby_pictures = self.coordinator.data.get("baby_pictures", {})
+        return baby_pictures.get(self._baby_name)
+
+    @property
     def state(self):
         """Return the baby's age in days."""
         babies = self.coordinator.data.get("babies", [])

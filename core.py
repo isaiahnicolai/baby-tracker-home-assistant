@@ -218,6 +218,52 @@ class BabyTracker:
 
         return self.db.get_baby_info()
 
+    def download_baby_picture(self, picture_name, save_dir):
+        """
+        Download a baby's picture and save it locally.
+
+        Args:
+            picture_name: The filename of the picture (e.g., '91B377F6-A50D-4576-B4ED-98028B5B1ABE.jpg')
+            save_dir: Directory to save the picture to
+
+        Returns:
+            str: Local path to the saved picture, or None if download failed
+        """
+        if not self.is_authenticated:
+            _LOGGER.error("Cannot download picture: not authenticated")
+            return None
+
+        if not picture_name:
+            _LOGGER.debug("No picture name provided")
+            return None
+
+        try:
+            # Create the save directory if it doesn't exist
+            os.makedirs(save_dir, exist_ok=True)
+
+            # Check if we already have this picture
+            local_path = os.path.join(save_dir, picture_name)
+            if os.path.exists(local_path):
+                _LOGGER.debug(f"Picture already exists locally: {local_path}")
+                return local_path
+
+            # Download the picture from the API
+            picture_data = self.api.get_picture(picture_name)
+            if not picture_data:
+                _LOGGER.warning(f"Failed to download picture: {picture_name}")
+                return None
+
+            # Save the picture locally
+            with open(local_path, 'wb') as f:
+                f.write(picture_data)
+
+            _LOGGER.info(f"Saved baby picture to: {local_path}")
+            return local_path
+
+        except Exception as e:
+            _LOGGER.error(f"Error saving baby picture: {e}")
+            return None
+
     def get_all_babies(self):
         """
         Get information about all babies.
@@ -1302,9 +1348,9 @@ class BabyTracker:
                     duration=0,
                     note=note
                 )
-                _LOGGER.info(f"Sleep started for baby {baby_id}")
+                _LOGGER.info(f"Sleep started for baby {baby_id}, objectID: {response.get('objectID')}")
             else:
-                # Ending sleep: get start time from local DB, calculate duration, post complete record
+                # Ending sleep: get start time and objectID from local DB, calculate duration, UPDATE existing record
                 if not self.db:
                     if os.path.exists(self.db_path):
                         self.db = BabyTrackerLocalDatabase(self.db_path)
@@ -1321,17 +1367,20 @@ class BabyTracker:
 
                 row = cursor.fetchone()
                 if row:
-                    sleep_id, start_time = row
+                    sleep_object_id, start_time = row
                     duration_seconds = time_unix - start_time
+                    # Convert to minutes (API uses minutes, not seconds)
+                    duration_minutes = duration_seconds // 60
 
-                    # Post the completed sleep with the start time and duration
+                    # UPDATE the existing sleep record (don't create a new one)
                     start_time_str = datetime.fromtimestamp(start_time, timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
-                    response = self.api.post_sleep(
+                    response = self.api.update_sleep(
+                        object_id=sleep_object_id,
                         time_str=start_time_str,
-                        duration=duration_seconds,
+                        duration_minutes=duration_minutes,
                         note=note
                     )
-                    _LOGGER.info(f"Sleep ended for baby {baby_id}, duration: {duration_seconds}s")
+                    _LOGGER.info(f"Sleep ended for baby {baby_id}, duration: {duration_minutes} minutes (objectID: {sleep_object_id})")
                 else:
                     _LOGGER.warning(f"No active sleep session found for baby {baby_id}")
                     return {"status": "error", "message": "No active sleep session found"}

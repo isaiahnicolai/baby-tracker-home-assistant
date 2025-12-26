@@ -149,6 +149,21 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 self.baby_tracker.get_baby_info
             )
 
+            # Download baby pictures to www/baby_tracker/ folder
+            www_dir = self.hass.config.path("www", "baby_tracker")
+            baby_pictures = {}
+            for baby in all_babies:
+                if hasattr(baby, 'picture_name') and baby.picture_name:
+                    local_path = await self.hass.async_add_executor_job(
+                        self.baby_tracker.download_baby_picture,
+                        baby.picture_name,
+                        www_dir
+                    )
+                    if local_path:
+                        # Store the URL path for serving via /local/
+                        baby_pictures[baby.name] = f"/local/baby_tracker/{baby.picture_name}"
+                        _LOGGER.debug(f"Baby picture available at: {baby_pictures[baby.name]}")
+
             # Create baby-specific data structure
             baby_data = {}
 
@@ -262,6 +277,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 return {
                     "babies": all_babies,
                     "baby_data": baby_data,
+                    "baby_pictures": baby_pictures,
                     # Backwards compatibility fields (first baby)
                     "baby_info": baby_info,
                     "feeding_summary": first_baby_data.get("feeding_summary"),
@@ -288,6 +304,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 return {
                     "babies": [],
                     "baby_data": {},
+                    "baby_pictures": {},
                     "baby_info": baby_info
                 }
         except Exception as err:
