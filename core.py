@@ -247,10 +247,22 @@ class BabyTracker:
                 _LOGGER.debug(f"Picture already exists locally: {local_path}")
                 return local_path
 
+            # Check if we already tried and failed
+            placeholder_path = local_path + ".failed"
+            if os.path.exists(placeholder_path):
+                _LOGGER.debug(f"Picture download previously failed: {picture_name}")
+                return None
+
             # Download the picture from the API
             picture_data = self.api.get_picture(picture_name)
             if not picture_data:
-                _LOGGER.warning(f"Failed to download picture: {picture_name}")
+                # Only log once per picture to avoid spam
+                _LOGGER.debug(f"Could not download picture: {picture_name}")
+                # Create an empty placeholder to prevent repeated attempts
+                placeholder_path = local_path + ".failed"
+                if not os.path.exists(placeholder_path):
+                    with open(placeholder_path, 'w') as f:
+                        f.write("download_failed")
                 return None
 
             # Save the picture locally

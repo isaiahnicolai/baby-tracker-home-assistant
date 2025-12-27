@@ -60,7 +60,7 @@ class TransactionHandler:
                 return False
                 
         except Exception as e:
-            logger.error(f"Error processing transaction {sync_id}: {e}")
+            logger.error(f"Error processing transaction {sync_id}: {e}", exc_info=True)
             return False
             
     def _create_model_from_data(self, data):
@@ -69,28 +69,35 @@ class TransactionHandler:
 
         # Special handling: OtherActivity with desc.name == "Bath" should be treated as a Bath
         if object_type == "OtherActivity":
-            desc = data.get("desc", {})
-            desc_name = desc.get("name", "") if isinstance(desc, dict) else ""
-            if desc_name == "Bath":
-                logger.info(f"Converting OtherActivity with desc.name='Bath' to Bath record")
-                # Transform the data to Bath format
-                bath_data = {
-                    "BCObjectType": "Bath",
-                    "objectID": data.get("objectID", ""),
-                    "timestamp": data.get("timestamp", ""),
-                    "time": data.get("time", ""),
-                    "note": data.get("note", ""),
-                    "baby": data.get("baby", {}),
-                    "hasPicture": data.get("pictureLoaded", False),
-                    "descID": desc.get("objectID", ""),
-                    # Map desc to bathType format
-                    "bathType": {
-                        "objectID": desc.get("objectID", ""),
-                        "name": desc.get("name", "Bath"),
+            try:
+                desc = data.get("desc", {})
+                desc_name = desc.get("name", "") if isinstance(desc, dict) else ""
+                if desc_name == "Bath":
+                    logger.info(f"Converting OtherActivity with desc.name='Bath' to Bath record")
+                    # Handle pictureLoaded which could be bool or string
+                    pic_loaded = data.get("pictureLoaded", False)
+                    if isinstance(pic_loaded, str):
+                        pic_loaded = pic_loaded.lower() == "true"
+                    # Transform the data to Bath format
+                    bath_data = {
+                        "BCObjectType": "Bath",
+                        "objectID": data.get("objectID", ""),
+                        "timestamp": data.get("timestamp", ""),
+                        "time": data.get("time", ""),
+                        "note": data.get("note", ""),
+                        "baby": data.get("baby", {}),
+                        "hasPicture": pic_loaded,
+                        "descID": desc.get("objectID", ""),
+                        # Map desc to bathType format
+                        "bathType": {
+                            "objectID": desc.get("objectID", ""),
+                            "name": desc.get("name", "Bath"),
+                        }
                     }
-                }
-                object_type = "Bath"
-                data = bath_data
+                    object_type = "Bath"
+                    data = bath_data
+            except Exception as e:
+                logger.warning(f"Failed to convert OtherActivity to Bath: {e}, continuing as OtherActivity")
         
         # Check if this object type requires a baby reference
         baby_required_types = [

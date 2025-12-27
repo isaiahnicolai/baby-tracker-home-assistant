@@ -889,21 +889,49 @@ class BabyTrackerAPI:
         if not time_str:
             time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
         
-        # Prepare medicine parameters
+        # Get the medicine selection details for the full transaction
+        # Query the local database for medicine selection info
+        med_selection = None
+        if self.local_db:
+            try:
+                selections = self.local_db.get_medicine_selections()
+                for sel in selections:
+                    if sel.get("id") == med_id:
+                        med_selection = {
+                            "objectID": med_id,
+                            "name": sel.get("name", ""),
+                            "amountPerTime": sel.get("amount_per_time", amount),
+                            "interval": sel.get("interval", 0),
+                            "unit": sel.get("unit", "ml"),
+                            "prescription": sel.get("prescription", False),
+                            "newFlage": False,
+                            "timestamp": "1970-01-01 00:00:00 +0000"
+                        }
+                        break
+            except Exception as e:
+                _LOGGER.warning(f"Could not get medicine selection details: {e}")
+
+        # Prepare medicine parameters - use "Medication" to match app format
         medicine_data = {
-            "BCObjectType": "Medicine",
+            "BCObjectType": "Medication",
             "time": time_str,
             "note": note,
             "amount": amount,
-            "medID": med_id,
             "baby": self.baby_info,
             "timezone": -21600,  # This should be dynamic based on user's timezone
             "pictureNote": [],
-            "pictureLoaded": "true",
-            "newFlage": "true",
+            "pictureLoaded": True,
+            "newFlage": True,
             "objectID": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
         }
+
+        # Include the full medication selection if available
+        if med_selection:
+            medicine_data["medicationSelection"] = med_selection
+        else:
+            # Fall back to just the medID
+            medicine_data["medID"] = med_id
         
         try:
             response = self.post_transaction(medicine_data)
@@ -1307,7 +1335,7 @@ class BabyTrackerAPI:
         Download a picture from the Baby Tracker server.
 
         Args:
-            picture_name: The filename of the picture (e.g., '91B377F6-A50D-4576-B4ED-98028B5B1ABE.jpg')
+            picture_name: The filename of the picture (e.g., '91B377F6-A50D-4576-B4ED-98028B5B1ABE')
 
         Returns:
             bytes: The raw image data, or None if the request fails
@@ -1320,23 +1348,49 @@ class BabyTrackerAPI:
             return None
 
         try:
+            url = f"{BASE_URL}/account/picture/{picture_name}"
+            _LOGGER.debug(f"Fetching picture from: {url}")
+
             response = self.session.get(
-                f"{BASE_URL}/account/picture/{picture_name}",
+                url,
                 headers={'User-Agent': self.USER_AGENT}
             )
 
+            _LOGGER.debug(f"Picture response: status={response.status_code}, content-type={response.headers.get('Content-Type', 'unknown')}, content-length={len(response.content) if response.content else 0}")
+
             if response.status_code not in [200, 201]:
-                _LOGGER.error(f"Failed to get picture: {response.status_code}")
+                _LOGGER.error(f"Failed to get picture: {response.status_code}, response: {response.text[:200] if response.text else 'empty'}")
                 return None
 
-            # Check if we got an actual image (not an HTML error page)
+            # Check content type
             content_type = response.headers.get('Content-Type', '')
-            if 'image' not in content_type.lower():
-                _LOGGER.warning(f"Picture request returned non-image content type: {content_type}")
-                return None
 
-            _LOGGER.info(f"Successfully downloaded picture: {picture_name}")
-            return response.content
+            # If it's JSON, the picture might be base64 encoded
+            if 'json' in content_type.lower():
+                try:
+                    data = response.json()
+                    _LOGGER.debug(f"Picture response is JSON: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                    # Check if there's a base64 image field
+                    if isinstance(data, dict):
+                        for key in ['image', 'picture', 'data', 'content', 'base64']:
+                            if key in data:
+                                import base64
+                                return base64.b64decode(data[key])
+                except Exception as e:
+                    _LOGGER.warning(f"Failed to parse picture JSON: {e}")
+
+            # If it's an image, return directly
+            if 'image' in content_type.lower():
+                _LOGGER.info(f"Successfully downloaded picture: {picture_name}")
+                return response.content
+
+            # Try treating the response as raw image data anyway
+            if response.content and len(response.content) > 100:
+                _LOGGER.info(f"Treating response as raw image data for: {picture_name}")
+                return response.content
+
+            _LOGGER.warning(f"Picture request returned unexpected content type: {content_type}")
+            return None
 
         except Exception as e:
             _LOGGER.error(f"Error downloading picture {picture_name}: {e}")
