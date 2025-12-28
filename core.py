@@ -122,19 +122,19 @@ class BabyTracker:
     def sync(self):
         """
         Synchronize data with the server.
-        
+
         Returns:
             dict: Sync results with counts of transactions
         """
         if not self.is_authenticated:
             return {"status": "error", "message": "Not authenticated"}
-        
+
         result = {
             "status": "pending",
             "synced_transactions": 0,
             "last_sync_time": datetime.now()
         }
-        
+
         try:
             # Sync transactions from server
             transactions = self.api.sync_transactions()
@@ -144,9 +144,65 @@ class BabyTracker:
             _LOGGER.error(f"Sync failed: {str(e)}")
             result["status"] = "error"
             result["message"] = f"Sync failed: {str(e)}"
-        
+
         self.last_sync_time = result["last_sync_time"]
         return result
+
+    def force_resync(self, email, password):
+        """
+        Force a complete resync by deleting the local database and re-downloading
+        all data from the server. This is useful when the group leader resets sync
+        and all clients need to reconnect.
+
+        Args:
+            email: User email for re-authentication
+            password: User password for re-authentication
+
+        Returns:
+            dict: Result of the force resync operation
+        """
+        _LOGGER.info("Starting force resync - deleting local database and re-syncing")
+
+        try:
+            # Step 1: Delete the local database
+            if os.path.exists(self.db_path):
+                try:
+                    os.remove(self.db_path)
+                    _LOGGER.info(f"Deleted database at: {self.db_path}")
+                except Exception as e:
+                    _LOGGER.error(f"Failed to delete database: {e}")
+                    return {"status": "error", "message": f"Failed to delete database: {str(e)}"}
+
+            # Step 2: Reset internal state
+            self.db = None
+            self.api.local_db = None
+            self.api.transaction_handler = None
+            self.api.device_sync_info = {}
+            self.api.baby_info = None
+            self.api.devices = None
+            self.api.is_authenticated = False
+            self.is_authenticated = False
+
+            # Step 3: Re-join the group (downloads seed database and syncs all transactions)
+            _LOGGER.info("Re-joining group to download fresh data")
+            result = self.api.join_group(email, password)
+
+            if result.get("status") == "success":
+                # Re-initialize the database reference
+                self.db = self.api.local_db
+                self.is_authenticated = True
+                _LOGGER.info("Force resync completed successfully")
+                return {
+                    "status": "success",
+                    "message": f"Force resync completed. {result.get('message', '')}"
+                }
+            else:
+                _LOGGER.error(f"Force resync failed: {result.get('message')}")
+                return result
+
+        except Exception as e:
+            _LOGGER.error(f"Force resync failed: {str(e)}")
+            return {"status": "error", "message": f"Force resync failed: {str(e)}"}
     
     # === Data Access Methods ===
     # These methods read from the local database
