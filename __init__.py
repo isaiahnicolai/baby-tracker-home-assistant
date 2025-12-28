@@ -90,9 +90,18 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
         coordinator = hass.data[DOMAIN].pop(entry.entry_id)
         # Close any open connections or resources
 
-        # If this is the last entry, unregister services
+        # If this is the last entry, unregister services and clean up database
         if not any(entry_id != "config" for entry_id in hass.data[DOMAIN]):
             await async_unregister_services(hass)
+
+            # Delete the database file when the extension is removed
+            db_path = coordinator.db_path
+            if db_path and os.path.exists(db_path):
+                try:
+                    os.remove(db_path)
+                    _LOGGER.info(f"Deleted Baby Tracker database at: {db_path}")
+                except Exception as e:
+                    _LOGGER.error(f"Failed to delete database at {db_path}: {e}")
 
     return unload_ok
 

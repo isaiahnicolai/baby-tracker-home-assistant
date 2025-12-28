@@ -58,6 +58,9 @@ async def async_setup_entry(
             BabyTrackerMedicineButton(coordinator, baby_name, "Tylenol", 3.75),
         ])
 
+    # Add global Force Resync button (not per-baby, affects entire integration)
+    buttons.append(BabyTrackerForceResyncButton(coordinator))
+
     async_add_entities(buttons, True)
 
 
@@ -289,6 +292,49 @@ class BabyTrackerMedicineButton(CoordinatorEntity, ButtonEntity):
             _LOGGER.warning(f"=== MEDICINE BUTTON service call completed")
         except Exception as e:
             _LOGGER.error(f"=== MEDICINE BUTTON error: {str(e)}", exc_info=True)
+
+        # Refresh coordinator data
+        await self.coordinator.async_request_refresh()
+
+
+class BabyTrackerForceResyncButton(CoordinatorEntity, ButtonEntity):
+    """Button to force a complete resync with the server.
+
+    This is useful when the group leader resets sync and all clients need to reconnect.
+    WARNING: This will delete all local data and re-download from server.
+    """
+
+    def __init__(self, coordinator):
+        """Initialize the button."""
+        super().__init__(coordinator)
+
+        self._attr_name = "Baby Tracker Force Resync"
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_force_resync"
+        self._attr_icon = "mdi:database-sync"
+
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{coordinator.email}_system")},
+            "name": "Baby Tracker (System)",
+            "manufacturer": "Baby Tracker",
+            "model": "API Integration",
+            "sw_version": "0.1.0",
+        }
+
+    async def async_press(self) -> None:
+        """Handle button press."""
+        _LOGGER.warning("=== FORCE RESYNC BUTTON PRESSED - Deleting local database and re-syncing all data")
+
+        # Call the force_resync service
+        try:
+            await self.hass.services.async_call(
+                DOMAIN,
+                "force_resync",
+                {},
+                blocking=True
+            )
+            _LOGGER.warning("=== FORCE RESYNC BUTTON service call completed")
+        except Exception as e:
+            _LOGGER.error(f"=== FORCE RESYNC BUTTON error: {str(e)}", exc_info=True)
 
         # Refresh coordinator data
         await self.coordinator.async_request_refresh()

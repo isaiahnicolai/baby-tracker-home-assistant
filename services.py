@@ -121,6 +121,8 @@ LIST_BABIES_SCHEMA = vol.Schema({})
 
 SYNC_SCHEMA = vol.Schema({})
 
+FORCE_RESYNC_SCHEMA = vol.Schema({})
+
 
 async def async_register_services(hass: HomeAssistant):
     """Register services for Baby Tracker."""
@@ -613,7 +615,31 @@ async def async_register_services(hass: HomeAssistant):
 
         await coordinator.async_refresh()
         return True
-    
+
+    async def force_resync(call: ServiceCall):
+        """Force a complete resync by deleting local database and re-downloading all data.
+
+        This is useful when the group leader resets sync and all clients need to reconnect.
+        WARNING: This will delete all local data and re-download from server.
+        """
+        coordinator = _get_coordinator(hass)
+
+        _LOGGER.warning("Force resync initiated - this will delete local database and re-sync all data")
+
+        result = await hass.async_add_executor_job(
+            coordinator.baby_tracker.force_resync,
+            coordinator.email,
+            coordinator.password
+        )
+
+        if result["status"] != "success":
+            _LOGGER.error(f"Force resync failed: {result.get('message')}")
+            return False
+
+        _LOGGER.info("Force resync completed successfully")
+        await coordinator.async_refresh()
+        return True
+
     def _get_coordinator(hass):
         """Get the data coordinator for the first configured entry."""
         for entry_id, coordinator in hass.data[DOMAIN].items():
@@ -666,6 +692,9 @@ async def async_register_services(hass: HomeAssistant):
     )
     hass.services.async_register(
         DOMAIN, "sync", sync, schema=SYNC_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "force_resync", force_resync, schema=FORCE_RESYNC_SCHEMA
     )
 
     # Bottle size mappings: oz -> ml (using nice round numbers)
@@ -774,6 +803,7 @@ async def async_unregister_services(hass: HomeAssistant):
         "log_vaccine",
         "list_babies",
         "sync",
+        "force_resync",
         "add_4oz_bottle",
         "add_6oz_bottle",
         "add_8oz_bottle",
