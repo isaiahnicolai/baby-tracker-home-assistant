@@ -161,6 +161,100 @@ class BabyTrackerLocalDatabase:
         finally:
             conn.close()
 
+    def insert_baby_transaction(self, transaction_data: Dict) -> bool:
+        """
+        Insert or update a baby record from a transaction.
+
+        :param transaction_data: Decoded baby transaction data
+        :return: True if insertion was successful, False otherwise
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # Extract data from transaction
+            object_id = transaction_data.get('objectID', '')
+            name = transaction_data.get('name', 'Baby')
+            dob_str = transaction_data.get('dob', '')
+            due_day_str = transaction_data.get('dueDay', '')
+            gender = 1 if transaction_data.get('gender', False) else 0
+            picture = transaction_data.get('pictureName', '')
+            timestamp_str = transaction_data.get('timestamp', '1970-01-01 00:00:00 +0000')
+
+            # Convert timestamps
+            dob = self.convert_timestamp(dob_str) if dob_str else 0
+            due_day = self.convert_timestamp(due_day_str) if due_day_str else 0
+            timestamp = self.convert_timestamp(timestamp_str) if timestamp_str else 0
+
+            _LOGGER.info(f"Inserting baby record: {name} (ID: {object_id})")
+
+            # Insert or replace the baby record
+            cursor.execute('''
+                INSERT OR REPLACE INTO Baby (
+                    ID, Name, DOB, DueDay, Gender, Picture, Timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                object_id,
+                name,
+                dob,
+                due_day,
+                gender,
+                picture,
+                timestamp
+            ))
+
+            conn.commit()
+            _LOGGER.info(f"Successfully inserted baby: {name}")
+            return True
+
+        except Exception as e:
+            _LOGGER.error(f"Error inserting baby transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def update_baby_transaction(self, transaction_data: Dict) -> bool:
+        """
+        Update a baby record from a transaction.
+
+        :param transaction_data: Decoded baby transaction data
+        :return: True if update was successful, False otherwise
+        """
+        # For baby updates, we use the same logic as insert (INSERT OR REPLACE)
+        return self.insert_baby_transaction(transaction_data)
+
+    def delete_baby_transaction(self, transaction_data: Dict) -> bool:
+        """
+        Delete a baby record.
+
+        :param transaction_data: Decoded baby transaction data
+        :return: True if deletion was successful, False otherwise
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            object_id = transaction_data.get('objectID', '')
+            _LOGGER.info(f"Deleting baby record: {object_id}")
+
+            cursor.execute('DELETE FROM Baby WHERE ID = ?', (object_id,))
+            conn.commit()
+            return True
+
+        except Exception as e:
+            _LOGGER.error(f"Error deleting baby transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
     def get_feedings(self, limit=50) -> List[Dict]:
         """
         Retrieve all feeding records (nursing, formula, pumped milk, supplements)

@@ -551,47 +551,45 @@ class BabyTrackerAPI:
     def join_group(self, email, password, device_uuid=None):
         """
         Join an existing Baby Tracker group
-        
+
         Args:
             email: Email address for the group
             password: Password for the group
             device_uuid: Optional device UUID to use
-        
+
         Returns:
             dict: Result of the operation with status and message
         """
         _LOGGER.info("Starting join group process")
-        
+
         try:
             # Step 1: Login to the account
             _LOGGER.info(f"Logging in as {email}")
             if device_uuid is None:
                 device_uuid = str(uuid.uuid4())
-                
+
             login_success = self.login(email, password, device_uuid)
             if not login_success:
                 return {"status": "error", "message": "Login failed"}
-                
-            # Step 2: Initialize the database
-            _LOGGER.info(f"Initializing database at {self.db_path}")
-            self.initialize_database(self.db_path)
-                
-            # Step 3: Download the seed database
+
+            # Step 2: Download the seed database FIRST (before initialize_database)
+            # This ensures we get the full database with Baby data from the server
             _LOGGER.info("Downloading seed database")
             seed_result = self.download_seed_data()
             db_file_path = seed_result.get("db_file_path")
-            
-            # Create a new database at the specified path if needed
+
+            # Step 3: Initialize the database tables only if seed download didn't create the file
+            # or if we need to ensure required tables exist
             if db_file_path and os.path.exists(db_file_path):
-                _LOGGER.info(f"Database already exists at {db_file_path}")
+                _LOGGER.info(f"Seed database downloaded to {db_file_path}")
+                # Initialize database to ensure all required tables exist (DeviceSyncInfo, etc.)
+                self.initialize_database(db_file_path)
             else:
-                _LOGGER.info(f"Creating new database at {self.db_path}")
-                # Create empty database file
-                conn = sqlite3.connect(self.db_path)
-                conn.close()
+                _LOGGER.info(f"No seed database, initializing new database at {self.db_path}")
+                self.initialize_database(self.db_path)
                 db_file_path = self.db_path
-                
-            # Always initialize the database
+
+            # Initialize the database wrapper
             if not self.local_db:
                 from .database import BabyTrackerLocalDatabase
                 self.local_db = BabyTrackerLocalDatabase(db_file_path or self.db_path)
