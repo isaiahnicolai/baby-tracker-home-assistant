@@ -160,8 +160,9 @@ class TransactionHandler:
     def _handle_insert(self, model_obj):
         """Handle INSERT operations"""
         # Map model types to database insert methods
-        
+
         handlers = {
+            "Baby": self.db.insert_baby_transaction,
             "Diaper": self.db.insert_diaper_transaction,
             "Nursing": self.db.insert_nursing_transaction,
             "Pumped": self.db.insert_pumped_transaction,
@@ -192,6 +193,7 @@ class TransactionHandler:
         """Handle UPDATE operations"""
         # Map model types to database update methods
         handlers = {
+            "Baby": self.db.update_baby_transaction,
             "Diaper": self.db.update_diaper_transaction,
             "Nursing": self.db.update_nursing_transaction,
             "Pumped": self.db.update_pumped_transaction,
@@ -225,6 +227,7 @@ class TransactionHandler:
         """Handle DELETE operations"""
         # Map model types to database delete methods
         handlers = {
+            "Baby": self.db.delete_baby_transaction,
             "Diaper": self.db.delete_diaper_transaction,
             "Nursing": self.db.delete_nursing_transaction,
             "Pumped": self.db.delete_pumped_transaction,
