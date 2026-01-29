@@ -637,7 +637,22 @@ async def async_register_services(hass: HomeAssistant):
             return False
 
         _LOGGER.info("Force resync completed successfully")
+
+        # Refresh coordinator data first
         await coordinator.async_refresh()
+
+        # Reload the config entry to trigger platform re-setup with new baby entities
+        # This is necessary because entities are created during platform setup
+        _LOGGER.info("Reloading config entry to create baby entities")
+        for entry_id, entry_coordinator in hass.data[DOMAIN].items():
+            if entry_id != "config" and entry_coordinator == coordinator:
+                # Get the config entry
+                entry = hass.config_entries.async_get_entry(entry_id)
+                if entry:
+                    await hass.config_entries.async_reload(entry.entry_id)
+                    _LOGGER.info(f"Config entry {entry_id} reloaded")
+                break
+
         return True
 
     def _get_coordinator(hass):

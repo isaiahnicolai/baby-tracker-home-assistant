@@ -325,6 +325,8 @@ class BabyTrackerForceResyncButton(CoordinatorEntity, ButtonEntity):
         _LOGGER.warning("=== FORCE RESYNC BUTTON PRESSED - Deleting local database and re-syncing all data")
 
         # Call the force_resync service
+        # Note: The service will reload the config entry, which will recreate all entities
+        # After reload, this entity instance will be stale, so we don't try to refresh
         try:
             await self.hass.services.async_call(
                 DOMAIN,
@@ -332,9 +334,7 @@ class BabyTrackerForceResyncButton(CoordinatorEntity, ButtonEntity):
                 {},
                 blocking=True
             )
-            _LOGGER.warning("=== FORCE RESYNC BUTTON service call completed")
+            _LOGGER.warning("=== FORCE RESYNC BUTTON service call completed - entry was reloaded")
         except Exception as e:
-            _LOGGER.error(f"=== FORCE RESYNC BUTTON error: {str(e)}", exc_info=True)
-
-        # Refresh coordinator data
-        await self.coordinator.async_request_refresh()
+            # This may fail if the entity was unloaded during config entry reload - that's expected
+            _LOGGER.warning(f"=== FORCE RESYNC BUTTON completed (entity may have been reloaded): {str(e)}")
