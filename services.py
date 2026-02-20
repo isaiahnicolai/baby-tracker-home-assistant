@@ -11,6 +11,11 @@ from .const import (
     CONF_UNIT_SYSTEM,
     DEFAULT_UNIT_SYSTEM,
     UNIT_SYSTEM_IMPERIAL,
+    ALERT_TYPE_FEEDING_OVERDUE,
+    ALERT_TYPE_NO_POOP,
+    ALERT_TYPE_LOW_WET_DIAPERS,
+    ALERT_TYPE_FEVER,
+    ALERT_TYPE_LONG_SLEEP,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -122,6 +127,22 @@ LIST_BABIES_SCHEMA = vol.Schema({})
 SYNC_SCHEMA = vol.Schema({})
 
 FORCE_RESYNC_SCHEMA = vol.Schema({})
+
+DISMISS_ALERT_SCHEMA = vol.Schema({
+    vol.Optional("entity_id"): cv.string,
+    vol.Optional("baby_name"): cv.string,
+    vol.Optional("alert_type"): vol.In([
+        ALERT_TYPE_FEEDING_OVERDUE,
+        ALERT_TYPE_NO_POOP,
+        ALERT_TYPE_LOW_WET_DIAPERS,
+        ALERT_TYPE_FEVER,
+        ALERT_TYPE_LONG_SLEEP,
+    ]),
+})
+
+DISMISS_ALL_ALERTS_SCHEMA = vol.Schema({
+    vol.Optional("baby_name"): cv.string,
+})
 
 
 async def async_register_services(hass: HomeAssistant):
@@ -712,6 +733,51 @@ async def async_register_services(hass: HomeAssistant):
         DOMAIN, "force_resync", force_resync, schema=FORCE_RESYNC_SCHEMA
     )
 
+    async def dismiss_alert(call: ServiceCall):
+        """Dismiss a specific health alert."""
+        data = call.data
+        entity_id = data.get("entity_id")
+        baby_name = data.get("baby_name")
+        alert_type = data.get("alert_type")
+
+        coordinator = _get_coordinator(hass)
+        dismissed_count = 0
+
+        for entity in coordinator._alert_entities:
+            if entity_id and entity.entity_id != entity_id:
+                continue
+            if baby_name and entity._baby_name != baby_name:
+                continue
+            if alert_type and entity._alert_type != alert_type:
+                continue
+            entity.dismiss()
+            dismissed_count += 1
+
+        _LOGGER.info(f"Dismissed {dismissed_count} alert(s)")
+
+    async def dismiss_all_alerts(call: ServiceCall):
+        """Dismiss all health alerts, optionally filtered by baby name."""
+        data = call.data
+        baby_name = data.get("baby_name")
+
+        coordinator = _get_coordinator(hass)
+        dismissed_count = 0
+
+        for entity in coordinator._alert_entities:
+            if baby_name and entity._baby_name != baby_name:
+                continue
+            entity.dismiss()
+            dismissed_count += 1
+
+        _LOGGER.info(f"Dismissed {dismissed_count} alert(s)")
+
+    hass.services.async_register(
+        DOMAIN, "dismiss_alert", dismiss_alert, schema=DISMISS_ALERT_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "dismiss_all_alerts", dismiss_all_alerts, schema=DISMISS_ALL_ALERTS_SCHEMA
+    )
+
     # Bottle size mappings: oz -> ml (using nice round numbers)
     BOTTLE_SIZES = {
         "small": {"oz": 2, "ml": 60},
@@ -825,7 +891,9 @@ async def async_unregister_services(hass: HomeAssistant):
         "add_small_bottle",
         "add_medium_bottle",
         "add_large_bottle",
-        "add_xlarge_bottle"
+        "add_xlarge_bottle",
+        "dismiss_alert",
+        "dismiss_all_alerts",
     ]:
         if hass.services.has_service(DOMAIN, service):
             hass.services.async_remove(DOMAIN, service)

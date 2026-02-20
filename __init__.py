@@ -30,7 +30,7 @@ CONFIG_SCHEMA = vol.Schema(
     extra=vol.ALLOW_EXTRA,
 )
 
-PLATFORMS = ["sensor", "button"]
+PLATFORMS = ["sensor", "button", "binary_sensor"]
 
 
 async def async_setup(hass: HomeAssistant, config: dict):
@@ -126,6 +126,8 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         self.password = password
         self.authenticated = False
         self.db_path = db_path
+        self.alert_dismiss_state = {}
+        self._alert_entities = []
         _LOGGER.info(f"Initialized Baby Tracker coordinator with database at: {db_path}")
 
     async def _async_update_data(self):
@@ -254,6 +256,10 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                     self.baby_tracker.get_last_vaccine, baby_id
                 )
 
+                today_wet_count = await self.hass.async_add_executor_job(
+                    self.baby_tracker.get_today_wet_diaper_count, baby_id
+                )
+
                 # Store all data for this baby
                 baby_data[baby_name] = {
                     "baby_info": baby,
@@ -274,7 +280,8 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                     "last_growth": last_growth,
                     "last_milestone": last_milestone,
                     "last_doctor_visit": last_doctor_visit,
-                    "last_vaccine": last_vaccine
+                    "last_vaccine": last_vaccine,
+                    "today_wet_count": today_wet_count,
                 }
 
             # For backwards compatibility, keep single-baby structure

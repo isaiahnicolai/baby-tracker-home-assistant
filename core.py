@@ -493,6 +493,25 @@ class BabyTracker:
 
         return self.db.get_last_temperature(baby_id)
 
+    def get_today_wet_diaper_count(self, baby_id=None):
+        """
+        Get the count of wet diapers for today.
+
+        Args:
+            baby_id: Optional baby ID to filter by
+
+        Returns:
+            int: Count of wet diapers today
+        """
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return 0
+
+        return self.db.get_today_wet_diaper_count(baby_id)
+
     def get_last_diaper(self, baby_id=None):
         """
         Get the most recent diaper change by querying the Diaper table directly.

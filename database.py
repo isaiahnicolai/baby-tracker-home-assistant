@@ -765,7 +765,39 @@ class BabyTrackerLocalDatabase:
             return summary
         finally:
             conn.close()
-            
+
+    def get_today_wet_diaper_count(self, baby_id: Optional[str] = None) -> int:
+        """
+        Get the count of wet diapers (Status 0=wet or 2=mixed) for today.
+
+        :param baby_id: Optional baby ID to filter by (defaults to first baby)
+        :return: Integer count of wet diapers today
+        """
+        if not os.path.exists(self.db_path):
+            return 0
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            if not baby_id:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_id_row = cursor.fetchone()
+                baby_id = baby_id_row[0] if baby_id_row else None
+            if not baby_id:
+                return 0
+
+            today_start = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+
+            cursor.execute("""
+                SELECT COUNT(ID) FROM Diaper
+                WHERE BabyID = ? AND Time >= ? AND Status IN (0, 2)
+            """, (baby_id, today_start))
+            row = cursor.fetchone()
+            return row[0] if row else 0
+        finally:
+            conn.close()
+
     def get_last_temperature(self, baby_id=None) -> Optional[Dict]:
         """
         Retrieve the most recent temperature reading
