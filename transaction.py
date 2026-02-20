@@ -218,10 +218,15 @@ class TransactionHandler:
         # Get the handler and call it
         handler = handlers.get(model_obj.object_type)
         if handler:
-            return handler(model_obj.to_dict())
+            result = handler(model_obj.to_dict())
+            if result:
+                return True
+            # Update failed (record may not exist locally) — fall back to insert
+            _LOGGER.info(f"Update had no effect for {model_obj.object_type} {model_obj.object_id}, falling back to insert")
+            return self._handle_insert(model_obj)
         _LOGGER.debug(f"No update handler for object type: {model_obj.object_type}")
         return True  # Skip unsupported types gracefully
-        
+
     def _handle_delete(self, model_obj):
         """Handle DELETE operations"""
         # Map model types to database delete methods
