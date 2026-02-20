@@ -705,8 +705,19 @@ class BabyTrackerAPI:
                                     all_transactions.append(transaction)
                                     processed_until = current_sync_id
                                 else:
-                                    # Log but continue processing
-                                    _LOGGER.warning(f"Failed to process transaction {current_sync_id} for device {device_uuid}")
+                                    # Log with decoded detail so we can diagnose
+                                    try:
+                                        import base64, json as _json
+                                        raw = base64.b64decode(transaction.get("Transaction", ""))
+                                        decoded = _json.loads(raw.decode("utf-8"))
+                                        obj_type = decoded.get("BCObjectType", "unknown")
+                                        obj_id = decoded.get("objectID", "unknown")
+                                        _LOGGER.warning(
+                                            f"Failed to process transaction {current_sync_id} "
+                                            f"(type={obj_type}, id={obj_id}) for device {device_uuid}"
+                                        )
+                                    except Exception:
+                                        _LOGGER.warning(f"Failed to process transaction {current_sync_id} for device {device_uuid}")
                         
                         # Update the local sync info with the highest successfully processed sync ID
                         if processed_until > local_last_sync_id:
