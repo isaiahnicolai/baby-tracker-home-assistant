@@ -64,3 +64,45 @@ ATTR_DIAPER_DETAILS = "diaper_details"
 ATTR_TEMPERATURE_F = "temperature_f"
 ATTR_TEMPERATURE_C = "temperature_c"
 ATTR_POOPY_STREAK = "poopy_streak"
+
+# Alert types
+ALERT_TYPE_FEEDING_OVERDUE = "feeding_overdue"
+ALERT_TYPE_NO_POOP = "no_poop"
+ALERT_TYPE_LOW_WET_DIAPERS = "low_wet_diapers"
+ALERT_TYPE_FEVER = "fever"
+ALERT_TYPE_LONG_SLEEP = "long_sleep"
+
+# Alert thresholds - (min_days, max_days, value)
+FEEDING_THRESHOLDS = [
+    (0, 30, 3.5),
+    (31, 90, 4.5),
+    (91, 180, 5.5),
+    (181, 99999, 6.0),
+]
+
+NO_POOP_THRESHOLDS = [
+    (0, 42, 24),
+    (43, 180, 48),
+    (181, 99999, 72),
+]
+
+LONG_SLEEP_THRESHOLDS = [
+    (0, 30, 4.0),
+    (31, 90, 6.0),
+    (91, 180, 8.0),
+    (181, 99999, 12.0),
+]
+
+# Scalar thresholds
+FEVER_THRESHOLD_F = 100.4
+LOW_WET_THRESHOLD = 4
+LOW_WET_CHECK_HOUR = 20
+LOW_WET_MIN_AGE_DAYS = 3
+
+# Alert attribute keys
+ATTR_ALERT_TYPE = "alert_type"
+ATTR_THRESHOLD = "threshold"
+ATTR_CURRENT_VALUE = "current_value"
+ATTR_BABY_AGE_DAYS = "baby_age_days"
+ATTR_AGE_BRACKET = "age_bracket"
+ATTR_DISMISSED = "dismissed"

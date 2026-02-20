@@ -7,11 +7,28 @@ import uuid
 import os
 import logging
 import sqlite3
+import time as _time
 from datetime import datetime, timezone
 
 from .transaction import TransactionHandler
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _get_local_timezone_offset_seconds():
+    """
+    Get the local timezone offset in seconds from UTC.
+    Matches the Android app's TimeZone.getDefault().getRawOffset() / 1000.
+
+    Returns:
+        int: Timezone offset in seconds (e.g., -21600 for CST, -18000 for EST)
+    """
+    # Use the standard library to get the local UTC offset
+    # This accounts for the current timezone setting of the system
+    local_offset = _time.timezone if _time.daylight == 0 else _time.altzone
+    # time.timezone is seconds WEST of UTC (positive = west), but we need
+    # the offset in the same sign convention as Java's getRawOffset (negative = west)
+    return -local_offset
 
 # API endpoints
 BASE_URL = "https://prodapp.babytrackers.com"
@@ -740,14 +757,14 @@ class BabyTrackerAPI:
         }
         
         # Post the transaction
-        _LOGGER.warning(f"=== post_transaction payload: OPCode={payload['OPCode']}, SyncID={payload['SyncID']}")
+        _LOGGER.debug(f"post_transaction payload: OPCode={payload['OPCode']}, SyncID={payload['SyncID']}")
         response = self.session.post(
             f"{BASE_URL}/account/transaction",
             headers={'Content-Type': 'application/json'},
             json=payload
         )
 
-        _LOGGER.warning(f"=== post_transaction response: status={response.status_code}, body={response.text[:200] if response.text else 'empty'}")
+        _LOGGER.debug(f"post_transaction response: status={response.status_code}, body={response.text[:200] if response.text else 'empty'}")
         if response.status_code not in [200, 201]:
             raise Exception(f"Failed to post transaction: {response.status_code} - {response.text}")
             
@@ -796,7 +813,7 @@ class BabyTrackerAPI:
             "amount": amount,
             "baby": self.baby_info,
             "flag": 0,
-            "timezone": -21600,  # This should be dynamic based on user's timezone
+            "timezone": _get_local_timezone_offset_seconds(),
             "pictureNote": [],
             "status": status,
             "pictureLoaded": "true",
@@ -845,7 +862,7 @@ class BabyTrackerAPI:
                 "englishMeasure": "true" if is_fahrenheit else "false",
                 "BCObjectType": "TemperatureMeasure"
             },
-            "timezone": -21600,  # This should be dynamic based on user's timezone
+            "timezone": _get_local_timezone_offset_seconds(),
             "pictureNote": [],
             "pictureLoaded": "true",
             "newFlage": "true",
@@ -916,7 +933,7 @@ class BabyTrackerAPI:
             "note": note,
             "amount": amount,
             "baby": self.baby_info,
-            "timezone": -21600,  # This should be dynamic based on user's timezone
+            "timezone": _get_local_timezone_offset_seconds(),
             "pictureNote": [],
             "pictureLoaded": True,
             "newFlage": True,
@@ -984,7 +1001,7 @@ class BabyTrackerAPI:
             "desc": activity_desc,
             "baby": self.baby_info,
             "duration": duration,
-            "timezone": -21600,  # This should be dynamic based on user's timezone
+            "timezone": _get_local_timezone_offset_seconds(),
             "pictureNote": []
         }
         
@@ -1011,13 +1028,13 @@ class BabyTrackerAPI:
         Returns:
             dict: API response
         """
-        _LOGGER.warning(f"=== api.post_bath called: bath_type={bath_type}, note={note}")
+        _LOGGER.debug(f"api.post_bath called: bath_type={bath_type}, note={note}")
         if not self.is_authenticated:
-            _LOGGER.error("=== post_bath: Not authenticated")
+            _LOGGER.error("post_bath: Not authenticated")
             raise Exception("Not authenticated")
 
         if not self.baby_info:
-            _LOGGER.error("=== post_bath: Baby information not available")
+            _LOGGER.error("post_bath: Baby information not available")
             raise Exception("Baby information not available")
 
         # Use current time if not provided
@@ -1051,7 +1068,7 @@ class BabyTrackerAPI:
             "BCObjectType": "Bath",
             "note": note,
             "time": time_str,
-            "timezone": -21600,  # This should be dynamic based on user's timezone
+            "timezone": _get_local_timezone_offset_seconds(),
             "pictureNote": [],
             "pictureLoaded": "true",
             "newFlage": "true",
@@ -1061,10 +1078,10 @@ class BabyTrackerAPI:
             "bathType": bath_desc  # Use bathType field as expected by server
         }
 
-        _LOGGER.warning(f"=== Posting bath transaction: {bath_data}")
+        _LOGGER.debug(f"Posting bath transaction: {bath_data}")
         try:
             response = self.post_transaction(bath_data)
-            _LOGGER.warning(f"=== Bath transaction posted successfully")
+            _LOGGER.debug(f"Bath transaction posted successfully")
 
             # Immediately write to local database so we don't have to wait for sync
             if self.transaction_handler and self.local_db:
@@ -1078,13 +1095,13 @@ class BabyTrackerAPI:
                         "Transaction": transaction_b64
                     }
                     self.transaction_handler.process_transaction(fake_transaction)
-                    _LOGGER.warning(f"=== Bath transaction written to local database")
+                    _LOGGER.debug(f"Bath transaction written to local database")
                 except Exception as e:
-                    _LOGGER.warning(f"=== Failed to write bath to local database: {e}")
+                    _LOGGER.debug(f"Failed to write bath to local database: {e}")
 
             return {"status": "success"}
         except Exception as e:
-            _LOGGER.error(f"=== Failed to post bath: {e}", exc_info=True)
+            _LOGGER.error(f"Failed to post bath: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
 
     def post_sleep(self, time_str=None, duration=0, note=""):
@@ -1099,13 +1116,13 @@ class BabyTrackerAPI:
         Returns:
             dict: API response
         """
-        _LOGGER.warning(f"=== api.post_sleep called: duration={duration}, note={note}")
+        _LOGGER.debug(f"api.post_sleep called: duration={duration}, note={note}")
         if not self.is_authenticated:
-            _LOGGER.error("=== post_sleep: Not authenticated")
+            _LOGGER.error("post_sleep: Not authenticated")
             raise Exception("Not authenticated")
 
         if not self.baby_info:
-            _LOGGER.error("=== post_sleep: Baby information not available")
+            _LOGGER.error("post_sleep: Baby information not available")
             raise Exception("Baby information not available")
 
         # Use current time if not provided
@@ -1125,16 +1142,16 @@ class BabyTrackerAPI:
             "pictureLoaded": True,
             "pictureNote": [],
             "time": time_str,
-            "timezone": -21600,  # This should be dynamic based on user's timezone
+            "timezone": _get_local_timezone_offset_seconds(),
             "newFlage": True,
             "objectID": object_id,
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
         }
 
-        _LOGGER.warning(f"=== Posting sleep transaction: {sleep_data}")
+        _LOGGER.debug(f"Posting sleep transaction: {sleep_data}")
         try:
             response = self.post_transaction(sleep_data)
-            _LOGGER.warning(f"=== Sleep transaction posted successfully with objectID: {object_id}")
+            _LOGGER.debug(f"Sleep transaction posted successfully with objectID: {object_id}")
 
             # Immediately write to local database so we don't have to wait for sync
             if self.transaction_handler and self.local_db:
@@ -1148,13 +1165,13 @@ class BabyTrackerAPI:
                         "Transaction": transaction_b64
                     }
                     self.transaction_handler.process_transaction(fake_transaction)
-                    _LOGGER.warning(f"=== Sleep transaction written to local database")
+                    _LOGGER.debug(f"Sleep transaction written to local database")
                 except Exception as e:
-                    _LOGGER.warning(f"=== Failed to write sleep to local database: {e}")
+                    _LOGGER.debug(f"Failed to write sleep to local database: {e}")
 
             return {"status": "success", "objectID": object_id}
         except Exception as e:
-            _LOGGER.error(f"=== Failed to post sleep: {e}", exc_info=True)
+            _LOGGER.error(f"Failed to post sleep: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
 
     def update_sleep(self, object_id, time_str, duration_minutes, note=""):
@@ -1171,13 +1188,13 @@ class BabyTrackerAPI:
         Returns:
             dict: API response
         """
-        _LOGGER.warning(f"=== api.update_sleep called: object_id={object_id}, duration_minutes={duration_minutes}")
+        _LOGGER.debug(f"api.update_sleep called: object_id={object_id}, duration_minutes={duration_minutes}")
         if not self.is_authenticated:
-            _LOGGER.error("=== update_sleep: Not authenticated")
+            _LOGGER.error("update_sleep: Not authenticated")
             raise Exception("Not authenticated")
 
         if not self.baby_info:
-            _LOGGER.error("=== update_sleep: Baby information not available")
+            _LOGGER.error("update_sleep: Baby information not available")
             raise Exception("Baby information not available")
 
         # For updates, use minimal baby object (just gender, newFlage, objectID)
@@ -1197,17 +1214,17 @@ class BabyTrackerAPI:
             "pictureLoaded": True,
             "pictureNote": [],
             "time": time_str,
-            "timezone": -21600,  # This should be dynamic based on user's timezone
+            "timezone": _get_local_timezone_offset_seconds(),
             "newFlage": False,
             "objectID": object_id,
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
         }
 
-        _LOGGER.warning(f"=== Posting sleep UPDATE transaction: {sleep_data}")
+        _LOGGER.debug(f"Posting sleep UPDATE transaction: {sleep_data}")
         try:
             # Use OPCode 1 for UPDATE
             response = self.post_transaction(sleep_data, op_code=1)
-            _LOGGER.warning(f"=== Sleep UPDATE transaction posted successfully")
+            _LOGGER.debug(f"Sleep UPDATE transaction posted successfully")
 
             # Update local database
             if self.transaction_handler and self.local_db:
@@ -1220,13 +1237,13 @@ class BabyTrackerAPI:
                         "Transaction": transaction_b64
                     }
                     self.transaction_handler.process_transaction(fake_transaction)
-                    _LOGGER.warning(f"=== Sleep UPDATE transaction written to local database")
+                    _LOGGER.debug(f"Sleep UPDATE transaction written to local database")
                 except Exception as e:
-                    _LOGGER.warning(f"=== Failed to write sleep update to local database: {e}")
+                    _LOGGER.debug(f"Failed to write sleep update to local database: {e}")
 
             return {"status": "success"}
         except Exception as e:
-            _LOGGER.error(f"=== Failed to post sleep update: {e}", exc_info=True)
+            _LOGGER.error(f"Failed to post sleep update: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
 
     def post_nursing(self, time_str=None, left_duration=0, right_duration=0, both_duration=0, finish_side=1, note=""):
@@ -1264,7 +1281,7 @@ class BabyTrackerAPI:
             "finishSide": finish_side,
             "bothDuration": both_duration,
             "leftDuration": left_duration,
-            "timezone": -21600,  # This should be dynamic based on user's timezone
+            "timezone": _get_local_timezone_offset_seconds(),
             "pictureNote": [],
             "pictureLoaded": "true",
             "newFlage": "true",
@@ -1312,7 +1329,7 @@ class BabyTrackerAPI:
             "BCObjectType": "Formula",
             "note": note,
             "time": time_str,
-            "timezone": -21600,  # This should be dynamic based on user's timezone
+            "timezone": _get_local_timezone_offset_seconds(),
             "newFlage": "true",
             "pictureLoaded": "true",
             "pictureNote": [],
@@ -1427,7 +1444,7 @@ class BabyTrackerAPI:
             "BCObjectType": "Pumped",
             "note": note,
             "time": time_str,
-            "timezone": -21600,  # This should be dynamic based on user's timezone
+            "timezone": _get_local_timezone_offset_seconds(),
             "newFlage": "true",
             "pictureLoaded": "true",
             "pictureNote": [],

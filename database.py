@@ -255,24 +255,26 @@ class BabyTrackerLocalDatabase:
         finally:
             conn.close()
 
-    def get_feedings(self, limit=50) -> List[Dict]:
+    def get_feedings(self, limit=50, baby_id: Optional[str] = None) -> List[Dict]:
         """
         Retrieve all feeding records (nursing, formula, pumped milk, supplements)
-        
+
         :param limit: Maximum number of records to return
+        :param baby_id: Optional baby ID to filter by (defaults to first baby)
         :return: List of dictionaries with feeding details
         """
         if not os.path.exists(self.db_path):
             raise ValueError("No database loaded")
-        
+
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.cursor()
-            
-            # Get baby ID for reference
-            cursor.execute("SELECT ID FROM Baby LIMIT 1")
-            baby_id_row = cursor.fetchone()
-            baby_id = baby_id_row[0] if baby_id_row else None
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_id_row = cursor.fetchone()
+                baby_id = baby_id_row[0] if baby_id_row else None
             
             feedings = []
             
@@ -312,6 +314,7 @@ class BabyTrackerLocalDatabase:
                     "id": row[0],
                     "baby_id": row[1],
                     "time": self._format_timestamp(row[2]),
+                    "raw_time": row[2],
                     "type": "Nursing",
                     "left_duration": row[3],
                     "right_duration": row[4],
@@ -321,10 +324,10 @@ class BabyTrackerLocalDatabase:
                     "has_picture": bool(row[7]),
                     "note": row[8]
                 })
-            
+
             # Formula feedings query (based on BTDatabaseImple.getFormulaForBabyImple)
             cursor.execute(f"""
-                SELECT 
+                SELECT
                     ID,
                     BabyID,
                     Time,
@@ -332,21 +335,22 @@ class BabyTrackerLocalDatabase:
                     IsEnglishScale,
                     HasPicture,
                     Note
-                FROM Formula 
+                FROM Formula
                 WHERE BabyID = ?
                 ORDER BY Time DESC
                 LIMIT {limit}
             """, (baby_id,))
-            
+
             for row in cursor.fetchall():
                 # Calculate amount in both units based on IsEnglishScale flag
                 amount_oz = row[3] if row[4] == 1 else row[3] / 29.5735
                 amount_ml = row[3] if row[4] == 0 else row[3] * 29.5735
-                
+
                 feedings.append({
                     "id": row[0],
                     "baby_id": row[1],
                     "time": self._format_timestamp(row[2]),
+                    "raw_time": row[2],
                     "type": "Formula",
                     "amount": row[3],
                     "is_english_scale": bool(row[4]),
@@ -355,10 +359,10 @@ class BabyTrackerLocalDatabase:
                     "has_picture": bool(row[5]),
                     "note": row[6]
                 })
-            
+
             # Pumped milk feedings query (based on BTDatabaseImple.getPumpedForBabyImple)
             cursor.execute(f"""
-                SELECT 
+                SELECT
                     ID,
                     BabyID,
                     Time,
@@ -366,21 +370,22 @@ class BabyTrackerLocalDatabase:
                     IsEnglishScale,
                     HasPicture,
                     Note
-                FROM Pumped 
+                FROM Pumped
                 WHERE BabyID = ?
                 ORDER BY Time DESC
                 LIMIT {limit}
             """, (baby_id,))
-            
+
             for row in cursor.fetchall():
                 # Calculate amount in both units based on IsEnglishScale flag
                 amount_oz = row[3] if row[4] == 1 else row[3] / 29.5735
                 amount_ml = row[3] if row[4] == 0 else row[3] * 29.5735
-                
+
                 feedings.append({
                     "id": row[0],
                     "baby_id": row[1],
                     "time": self._format_timestamp(row[2]),
+                    "raw_time": row[2],
                     "type": "Pumped",
                     "amount": row[3],
                     "is_english_scale": bool(row[4]),
@@ -389,10 +394,10 @@ class BabyTrackerLocalDatabase:
                     "has_picture": bool(row[5]),
                     "note": row[6]
                 })
-            
+
             # Other feeds/supplements (based on BTDatabaseImple.getOtherFeedForBabyImple)
             cursor.execute(f"""
-                SELECT 
+                SELECT
                     o.ID,
                     o.BabyID,
                     o.Time,
@@ -410,12 +415,13 @@ class BabyTrackerLocalDatabase:
                 ORDER BY o.Time DESC
                 LIMIT {limit}
             """, (baby_id,))
-            
+
             for row in cursor.fetchall():
                 feedings.append({
                     "id": row[0],
                     "baby_id": row[1],
                     "time": self._format_timestamp(row[2]),
+                    "raw_time": row[2],
                     "type": "Supplement",
                     "type_id": row[3],
                     "feed_type": row[4],
@@ -426,24 +432,25 @@ class BabyTrackerLocalDatabase:
                     "has_picture": bool(row[9]),
                     "note": row[10]
                 })
-            
-            # Sort all feedings by time (descending)
-            feedings.sort(key=lambda x: x["time"] if x["time"] else "", reverse=True)
-            
+
+            # Sort all feedings by raw timestamp (descending) for correct ordering
+            feedings.sort(key=lambda x: x.get("raw_time", 0) or 0, reverse=True)
+
             return feedings[:limit]
         finally:
             conn.close()
 
-    def get_last_feeding(self) -> Optional[Dict]:
+    def get_last_feeding(self, baby_id: Optional[str] = None) -> Optional[Dict]:
         """
         Retrieve the most recent feeding from any feeding type
-        
+
+        :param baby_id: Optional baby ID to filter by (defaults to first baby)
         :return: Dictionary with feeding details
         """
         if not os.path.exists(self.db_path):
             raise ValueError("No database loaded")
-        
-        feedings = self.get_feedings(limit=1)
+
+        feedings = self.get_feedings(limit=1, baby_id=baby_id)
         return feedings[0] if feedings else None
 
     def get_feeding_summary(self, days=7, baby_id: Optional[str] = None) -> Dict:
@@ -758,7 +765,39 @@ class BabyTrackerLocalDatabase:
             return summary
         finally:
             conn.close()
-            
+
+    def get_today_wet_diaper_count(self, baby_id: Optional[str] = None) -> int:
+        """
+        Get the count of wet diapers (Status 0=wet or 2=mixed) for today.
+
+        :param baby_id: Optional baby ID to filter by (defaults to first baby)
+        :return: Integer count of wet diapers today
+        """
+        if not os.path.exists(self.db_path):
+            return 0
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            if not baby_id:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_id_row = cursor.fetchone()
+                baby_id = baby_id_row[0] if baby_id_row else None
+            if not baby_id:
+                return 0
+
+            today_start = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+
+            cursor.execute("""
+                SELECT COUNT(ID) FROM Diaper
+                WHERE BabyID = ? AND Time >= ? AND Status IN (0, 2)
+            """, (baby_id, today_start))
+            row = cursor.fetchone()
+            return row[0] if row else 0
+        finally:
+            conn.close()
+
     def get_last_temperature(self, baby_id=None) -> Optional[Dict]:
         """
         Retrieve the most recent temperature reading
@@ -2274,24 +2313,26 @@ class BabyTrackerLocalDatabase:
         records = self.get_activity_records(limit=1)
         return records[0] if records else None
 
-    def get_medicine_records(self, limit=50) -> List[Dict]:
+    def get_medicine_records(self, limit=50, baby_id: Optional[str] = None) -> List[Dict]:
         """
         Retrieve medicine administration records
-        
+
         :param limit: Maximum number of records to return
+        :param baby_id: Optional baby ID to filter by (defaults to first baby)
         :return: List of dictionaries with medicine details
         """
         if not os.path.exists(self.db_path):
             raise ValueError("No database loaded")
-        
+
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.cursor()
-            
-            # Get baby ID for reference
-            cursor.execute("SELECT ID FROM Baby LIMIT 1")
-            baby_id_row = cursor.fetchone()
-            baby_id = baby_id_row[0] if baby_id_row else None
+
+            # Get baby ID if not provided
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_id_row = cursor.fetchone()
+                baby_id = baby_id_row[0] if baby_id_row else None
             
             # Query for medicine records
             cursor.execute(f"""
@@ -2332,16 +2373,17 @@ class BabyTrackerLocalDatabase:
         finally:
             conn.close()
 
-    def get_last_medicine(self) -> Optional[Dict]:
+    def get_last_medicine(self, baby_id: Optional[str] = None) -> Optional[Dict]:
         """
         Retrieve the most recent medicine administration
-        
+
+        :param baby_id: Optional baby ID to filter by (defaults to first baby)
         :return: Dictionary with medicine details
         """
         if not os.path.exists(self.db_path):
             raise ValueError("No database loaded")
-        
-        records = self.get_medicine_records(limit=1)
+
+        records = self.get_medicine_records(limit=1, baby_id=baby_id)
         return records[0] if records else None
     def insert_other_activity_desc_transaction(self, transaction_data: Dict) -> bool:
         """
@@ -3718,36 +3760,48 @@ class BabyTrackerLocalDatabase:
         finally:
             conn.close()
 
-    def time_since_last_feeding(self) -> Optional[Dict]:
+    def time_since_last_feeding(self, baby_id: Optional[str] = None) -> Optional[Dict]:
         """
         Retrieve the time since the last feeding with precision for infant care
-        
-        :return: Dictionary with detailed feeding details
+
+        :param baby_id: Optional baby ID to filter by
+        :return: Dictionary with detailed feeding details, or None if no feedings
         """
         # Check if database exists
         if not os.path.exists(self.db_path):
             raise ValueError("No database loaded")
-        
+
         # Get current time in UTC
         now = datetime.now(timezone.utc)
-        
+
         # Get the most recent feeding record
-        feeding = self.get_feedings(limit=1)[0]
-        
+        feedings = self.get_feedings(limit=1, baby_id=baby_id)
+        if not feedings:
+            return None
+
+        feeding = feedings[0]
+
         # Parse the feeding time correctly with timezone handling
         try:
             datetime_obj = parser.parse(feeding["time"])
         except Exception as e:
-            raise ValueError(f"Error parsing feeding time: {e}")
-        
+            _LOGGER.error(f"Error parsing feeding time: {e}")
+            return None
+
+        # Ensure datetime_obj is timezone-aware for comparison
+        if datetime_obj.tzinfo is None:
+            datetime_obj = datetime_obj.replace(tzinfo=timezone.utc)
+
         # Calculate the time difference
         time_diff = now - datetime_obj
-        
+
         # Calculate hours and minutes for precision
         total_minutes = time_diff.total_seconds() / 60
+        # Return float hours so sensor can calculate accurate minutes
+        hours_float = total_minutes / 60
         hours = int(total_minutes // 60)
         minutes = int(total_minutes % 60)
-        
+
         # Create human-friendly string with more precision
         if hours == 0:
             if minutes == 1:
@@ -3758,7 +3812,7 @@ class BabyTrackerLocalDatabase:
             friendly_time = f"1 hour and {minutes} minutes ago"
         else:
             friendly_time = f"{hours} hours and {minutes} minutes ago"
-        
+
         # Create a status label for feeding urgency
         if total_minutes < 30:
             status = "Recently fed"
@@ -3772,9 +3826,9 @@ class BabyTrackerLocalDatabase:
             status = "Feeding overdue"
         else:
             status = "Feeding critically overdue"
-        
+
         return {
-            "hours_since_last_feeding": hours,
+            "hours_since_last_feeding": hours_float,
             "minutes_since_last_feeding": minutes,
             "total_minutes": int(total_minutes),
             "time_difference": str(time_diff),

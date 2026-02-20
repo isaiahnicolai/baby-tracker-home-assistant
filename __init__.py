@@ -30,7 +30,7 @@ CONFIG_SCHEMA = vol.Schema(
     extra=vol.ALLOW_EXTRA,
 )
 
-PLATFORMS = ["sensor", "button"]
+PLATFORMS = ["sensor", "button", "binary_sensor"]
 
 
 async def async_setup(hass: HomeAssistant, config: dict):
@@ -126,6 +126,8 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         self.password = password
         self.authenticated = False
         self.db_path = db_path
+        self.alert_dismiss_state = {}
+        self._alert_entities = []
         _LOGGER.info(f"Initialized Baby Tracker coordinator with database at: {db_path}")
 
     async def _async_update_data(self):
@@ -191,39 +193,39 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 )
 
                 last_feeding = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_feeding
+                    self.baby_tracker.get_last_feeding, baby_id
                 )
 
                 time_since_last_feeding = await self.hass.async_add_executor_job(
-                    self.baby_tracker.time_since_last_feeding
+                    self.baby_tracker.time_since_last_feeding, baby_id
                 )
 
                 last_temperature = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_temperature
+                    self.baby_tracker.get_last_temperature, baby_id
                 )
 
                 last_diaper = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_diaper
+                    self.baby_tracker.get_last_diaper, baby_id
                 )
 
                 last_sleep = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_sleep
+                    self.baby_tracker.get_last_sleep, baby_id
                 )
 
                 last_nursing = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_nursing
+                    self.baby_tracker.get_last_nursing, baby_id
                 )
 
                 last_feed_time = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_feed_time
+                    self.baby_tracker.get_last_feed_time, baby_id
                 )
 
                 is_sleeping = await self.hass.async_add_executor_job(
-                    self.baby_tracker.is_currently_sleeping
+                    self.baby_tracker.is_currently_sleeping, baby_id
                 )
 
                 last_bath = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_bath
+                    self.baby_tracker.get_last_bath, baby_id
                 )
 
                 last_pump = await self.hass.async_add_executor_job(
@@ -235,7 +237,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 )
 
                 last_medicine = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_medicine
+                    self.baby_tracker.get_last_medicine, baby_id
                 )
 
                 last_growth = await self.hass.async_add_executor_job(
@@ -252,6 +254,10 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
 
                 last_vaccine = await self.hass.async_add_executor_job(
                     self.baby_tracker.get_last_vaccine, baby_id
+                )
+
+                today_wet_count = await self.hass.async_add_executor_job(
+                    self.baby_tracker.get_today_wet_diaper_count, baby_id
                 )
 
                 # Store all data for this baby
@@ -274,7 +280,8 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                     "last_growth": last_growth,
                     "last_milestone": last_milestone,
                     "last_doctor_visit": last_doctor_visit,
-                    "last_vaccine": last_vaccine
+                    "last_vaccine": last_vaccine,
+                    "today_wet_count": today_wet_count,
                 }
 
             # For backwards compatibility, keep single-baby structure

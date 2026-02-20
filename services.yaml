@@ -616,3 +616,45 @@ log_sleep:
       required: false
       selector:
         text:
+
+dismiss_alert:
+  name: Dismiss Alert
+  description: Dismiss a specific health alert until the condition clears and re-triggers
+  fields:
+    entity_id:
+      name: Entity ID
+      description: Entity ID of the alert to dismiss (e.g. binary_sensor.baby_name_feeding_overdue)
+      required: false
+      selector:
+        entity:
+          domain: binary_sensor
+          integration: baby_tracker
+    baby_name:
+      name: Baby Name
+      description: Name of the baby to dismiss alerts for
+      required: false
+      selector:
+        text:
+    alert_type:
+      name: Alert Type
+      description: Type of alert to dismiss
+      required: false
+      selector:
+        select:
+          options:
+            - "feeding_overdue"
+            - "no_poop"
+            - "low_wet_diapers"
+            - "fever"
+            - "long_sleep"
+
+dismiss_all_alerts:
+  name: Dismiss All Alerts
+  description: Dismiss all active health alerts, optionally filtered by baby name
+  fields:
+    baby_name:
+      name: Baby Name
+      description: Name of the baby to dismiss alerts for (leave empty for all babies)
+      required: false
+      selector:
+        text:

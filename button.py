@@ -178,7 +178,7 @@ class BabyTrackerBathButton(CoordinatorEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press."""
-        _LOGGER.warning(f"=== BATH BUTTON PRESSED for {self._baby_name}")
+        _LOGGER.debug(f"BATH BUTTON PRESSED for {self._baby_name}")
 
         # Call the log_bath service
         try:
@@ -192,9 +192,9 @@ class BabyTrackerBathButton(CoordinatorEntity, ButtonEntity):
                 },
                 blocking=True
             )
-            _LOGGER.warning(f"=== BATH BUTTON service call completed")
+            _LOGGER.debug(f"BATH BUTTON service call completed")
         except Exception as e:
-            _LOGGER.error(f"=== BATH BUTTON error: {str(e)}", exc_info=True)
+            _LOGGER.error(f"BATH BUTTON error: {str(e)}", exc_info=True)
 
         # Refresh coordinator data
         await self.coordinator.async_request_refresh()
@@ -226,7 +226,7 @@ class BabyTrackerSleepButton(CoordinatorEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press."""
-        _LOGGER.warning(f"=== SLEEP BUTTON PRESSED: {self._label} for {self._baby_name}, is_start={self._is_start}")
+        _LOGGER.debug(f"SLEEP BUTTON PRESSED: {self._label} for {self._baby_name}, is_start={self._is_start}")
 
         # Call the log_sleep service
         try:
@@ -240,9 +240,9 @@ class BabyTrackerSleepButton(CoordinatorEntity, ButtonEntity):
                 },
                 blocking=True
             )
-            _LOGGER.warning(f"=== SLEEP BUTTON service call completed")
+            _LOGGER.debug(f"SLEEP BUTTON service call completed")
         except Exception as e:
-            _LOGGER.error(f"=== SLEEP BUTTON error: {str(e)}", exc_info=True)
+            _LOGGER.error(f"SLEEP BUTTON error: {str(e)}", exc_info=True)
 
         # Refresh coordinator data
         await self.coordinator.async_request_refresh()
@@ -274,7 +274,7 @@ class BabyTrackerMedicineButton(CoordinatorEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press."""
-        _LOGGER.warning(f"=== MEDICINE BUTTON PRESSED: {self._medicine_name} ({self._amount}ml) for {self._baby_name}")
+        _LOGGER.debug(f"MEDICINE BUTTON PRESSED: {self._medicine_name} ({self._amount}ml) for {self._baby_name}")
 
         # Call the log_medicine service
         try:
@@ -289,9 +289,9 @@ class BabyTrackerMedicineButton(CoordinatorEntity, ButtonEntity):
                 },
                 blocking=True
             )
-            _LOGGER.warning(f"=== MEDICINE BUTTON service call completed")
+            _LOGGER.debug(f"MEDICINE BUTTON service call completed")
         except Exception as e:
-            _LOGGER.error(f"=== MEDICINE BUTTON error: {str(e)}", exc_info=True)
+            _LOGGER.error(f"MEDICINE BUTTON error: {str(e)}", exc_info=True)
 
         # Refresh coordinator data
         await self.coordinator.async_request_refresh()
@@ -322,7 +322,7 @@ class BabyTrackerForceResyncButton(CoordinatorEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press."""
-        _LOGGER.warning("=== FORCE RESYNC BUTTON PRESSED - Deleting local database and re-syncing all data")
+        _LOGGER.debug("FORCE RESYNC BUTTON PRESSED - Deleting local database and re-syncing all data")
 
         # Call the force_resync service
         # Note: The service will reload the config entry, which will recreate all entities
@@ -334,7 +334,7 @@ class BabyTrackerForceResyncButton(CoordinatorEntity, ButtonEntity):
                 {},
                 blocking=True
             )
-            _LOGGER.warning("=== FORCE RESYNC BUTTON service call completed - entry was reloaded")
+            _LOGGER.debug("FORCE RESYNC BUTTON service call completed - entry was reloaded")
         except Exception as e:
             # This may fail if the entity was unloaded during config entry reload - that's expected
-            _LOGGER.warning(f"=== FORCE RESYNC BUTTON completed (entity may have been reloaded): {str(e)}")
+            _LOGGER.debug(f"FORCE RESYNC BUTTON completed (entity may have been reloaded): {str(e)}")
