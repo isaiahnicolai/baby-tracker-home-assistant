@@ -418,13 +418,14 @@ class BabyTracker:
                 
         return self.db.get_all_pumped_sessions()
 
-    def get_feedings(self, limit=50):
+    def get_feedings(self, limit=50, baby_id=None):
         """
         Get feeding records.
-        
+
         Args:
             limit: Maximum number of records to return
-            
+            baby_id: Optional baby ID to filter by
+
         Returns:
             list: Feeding records
         """
@@ -434,12 +435,15 @@ class BabyTracker:
                 self.api.local_db = self.db
             else:
                 return []
-                
-        return self.db.get_feedings(limit=limit)
-    def time_since_last_feeding(self):
+
+        return self.db.get_feedings(limit=limit, baby_id=baby_id)
+    def time_since_last_feeding(self, baby_id=None):
         """
         Get the time since recent feeding.
-        
+
+        Args:
+            baby_id: Optional baby ID to filter by
+
         Returns:
             dict: time record
         """
@@ -449,12 +453,15 @@ class BabyTracker:
                 self.api.local_db = self.db
             else:
                 return None
-        return self.db.time_since_last_feeding()
+        return self.db.time_since_last_feeding(baby_id)
     
-    def get_last_feeding(self):
+    def get_last_feeding(self, baby_id=None):
         """
         Get the most recent feeding.
-        
+
+        Args:
+            baby_id: Optional baby ID to filter by
+
         Returns:
             dict: Feeding record
         """
@@ -464,12 +471,15 @@ class BabyTracker:
                 self.api.local_db = self.db
             else:
                 return None
-                
-        return self.db.get_last_feeding()
+
+        return self.db.get_last_feeding(baby_id)
     
-    def get_last_temperature(self):
+    def get_last_temperature(self, baby_id=None):
         """
         Get the most recent temperature reading.
+
+        Args:
+            baby_id: Optional baby ID to filter by
 
         Returns:
             dict: Temperature record
@@ -481,12 +491,15 @@ class BabyTracker:
             else:
                 return None
 
-        return self.db.get_last_temperature()
+        return self.db.get_last_temperature(baby_id)
 
-    def get_last_diaper(self):
+    def get_last_diaper(self, baby_id=None):
         """
         Get the most recent diaper change by querying the Diaper table directly.
         Does NOT rely on the Progress table.
+
+        Args:
+            baby_id: Optional baby ID to filter by
 
         Returns:
             dict: Diaper record with time, status, and details
@@ -498,12 +511,15 @@ class BabyTracker:
             else:
                 return None
 
-        return self.db.get_last_diaper_direct()
+        return self.db.get_last_diaper_direct(baby_id)
 
-    def get_last_sleep(self):
+    def get_last_sleep(self, baby_id=None):
         """
         Get the most recent sleep by querying the Sleep table directly.
         Does NOT rely on the Progress table.
+
+        Args:
+            baby_id: Optional baby ID to filter by
 
         Returns:
             dict: Sleep record with time, duration, and is_sleeping status
@@ -515,11 +531,14 @@ class BabyTracker:
             else:
                 return None
 
-        return self.db.get_last_sleep_direct()
+        return self.db.get_last_sleep_direct(baby_id)
 
-    def is_currently_sleeping(self):
+    def is_currently_sleeping(self, baby_id=None):
         """
         Check if the baby is currently sleeping.
+
+        Args:
+            baby_id: Optional baby ID to filter by
 
         Returns:
             bool: True if baby is currently sleeping (sleep duration=0), False otherwise
@@ -531,12 +550,15 @@ class BabyTracker:
             else:
                 return False
 
-        return self.db.is_currently_sleeping()
+        return self.db.is_currently_sleeping(baby_id)
 
-    def get_last_nursing(self):
+    def get_last_nursing(self, baby_id=None):
         """
         Get the most recent nursing session by querying the Nursing table directly.
         Does NOT rely on the Progress table.
+
+        Args:
+            baby_id: Optional baby ID to filter by
 
         Returns:
             dict: Nursing record with time and durations
@@ -548,12 +570,15 @@ class BabyTracker:
             else:
                 return None
 
-        return self.db.get_last_nursing_direct()
+        return self.db.get_last_nursing_direct(baby_id)
 
-    def get_last_feed_time(self):
+    def get_last_feed_time(self, baby_id=None):
         """
         Get the time of the most recent feeding (any type) by querying tables directly.
         Does NOT rely on the Progress table.
+
+        Args:
+            baby_id: Optional baby ID to filter by
 
         Returns:
             dict: Feed time info with type
@@ -565,11 +590,14 @@ class BabyTracker:
             else:
                 return None
 
-        return self.db.get_last_feed_time_direct()
+        return self.db.get_last_feed_time_direct(baby_id)
 
-    def get_last_bath(self):
+    def get_last_bath(self, baby_id=None):
         """
         Get the most recent bath by querying the Bath table directly.
+
+        Args:
+            baby_id: Optional baby ID to filter by
 
         Returns:
             dict: Bath record with time and type
@@ -581,7 +609,7 @@ class BabyTracker:
             else:
                 return None
 
-        return self.db.get_last_bath_direct()
+        return self.db.get_last_bath_direct(baby_id)
 
     def get_bath_records(self, limit=50):
         """
@@ -614,9 +642,9 @@ class BabyTracker:
         Returns:
             dict: Result of the operation
         """
-        _LOGGER.warning(f"=== core.log_bath called: bath_type={bath_type}, note={note}")
+        _LOGGER.debug(f"core.log_bath called: bath_type={bath_type}, note={note}")
         if not self.is_authenticated:
-            _LOGGER.error("=== log_bath: Not authenticated")
+            _LOGGER.error("log_bath: Not authenticated")
             return {"status": "error", "message": "Not authenticated"}
 
         # Use current time if not provided
@@ -757,9 +785,12 @@ class BabyTracker:
 
         return self.db.get_pump_summary(days, baby_id)
 
-    def get_last_medicine(self):
+    def get_last_medicine(self, baby_id=None):
         """
         Get the most recent medicine administration.
+
+        Args:
+            baby_id: Optional baby ID to filter by
 
         Returns:
             dict: Medicine record with name, amount, unit, time, and note
@@ -771,7 +802,7 @@ class BabyTracker:
             else:
                 return None
 
-        return self.db.get_last_medicine()
+        return self.db.get_last_medicine(baby_id)
 
     def get_last_growth(self, baby_id=None):
         """
@@ -1419,32 +1450,39 @@ class BabyTracker:
                 _LOGGER.info(f"Sleep started for baby {baby_id}, objectID: {response.get('objectID')}")
             else:
                 # Ending sleep: get start time and objectID from local DB, calculate duration, UPDATE existing record
-                _LOGGER.warning(f"=== Wake up requested for baby {baby_id}")
+                _LOGGER.debug(f"Wake up requested for baby {baby_id}")
                 if not self.db:
                     if os.path.exists(self.db_path):
                         self.db = BabyTrackerLocalDatabase(self.db_path)
                         self.api.local_db = self.db
                     else:
-                        _LOGGER.error("=== Database not initialized")
+                        _LOGGER.error("Database not initialized")
                         return {"status": "error", "message": "Database not initialized"}
 
-                _LOGGER.warning(f"=== Querying for active sleep with BabyID={baby_id}")
-                cursor = self.db.conn.execute('''
-                    SELECT ID, Time FROM Sleep
-                    WHERE BabyID = ? AND Duration = 0
-                    ORDER BY Time DESC
-                    LIMIT 1
-                ''', (baby_id,))
+                _LOGGER.debug(f"Querying for active sleep with BabyID={baby_id}")
 
-                row = cursor.fetchone()
-                _LOGGER.warning(f"=== Database query result: {row}")
+                # Use a proper connection - BabyTrackerLocalDatabase does not have a .conn attribute
+                conn = sqlite3.connect(self.db_path)
+                try:
+                    cursor = conn.execute('''
+                        SELECT ID, Time FROM Sleep
+                        WHERE BabyID = ? AND Duration = 0
+                        ORDER BY Time DESC
+                        LIMIT 1
+                    ''', (baby_id,))
+
+                    row = cursor.fetchone()
+                finally:
+                    conn.close()
+
+                _LOGGER.debug(f"Active sleep query result: {row}")
                 if row:
                     sleep_object_id, start_time = row
                     duration_seconds = time_unix - start_time
                     # Convert to minutes (API uses minutes, not seconds)
                     duration_minutes = duration_seconds // 60
 
-                    _LOGGER.warning(f"=== Found active sleep: objectID={sleep_object_id}, start_time={start_time}, duration={duration_minutes}min")
+                    _LOGGER.debug(f"Found active sleep: objectID={sleep_object_id}, start_time={start_time}, duration={duration_minutes}min")
 
                     # UPDATE the existing sleep record (don't create a new one)
                     start_time_str = datetime.fromtimestamp(start_time, timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
@@ -1454,10 +1492,10 @@ class BabyTracker:
                         duration_minutes=duration_minutes,
                         note=note
                     )
-                    _LOGGER.warning(f"=== update_sleep response: {response}")
+                    _LOGGER.debug(f"update_sleep response: {response}")
                     _LOGGER.info(f"Sleep ended for baby {baby_id}, duration: {duration_minutes} minutes (objectID: {sleep_object_id})")
                 else:
-                    _LOGGER.warning(f"=== No active sleep session found for baby {baby_id}")
+                    _LOGGER.warning(f"No active sleep session found for baby {baby_id}")
                     return {"status": "error", "message": "No active sleep session found"}
 
             # Trigger a sync to update local database

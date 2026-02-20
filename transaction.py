@@ -36,7 +36,7 @@ class TransactionHandler:
 
             # Debug: Log raw Bath transactions to compare formats
             if object_type == "Bath":
-                logger.warning(f"=== RAW BATH TRANSACTION FROM SERVER: {json.dumps(decoded_data, indent=2)}")
+                logger.debug(f"Raw bath transaction from server: {json.dumps(decoded_data, indent=2)}")
             
             logger.info(f"Processing transaction {sync_id} (OpCode: {op_code}): {object_type} - {object_id}")
             

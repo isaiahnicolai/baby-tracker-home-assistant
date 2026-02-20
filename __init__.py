@@ -191,39 +191,39 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 )
 
                 last_feeding = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_feeding
+                    self.baby_tracker.get_last_feeding, baby_id
                 )
 
                 time_since_last_feeding = await self.hass.async_add_executor_job(
-                    self.baby_tracker.time_since_last_feeding
+                    self.baby_tracker.time_since_last_feeding, baby_id
                 )
 
                 last_temperature = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_temperature
+                    self.baby_tracker.get_last_temperature, baby_id
                 )
 
                 last_diaper = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_diaper
+                    self.baby_tracker.get_last_diaper, baby_id
                 )
 
                 last_sleep = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_sleep
+                    self.baby_tracker.get_last_sleep, baby_id
                 )
 
                 last_nursing = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_nursing
+                    self.baby_tracker.get_last_nursing, baby_id
                 )
 
                 last_feed_time = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_feed_time
+                    self.baby_tracker.get_last_feed_time, baby_id
                 )
 
                 is_sleeping = await self.hass.async_add_executor_job(
-                    self.baby_tracker.is_currently_sleeping
+                    self.baby_tracker.is_currently_sleeping, baby_id
                 )
 
                 last_bath = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_bath
+                    self.baby_tracker.get_last_bath, baby_id
                 )
 
                 last_pump = await self.hass.async_add_executor_job(
@@ -235,7 +235,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 )
 
                 last_medicine = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_medicine
+                    self.baby_tracker.get_last_medicine, baby_id
                 )
 
                 last_growth = await self.hass.async_add_executor_job(
