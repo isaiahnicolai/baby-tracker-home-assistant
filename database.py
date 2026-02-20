@@ -1344,7 +1344,7 @@ class BabyTrackerLocalDatabase:
                 self.convert_timestamp(transaction_data.get('timestamp', '1970-01-01 00:00:00 +0000')),  # Timestamp
                 self.convert_timestamp(transaction_data.get('time', '1970-01-01 00:00:00 +0000')),  # Time
                 transaction_data.get('note', ''),  # Note
-                1 if transaction_data.get('pictureLoaded', 'false').lower() == 'true' else 0,  # HasPicture
+                1 if str(transaction_data.get('pictureLoaded', 'false')).lower() == 'true' else 0,  # HasPicture
                 transaction_data.get('baby', {}).get('objectID', ''),  # BabyID
                 amount,  # Amount 
                 is_english_scale  # IsEnglishScale
@@ -2764,7 +2764,7 @@ class BabyTrackerLocalDatabase:
                 timestamp,
                 time,
                 transaction_data.get('note', ''),
-                1 if transaction_data.get('pictureLoaded', 'false').lower() == 'true' else 0,
+                1 if str(transaction_data.get('pictureLoaded', 'false')).lower() == 'true' else 0,
                 amount,
                 is_english_scale,
                 object_id,
@@ -3354,7 +3354,7 @@ class BabyTrackerLocalDatabase:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM Milestone WHERE ID = ?', (transaction_data.get('objectID', ''),))
             conn.commit()
-            return cursor.rowcount > 0
+            return True
         except Exception as e:
             print(f"Error deleting milestone transaction: {e}")
             conn.rollback()
@@ -3455,7 +3455,7 @@ class BabyTrackerLocalDatabase:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM DoctorVisit WHERE ID = ?', (transaction_data.get('objectID', ''),))
             conn.commit()
-            return cursor.rowcount > 0
+            return True
         except Exception as e:
             print(f"Error deleting doctor visit transaction: {e}")
             conn.rollback()
@@ -3542,7 +3542,7 @@ class BabyTrackerLocalDatabase:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM Vaccine WHERE ID = ?', (transaction_data.get('objectID', ''),))
             conn.commit()
-            return cursor.rowcount > 0
+            return True
         except Exception as e:
             print(f"Error deleting vaccine transaction: {e}")
             conn.rollback()
@@ -3637,7 +3637,7 @@ class BabyTrackerLocalDatabase:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM Growth WHERE ID = ?', (transaction_data.get('objectID', ''),))
             conn.commit()
-            return cursor.rowcount > 0
+            return True
         except Exception as e:
             print(f"Error deleting growth transaction: {e}")
             conn.rollback()
@@ -3752,7 +3752,7 @@ class BabyTrackerLocalDatabase:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM Bath WHERE ID = ?', (transaction_data.get('objectID', ''),))
             conn.commit()
-            return cursor.rowcount > 0
+            return True
         except Exception as e:
             print(f"Error deleting bath transaction: {e}")
             conn.rollback()
