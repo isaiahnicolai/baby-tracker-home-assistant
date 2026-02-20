@@ -7,8 +7,7 @@ import base64
 import json
 import os 
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("BabyTrackerTransaction")
+_LOGGER = logging.getLogger(__name__)
 
 
 class TransactionHandler:
@@ -21,7 +20,7 @@ class TransactionHandler:
     def process_transaction(self, transaction, apply_to_db=True):
         """Process a transaction and apply it to the database if needed"""
         if "Transaction" not in transaction or "SyncID" not in transaction or "OPCode" not in transaction:
-            logger.warning(f"Incomplete transaction: {transaction}")
+            _LOGGER.warning(f"Incomplete transaction: {transaction}")
             return False
             
         sync_id = transaction["SyncID"]
@@ -36,15 +35,15 @@ class TransactionHandler:
 
             # Debug: Log raw Bath transactions to compare formats
             if object_type == "Bath":
-                logger.debug(f"Raw bath transaction from server: {json.dumps(decoded_data, indent=2)}")
+                _LOGGER.debug(f"Raw bath transaction from server: {json.dumps(decoded_data, indent=2)}")
             
-            logger.info(f"Processing transaction {sync_id} (OpCode: {op_code}): {object_type} - {object_id}")
+            _LOGGER.info(f"Processing transaction {sync_id} (OpCode: {op_code}): {object_type} - {object_id}")
             
             # Create the appropriate model object
             model_obj = self._create_model_from_data(decoded_data)
 
             if not model_obj:
-                logger.debug(f"Skipping unsupported object type: {object_type}")
+                _LOGGER.debug(f"Skipping unsupported object type: {object_type}")
                 return True  # Return True to skip unsupported types (not a failure)
                 
             # Process based on operation code
@@ -56,11 +55,11 @@ class TransactionHandler:
                 return self._handle_delete(model_obj)
          
             else:
-                logger.warning(f"Unhandled operation code: {op_code}")
+                _LOGGER.warning(f"Unhandled operation code: {op_code}")
                 return False
                 
         except Exception as e:
-            logger.error(f"Error processing transaction {sync_id}: {e}", exc_info=True)
+            _LOGGER.error(f"Error processing transaction {sync_id}: {e}", exc_info=True)
             return False
             
     def _create_model_from_data(self, data):
@@ -73,7 +72,7 @@ class TransactionHandler:
                 desc = data.get("desc", {})
                 desc_name = desc.get("name", "") if isinstance(desc, dict) else ""
                 if desc_name == "Bath":
-                    logger.info(f"Converting OtherActivity with desc.name='Bath' to Bath record")
+                    _LOGGER.info(f"Converting OtherActivity with desc.name='Bath' to Bath record")
                     # Handle pictureLoaded which could be bool or string
                     pic_loaded = data.get("pictureLoaded", False)
                     if isinstance(pic_loaded, str):
@@ -97,7 +96,7 @@ class TransactionHandler:
                     object_type = "Bath"
                     data = bath_data
             except Exception as e:
-                logger.warning(f"Failed to convert OtherActivity to Bath: {e}, continuing as OtherActivity")
+                _LOGGER.warning(f"Failed to convert OtherActivity to Bath: {e}, continuing as OtherActivity")
         
         # Check if this object type requires a baby reference
         baby_required_types = [
@@ -112,7 +111,7 @@ class TransactionHandler:
             baby_data = data.get("baby", {})
             if not isinstance(baby_data, dict) or not baby_data.get("objectID"):
                 error_msg = f"Missing baby information for {object_type} object: {data.get('objectID', 'unknown')}"
-                logger.error(error_msg)
+                _LOGGER.error(error_msg)
                 raise ValueError(error_msg)
         
         # Map object types to model classes
@@ -151,7 +150,7 @@ class TransactionHandler:
             # Double-check that baby_id was set correctly in the model if required
             if object_type in baby_required_types and not model.baby_id:
                 error_msg = f"Failed to set baby_id for {object_type} object: {model.object_id}"
-                logger.error(error_msg)
+                _LOGGER.error(error_msg)
                 raise ValueError(error_msg)
             
             return model
@@ -187,7 +186,7 @@ class TransactionHandler:
         handler = handlers.get(model_obj.object_type)
         if handler:
             return handler(model_obj.to_dict())
-        logger.debug(f"No insert handler for object type: {model_obj.object_type}")
+        _LOGGER.debug(f"No insert handler for object type: {model_obj.object_type}")
         return True  # Skip unsupported types gracefully
     def _handle_update(self, model_obj):
         """Handle UPDATE operations"""
@@ -220,7 +219,7 @@ class TransactionHandler:
         handler = handlers.get(model_obj.object_type)
         if handler:
             return handler(model_obj.to_dict())
-        logger.debug(f"No update handler for object type: {model_obj.object_type}")
+        _LOGGER.debug(f"No update handler for object type: {model_obj.object_type}")
         return True  # Skip unsupported types gracefully
         
     def _handle_delete(self, model_obj):
@@ -254,7 +253,7 @@ class TransactionHandler:
         handler = handlers.get(model_obj.object_type)
         if handler:
             return handler(model_obj.to_dict())
-        logger.debug(f"No delete handler for object type: {model_obj.object_type}")
+        _LOGGER.debug(f"No delete handler for object type: {model_obj.object_type}")
         return True  # Skip unsupported types gracefully
 class SyncCallback:
     """Callback for asynchronous API operations"""
