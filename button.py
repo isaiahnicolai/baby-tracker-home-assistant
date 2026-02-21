@@ -58,7 +58,8 @@ async def async_setup_entry(
             BabyTrackerMedicineButton(coordinator, baby_name, "Tylenol", 3.75),
         ])
 
-    # Add global Force Resync button (not per-baby, affects entire integration)
+    # Add global buttons (not per-baby, affects entire integration)
+    buttons.append(BabyTrackerSyncButton(coordinator))
     buttons.append(BabyTrackerForceResyncButton(coordinator))
 
     async_add_entities(buttons, True)
@@ -294,6 +295,39 @@ class BabyTrackerMedicineButton(CoordinatorEntity, ButtonEntity):
             _LOGGER.error(f"MEDICINE BUTTON error: {str(e)}", exc_info=True)
 
         # Refresh coordinator data
+        await self.coordinator.async_request_refresh()
+
+
+class BabyTrackerSyncButton(CoordinatorEntity, ButtonEntity):
+    """Button to sync new records from the server without a full resync."""
+
+    def __init__(self, coordinator):
+        """Initialize the button."""
+        super().__init__(coordinator)
+
+        self._attr_name = "Baby Tracker Sync Now"
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_sync_now"
+        self._attr_icon = "mdi:sync"
+
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{coordinator.email}_system")},
+            "name": "Baby Tracker (System)",
+            "manufacturer": "Baby Tracker",
+            "model": "API Integration",
+            "sw_version": "0.1.0",
+        }
+
+    async def async_press(self) -> None:
+        """Handle button press — sync new transactions then refresh data."""
+        _LOGGER.info("Sync Now button pressed — fetching new records from server")
+
+        try:
+            await self.hass.async_add_executor_job(
+                self.coordinator.baby_tracker.sync
+            )
+        except Exception as e:
+            _LOGGER.error(f"Sync failed: {e}")
+
         await self.coordinator.async_request_refresh()
 
 
