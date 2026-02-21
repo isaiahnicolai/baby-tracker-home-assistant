@@ -1,6 +1,6 @@
 #transaction.py
 
-from .models import Baby, Diaper, Medication, MedicationSelection, Medicine, MedicineSelection, Nursing, Formula, OtherActivity, OtherActivityDesc, Pump, Pumped, Temperature, Sleep, OtherFeed, Milestone, MilestoneSelection, DoctorVisit, Vaccine, VaccineSelection, Growth, Bath, BathType
+from .models import Baby, Diaper, Medication, MedicationSelection, Medicine, MedicineSelection, Nursing, Formula, OtherActivity, OtherActivityDesc, Pump, Pumped, Temperature, Sleep, OtherFeed, OtherFeedSelection, Milestone, MilestoneSelection, DoctorVisit, Vaccine, VaccineSelection, Growth, Bath, BathType
 from .database import BabyTrackerLocalDatabase
 import logging
 import base64
@@ -129,6 +129,7 @@ class TransactionHandler:
             "Medicine": Medicine,  # Support both Medication and Medicine
             "MedicationSelection": MedicationSelection,
             "MedicineSelection": MedicineSelection,  # Support both names
+            "OtherFeedSelection": OtherFeedSelection,
             "OtherActivity": OtherActivity,
             "OtherActivityDesc": OtherActivityDesc,
             "OtherActivityDescription": OtherActivityDesc,  # Support both names
@@ -169,6 +170,7 @@ class TransactionHandler:
             "Temperature": self.db.insert_temperature_transaction,
             "Sleep": self.db.insert_sleep_transaction,
             "OtherFeed": self.db.insert_other_feed_transaction,
+            "OtherFeedSelection": self.db.insert_other_feed_selection_transaction,
             "Pump": self.db.insert_pump_transaction,
             "Medication": self.db.insert_medicine_transaction,
             "Medicine": self.db.insert_medicine_transaction,  # Support both names
@@ -200,6 +202,7 @@ class TransactionHandler:
             "Temperature": self.db.update_temperature_transaction,
             "Sleep": self.db.update_sleep_transaction,
             "OtherFeed": self.db.update_other_feed_transaction,
+            "OtherFeedSelection": self.db.update_other_feed_selection_transaction,
             "Pump": self.db.update_pump_transaction,
             "Medication": self.db.update_medicine_transaction,
             "Medicine": self.db.update_medicine_transaction,  # Support both names
@@ -239,6 +242,7 @@ class TransactionHandler:
             "Temperature": self.db.delete_temperature_transaction,
             "Sleep": self.db.delete_sleep_transaction,
             "OtherFeed": self.db.delete_other_feed_transaction,
+            "OtherFeedSelection": self.db.delete_other_feed_selection_transaction,
             "Pump": self.db.delete_pump_transaction,
             "Medication": self.db.delete_medicine_transaction,
             "Medicine": self.db.delete_medicine_transaction,  # Support both names
