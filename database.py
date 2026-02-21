@@ -798,6 +798,246 @@ class BabyTrackerLocalDatabase:
         finally:
             conn.close()
 
+    def get_daily_summary(self, baby_id: Optional[str] = None) -> Dict:
+        """
+        Get today's totals for all tracked activities.
+
+        :param baby_id: Optional baby ID to filter by (defaults to first baby)
+        :return: Dictionary with today's totals
+        """
+        if not os.path.exists(self.db_path):
+            return {}
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            if not baby_id:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_id_row = cursor.fetchone()
+                baby_id = baby_id_row[0] if baby_id_row else None
+            if not baby_id:
+                return {}
+
+            today_start = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+
+            summary = {
+                "total_feedings": 0,
+                "formula_oz": 0,
+                "nursing_minutes": 0,
+                "diaper_count": 0,
+                "sleep_hours": 0,
+            }
+
+            # Formula count and total oz
+            cursor.execute("""
+                SELECT COUNT(ID),
+                       SUM(CASE WHEN IsEnglishScale=1 THEN Amount ELSE Amount/29.5735 END)
+                FROM Formula
+                WHERE BabyID = ? AND Time >= ?
+            """, (baby_id, today_start))
+            row = cursor.fetchone()
+            formula_count = row[0] or 0
+            summary["formula_oz"] = round(row[1] or 0, 1)
+            summary["total_feedings"] += formula_count
+
+            # Nursing count and total minutes
+            cursor.execute("""
+                SELECT COUNT(ID),
+                       SUM(COALESCE(LeftDuration,0) + COALESCE(RightDuration,0) + COALESCE(BothDuration,0))
+                FROM Nursing
+                WHERE BabyID = ? AND Time >= ?
+            """, (baby_id, today_start))
+            row = cursor.fetchone()
+            nursing_count = row[0] or 0
+            summary["nursing_minutes"] = row[1] or 0
+            summary["total_feedings"] += nursing_count
+
+            # Pumped count
+            cursor.execute("""
+                SELECT COUNT(ID) FROM Pumped
+                WHERE BabyID = ? AND Time >= ?
+            """, (baby_id, today_start))
+            row = cursor.fetchone()
+            summary["total_feedings"] += row[0] or 0
+
+            # OtherFeed count
+            cursor.execute("""
+                SELECT name FROM sqlite_master WHERE type='table' AND name='OtherFeed'
+            """)
+            if cursor.fetchone():
+                cursor.execute("""
+                    SELECT COUNT(ID) FROM OtherFeed
+                    WHERE BabyID = ? AND Time >= ?
+                """, (baby_id, today_start))
+                row = cursor.fetchone()
+                summary["total_feedings"] += row[0] or 0
+
+            # Diaper count
+            cursor.execute("""
+                SELECT COUNT(ID) FROM Diaper
+                WHERE BabyID = ? AND Time >= ?
+            """, (baby_id, today_start))
+            row = cursor.fetchone()
+            summary["diaper_count"] = row[0] or 0
+
+            # Sleep hours (completed sleeps only, Duration > 0, in minutes)
+            cursor.execute("""
+                SELECT SUM(Duration) FROM Sleep
+                WHERE BabyID = ? AND Time >= ? AND Duration > 0
+            """, (baby_id, today_start))
+            row = cursor.fetchone()
+            total_sleep_minutes = row[0] or 0
+            summary["sleep_hours"] = round(total_sleep_minutes / 60.0, 1)
+
+            return summary
+        finally:
+            conn.close()
+
+    def get_sleep_analysis(self, baby_id: Optional[str] = None, days: int = 14) -> Dict:
+        """
+        Analyze sleep patterns over the last N days for bedtime/wake graphing.
+
+        :param baby_id: Optional baby ID to filter by (defaults to first baby)
+        :param days: Number of days to analyze
+        :return: Dictionary with average bedtime, wake time, per-day data
+        """
+        if not os.path.exists(self.db_path):
+            return {}
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            if not baby_id:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_id_row = cursor.fetchone()
+                baby_id = baby_id_row[0] if baby_id_row else None
+            if not baby_id:
+                return {}
+
+            cutoff = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
+
+            cursor.execute("""
+                SELECT Time, Duration FROM Sleep
+                WHERE BabyID = ? AND Time >= ? AND Duration > 0
+                ORDER BY Time ASC
+            """, (baby_id, cutoff))
+
+            rows = cursor.fetchall()
+
+            if not rows:
+                return {
+                    "avg_bedtime": "N/A",
+                    "avg_bedtime_minutes": None,
+                    "avg_wake_time": "N/A",
+                    "avg_wake_time_minutes": None,
+                    "avg_sleep_duration_hours": None,
+                    "days_analyzed": 0,
+                    "per_day": [],
+                }
+
+            # Classify night sleeps: start hour between 6pm (18) and midnight (0-5)
+            night_sleeps = []
+            for start_ts, duration_minutes in rows:
+                start_dt = datetime.fromtimestamp(start_ts, timezone.utc)
+                start_hour = start_dt.hour
+
+                # Night sleep: started between 6pm-midnight
+                is_night = start_hour >= 18
+
+                if not is_night:
+                    continue
+
+                end_ts = start_ts + duration_minutes * 60
+                end_dt = datetime.fromtimestamp(end_ts, timezone.utc)
+
+                # Normalize bedtime hour for averaging:
+                # Hours before 6am treated as 24+hour to avoid midnight crossing issues
+                bed_hour = start_dt.hour + start_dt.minute / 60.0
+
+                wake_hour = end_dt.hour + end_dt.minute / 60.0
+                # If wake is before 6am next day, it's early morning
+                # No normalization needed for wake since we expect 4am-10am range
+
+                duration_hours = duration_minutes / 60.0
+
+                date_str = start_dt.strftime("%Y-%m-%d")
+
+                night_sleeps.append({
+                    "date": date_str,
+                    "bedtime_hour": bed_hour,
+                    "wake_hour": wake_hour,
+                    "duration_hours": round(duration_hours, 2),
+                    "bedtime_dt": start_dt,
+                    "wake_dt": end_dt,
+                })
+
+            if not night_sleeps:
+                return {
+                    "avg_bedtime": "N/A",
+                    "avg_bedtime_minutes": None,
+                    "avg_wake_time": "N/A",
+                    "avg_wake_time_minutes": None,
+                    "avg_sleep_duration_hours": None,
+                    "days_analyzed": 0,
+                    "per_day": [],
+                }
+
+            # Compute averages
+            total_bed = sum(s["bedtime_hour"] for s in night_sleeps)
+            total_wake = sum(s["wake_hour"] for s in night_sleeps)
+            total_dur = sum(s["duration_hours"] for s in night_sleeps)
+            count = len(night_sleeps)
+
+            avg_bed_hour = total_bed / count
+            avg_wake_hour = total_wake / count
+            avg_dur = round(total_dur / count, 1)
+
+            # Convert average bed hour to minutes from midnight
+            avg_bed_minutes = int(round(avg_bed_hour * 60))
+            avg_wake_minutes = int(round(avg_wake_hour * 60))
+
+            # Format times
+            def format_time(hour_float):
+                h = int(hour_float) % 24
+                m = int(round((hour_float - int(hour_float)) * 60))
+                if m == 60:
+                    h += 1
+                    m = 0
+                h = h % 24
+                period = "AM" if h < 12 else "PM"
+                display_h = h % 12
+                if display_h == 0:
+                    display_h = 12
+                return f"{display_h}:{m:02d} {period}"
+
+            # Build per-day list
+            per_day = []
+            for s in night_sleeps:
+                bed_min = int(round(s["bedtime_hour"] * 60))
+                wake_min = int(round(s["wake_hour"] * 60))
+                per_day.append({
+                    "date": s["date"],
+                    "bedtime": format_time(s["bedtime_hour"]),
+                    "bedtime_minutes": bed_min,
+                    "wake_time": format_time(s["wake_hour"]),
+                    "wake_time_minutes": wake_min,
+                    "duration_hours": s["duration_hours"],
+                })
+
+            return {
+                "avg_bedtime": format_time(avg_bed_hour),
+                "avg_bedtime_minutes": avg_bed_minutes,
+                "avg_wake_time": format_time(avg_wake_hour),
+                "avg_wake_time_minutes": avg_wake_minutes,
+                "avg_sleep_duration_hours": avg_dur,
+                "days_analyzed": count,
+                "per_day": per_day,
+            }
+        finally:
+            conn.close()
+
     def get_last_temperature(self, baby_id=None) -> Optional[Dict]:
         """
         Retrieve the most recent temperature reading

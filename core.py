@@ -493,6 +493,26 @@ class BabyTracker:
 
         return self.db.get_last_temperature(baby_id)
 
+    def get_daily_summary(self, baby_id=None):
+        """Get today's daily summary totals."""
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return {}
+        return self.db.get_daily_summary(baby_id)
+
+    def get_sleep_analysis(self, baby_id=None, days=14):
+        """Get sleep/bedtime analysis over the last N days."""
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return {}
+        return self.db.get_sleep_analysis(baby_id, days)
+
     def get_today_wet_diaper_count(self, baby_id=None):
         """
         Get the count of wet diapers for today.
