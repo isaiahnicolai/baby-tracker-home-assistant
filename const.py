@@ -106,3 +106,20 @@ ATTR_CURRENT_VALUE = "current_value"
 ATTR_BABY_AGE_DAYS = "baby_age_days"
 ATTR_AGE_BRACKET = "age_bracket"
 ATTR_DISMISSED = "dismissed"
+
+# New sensor types
+SENSOR_TYPE_DAILY_SUMMARY = "daily_summary"
+SENSOR_TYPE_FEEDING_TIMER = "feeding_timer"
+SENSOR_TYPE_BEDTIME_ANALYSIS = "bedtime_analysis"
+
+# Night mode constants
+NIGHT_START_HOUR = 19  # 7 PM
+NIGHT_END_HOUR = 7     # 7 AM
+
+# Event names
+EVENT_FEEDING = "baby_tracker_feeding"
+EVENT_DIAPER = "baby_tracker_diaper"
+EVENT_SLEEP = "baby_tracker_sleep"
+
+# Bedtime analysis
+BEDTIME_ANALYSIS_DAYS = 14

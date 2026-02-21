@@ -35,6 +35,10 @@ from .const import (
     SENSOR_TYPE_DIAPER_COUNT,
     SENSOR_TYPE_POOPY_COUNT,
     SENSOR_TYPE_WET_COUNT,
+    SENSOR_TYPE_DAILY_SUMMARY,
+    SENSOR_TYPE_FEEDING_TIMER,
+    SENSOR_TYPE_BEDTIME_ANALYSIS,
+    FEEDING_THRESHOLDS,
     UNIT_MINUTES,
     UNIT_FEEDINGS,
     UNIT_DIAPERS,
@@ -140,6 +144,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             BabyTrackerPoopyCountSensor(coordinator, baby_name),
             BabyTrackerWetCountSensor(coordinator, baby_name),
             BabyTrackerTimeSinceLastFeedingSensor(coordinator, baby_name),
+            BabyTrackerDailySummarySensor(coordinator, baby_name),
+            BabyTrackerFeedingTimerSensor(coordinator, baby_name),
+            BabyTrackerBedtimeAnalysisSensor(coordinator, baby_name),
         ]
 
         sensors.extend(baby_sensors)
@@ -1689,3 +1696,216 @@ class BabyTrackerHeadSensor(BabyTrackerSensor):
 
         self._attr_extra_state_attributes = attrs
         self.async_write_ha_state()
+
+
+def _get_baby_age_days(baby_info):
+    """Calculate baby's age in days from DOB."""
+    if not baby_info or not hasattr(baby_info, "dob") or not baby_info.dob:
+        return None
+    try:
+        dob = datetime.strptime(baby_info.dob, "%Y-%m-%d %H:%M:%S %z")
+        age_delta = datetime.now(timezone.utc) - dob
+        return age_delta.days
+    except (ValueError, TypeError):
+        return None
+
+
+def _get_age_threshold(age_days, thresholds):
+    """Return (threshold_value, bracket_label) for the given age."""
+    if age_days is None:
+        value = thresholds[0][2]
+        return value, f"0-{thresholds[0][1]}d"
+    for min_days, max_days, value in thresholds:
+        if min_days <= age_days <= max_days:
+            return value, f"{min_days}-{max_days}d"
+    last = thresholds[-1]
+    return last[2], f"{last[0]}+d"
+
+
+class BabyTrackerDailySummarySensor(BabyTrackerSensor):
+    """Sensor that displays today's daily summary."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            baby_name,
+            SENSOR_TYPE_DAILY_SUMMARY,
+            "Daily Summary",
+            UNIT_FEEDINGS,
+        )
+        self._attr_icon = "mdi:clipboard-list"
+
+    @property
+    def state(self):
+        """Return total feedings today."""
+        baby_data = self._get_baby_data()
+        if not baby_data:
+            return None
+        summary = baby_data.get("daily_summary")
+        if not summary:
+            return None
+        return summary.get("total_feedings", 0)
+
+    @property
+    def extra_state_attributes(self):
+        """Return daily summary attributes."""
+        baby_data = self._get_baby_data()
+        if not baby_data:
+            return {}
+        summary = baby_data.get("daily_summary")
+        if not summary:
+            return {}
+        return {
+            "formula_oz": summary.get("formula_oz", 0),
+            "nursing_minutes": summary.get("nursing_minutes", 0),
+            "diaper_count": summary.get("diaper_count", 0),
+            "sleep_hours": summary.get("sleep_hours", 0),
+        }
+
+
+class BabyTrackerFeedingTimerSensor(BabyTrackerSensor):
+    """Sensor showing minutes until next feeding is due."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            baby_name,
+            SENSOR_TYPE_FEEDING_TIMER,
+            "Next Feeding",
+            "min",
+        )
+
+    def _get_baby_info(self):
+        """Get the Baby object for this sensor's baby."""
+        if not self.coordinator.data:
+            return None
+        babies = self.coordinator.data.get("babies", [])
+        for baby in babies:
+            if baby and hasattr(baby, "name") and baby.name == self._baby_name:
+                return baby
+        return self.coordinator.data.get("baby_info")
+
+    def _compute_timer(self):
+        """Compute feeding timer values."""
+        baby_data = self._get_baby_data()
+        if not baby_data:
+            return None, None, None, None
+
+        time_data = baby_data.get("time_since_last_feeding")
+        if not time_data:
+            return None, None, None, None
+
+        hours_since = time_data.get("hours_since_last_feeding")
+        if hours_since is None:
+            return None, None, None, None
+
+        baby_info = self._get_baby_info()
+        age_days = _get_baby_age_days(baby_info)
+        threshold_hours, _ = _get_age_threshold(age_days, FEEDING_THRESHOLDS)
+
+        minutes_remaining = int(threshold_hours * 60 - hours_since * 60)
+
+        if minutes_remaining > 30:
+            status = "ok"
+        elif minutes_remaining > 0:
+            status = "soon"
+        else:
+            status = "overdue"
+
+        # Estimate next feeding time
+        last_feed_time_str = time_data.get("last_feeding_time")
+        next_feeding_time = None
+        if last_feed_time_str:
+            try:
+                try:
+                    lft = datetime.strptime(last_feed_time_str, "%Y-%m-%d %H:%M:%S %z")
+                except ValueError:
+                    lft = datetime.strptime(last_feed_time_str, "%Y-%m-%d %H:%M:%S")
+                    lft = lft.replace(tzinfo=timezone.utc)
+                from datetime import timedelta
+                next_dt = lft + timedelta(hours=threshold_hours)
+                next_feeding_time = next_dt.strftime("%Y-%m-%d %H:%M:%S %z")
+            except Exception:
+                pass
+
+        return minutes_remaining, status, threshold_hours, next_feeding_time
+
+    @property
+    def icon(self):
+        """Return icon based on status."""
+        _, status, _, _ = self._compute_timer()
+        if status == "overdue":
+            return "mdi:timer-alert-outline"
+        return "mdi:timer-outline"
+
+    @property
+    def state(self):
+        """Return minutes remaining until next feeding."""
+        minutes_remaining, _, _, _ = self._compute_timer()
+        return minutes_remaining
+
+    @property
+    def extra_state_attributes(self):
+        """Return feeding timer attributes."""
+        minutes_remaining, status, threshold_hours, next_feeding_time = self._compute_timer()
+        baby_data = self._get_baby_data()
+        hours_since = None
+        if baby_data:
+            time_data = baby_data.get("time_since_last_feeding")
+            if time_data:
+                hours_since = time_data.get("hours_since_last_feeding")
+
+        attrs = {
+            "status": status,
+            "threshold_hours": threshold_hours,
+            "hours_since_last": round(hours_since, 2) if hours_since is not None else None,
+        }
+        if next_feeding_time:
+            attrs["next_feeding_time"] = next_feeding_time
+        return attrs
+
+
+class BabyTrackerBedtimeAnalysisSensor(BabyTrackerSensor):
+    """Sensor showing average bedtime with per-day data for graphing."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            baby_name,
+            SENSOR_TYPE_BEDTIME_ANALYSIS,
+            "Average Bedtime",
+            None,
+        )
+        self._attr_icon = "mdi:weather-night"
+
+    @property
+    def state(self):
+        """Return the average bedtime string."""
+        baby_data = self._get_baby_data()
+        if not baby_data:
+            return None
+        analysis = baby_data.get("sleep_analysis")
+        if not analysis:
+            return None
+        return analysis.get("avg_bedtime", "N/A")
+
+    @property
+    def extra_state_attributes(self):
+        """Return bedtime analysis attributes for graphing."""
+        baby_data = self._get_baby_data()
+        if not baby_data:
+            return {}
+        analysis = baby_data.get("sleep_analysis")
+        if not analysis:
+            return {}
+        return {
+            "avg_wake_time": analysis.get("avg_wake_time"),
+            "avg_sleep_duration_hours": analysis.get("avg_sleep_duration_hours"),
+            "avg_bedtime_minutes": analysis.get("avg_bedtime_minutes"),
+            "avg_wake_time_minutes": analysis.get("avg_wake_time_minutes"),
+            "days_analyzed": analysis.get("days_analyzed"),
+            "per_day": analysis.get("per_day", []),
+        }

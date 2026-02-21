@@ -11,7 +11,10 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 import homeassistant.helpers.config_validation as cv
 
-from .const import DOMAIN, CONF_EMAIL, CONF_PASSWORD, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+from .const import (
+    DOMAIN, CONF_EMAIL, CONF_PASSWORD, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL,
+    EVENT_FEEDING, EVENT_DIAPER, EVENT_SLEEP,
+)
 from .baby_tracker import BabyTracker
 from .services import async_register_services, async_unregister_services
 
@@ -128,6 +131,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         self.db_path = db_path
         self.alert_dismiss_state = {}
         self._alert_entities = []
+        self._previous_data = {}
         _LOGGER.info(f"Initialized Baby Tracker coordinator with database at: {db_path}")
 
     async def _async_update_data(self):
@@ -260,6 +264,14 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                     self.baby_tracker.get_today_wet_diaper_count, baby_id
                 )
 
+                daily_summary = await self.hass.async_add_executor_job(
+                    self.baby_tracker.get_daily_summary, baby_id
+                )
+
+                sleep_analysis = await self.hass.async_add_executor_job(
+                    self.baby_tracker.get_sleep_analysis, baby_id, 14
+                )
+
                 # Store all data for this baby
                 baby_data[baby_name] = {
                     "baby_info": baby,
@@ -282,7 +294,46 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                     "last_doctor_visit": last_doctor_visit,
                     "last_vaccine": last_vaccine,
                     "today_wet_count": today_wet_count,
+                    "daily_summary": daily_summary,
+                    "sleep_analysis": sleep_analysis,
                 }
+
+            # Fire events for detected changes
+            for baby_name, current in baby_data.items():
+                prev = self._previous_data.get(baby_name, {})
+
+                # Feeding change: compare last_feeding time
+                curr_feed_time = (current.get("last_feeding") or {}).get("time")
+                prev_feed_time = (prev.get("last_feeding") or {}).get("time")
+                if curr_feed_time and curr_feed_time != prev_feed_time:
+                    self.hass.bus.async_fire(EVENT_FEEDING, {
+                        "baby_name": baby_name,
+                        "type": (current.get("last_feeding") or {}).get("type"),
+                        "time": curr_feed_time,
+                    })
+
+                # Diaper change: compare last_diaper time
+                curr_diaper_time = (current.get("last_diaper") or {}).get("time")
+                prev_diaper_time = (prev.get("last_diaper") or {}).get("time")
+                if curr_diaper_time and curr_diaper_time != prev_diaper_time:
+                    self.hass.bus.async_fire(EVENT_DIAPER, {
+                        "baby_name": baby_name,
+                        "status": (current.get("last_diaper") or {}).get("status"),
+                        "time": curr_diaper_time,
+                    })
+
+                # Sleep change: compare last_sleep time or status
+                curr_sleep = current.get("last_sleep") or {}
+                prev_sleep = prev.get("last_sleep") or {}
+                if (curr_sleep.get("time") != prev_sleep.get("time") or
+                        curr_sleep.get("is_sleeping") != prev_sleep.get("is_sleeping")):
+                    self.hass.bus.async_fire(EVENT_SLEEP, {
+                        "baby_name": baby_name,
+                        "is_sleeping": curr_sleep.get("is_sleeping"),
+                        "time": curr_sleep.get("time"),
+                    })
+
+            self._previous_data = {k: dict(v) for k, v in baby_data.items()}
 
             # For backwards compatibility, keep single-baby structure
             # Use first baby's data if available

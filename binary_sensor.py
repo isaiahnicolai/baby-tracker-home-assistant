@@ -24,6 +24,8 @@ from .const import (
     LOW_WET_THRESHOLD,
     LOW_WET_CHECK_HOUR,
     LOW_WET_MIN_AGE_DAYS,
+    NIGHT_START_HOUR,
+    NIGHT_END_HOUR,
     ATTR_ALERT_TYPE,
     ATTR_THRESHOLD,
     ATTR_CURRENT_VALUE,
@@ -88,6 +90,7 @@ async def async_setup_entry(
             LongSleepAlert(coordinator, baby_name),
         ]
         entities.extend(alert_entities)
+        entities.append(BabyTrackerNightModeSensor(coordinator, baby_name))
 
     coordinator._alert_entities.extend(entities)
     async_add_entities(entities, True)
@@ -377,3 +380,81 @@ class LongSleepAlert(BabyTrackerAlert):
             return False
         threshold, _ = self._get_threshold_info()
         return hours >= threshold
+
+
+class BabyTrackerNightModeSensor(CoordinatorEntity, BinarySensorEntity):
+    """Binary sensor that indicates if the baby is in night mode (sleeping at night)."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the night mode sensor."""
+        super().__init__(coordinator)
+        self._baby_name = baby_name
+        safe_baby_name = baby_name.lower().replace(" ", "_")
+        self._attr_name = f"{baby_name} Night Mode"
+        self._attr_unique_id = (
+            f"{DOMAIN}_{coordinator.email}_{safe_baby_name}_night_mode"
+        )
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{coordinator.email}_{safe_baby_name}")},
+            "name": f"Baby Tracker ({baby_name})",
+            "manufacturer": "Baby Tracker",
+            "model": "API Integration",
+            "sw_version": "0.1.0",
+        }
+
+    def _get_baby_data(self):
+        """Get data for this sensor's baby from coordinator."""
+        if not self.coordinator.data:
+            return None
+        baby_data = self.coordinator.data.get("baby_data", {})
+        if self._baby_name in baby_data:
+            return baby_data[self._baby_name]
+        return self.coordinator.data
+
+    @property
+    def is_on(self):
+        """Return True when baby is sleeping during night hours."""
+        baby_data = self._get_baby_data()
+        if not baby_data:
+            return False
+
+        last_sleep = baby_data.get("last_sleep")
+        if not last_sleep:
+            return False
+
+        is_sleeping = last_sleep.get("is_sleeping", False)
+        if not is_sleeping:
+            return False
+
+        now = datetime.now()
+        current_hour = now.hour
+        # Night hours: 7pm (19) to 7am (7) — wraps around midnight
+        is_night = current_hour >= NIGHT_START_HOUR or current_hour < NIGHT_END_HOUR
+        return is_night
+
+    @property
+    def icon(self):
+        """Return icon based on state."""
+        if self.is_on:
+            return "mdi:moon-waning-crescent"
+        return "mdi:white-balance-sunny"
+
+    @property
+    def extra_state_attributes(self):
+        """Return night mode attributes."""
+        baby_data = self._get_baby_data()
+        if not baby_data:
+            return {}
+
+        last_sleep = baby_data.get("last_sleep") or {}
+        return {
+            "sleep_start": last_sleep.get("time"),
+            "current_duration": last_sleep.get("current_duration", 0),
+            "night_start_hour": NIGHT_START_HOUR,
+            "night_end_hour": NIGHT_END_HOUR,
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.last_update_success and self.coordinator.data is not None
