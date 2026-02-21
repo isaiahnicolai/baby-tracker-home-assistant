@@ -1628,7 +1628,7 @@ class BabyTrackerLocalDatabase:
 
         except Exception as e:
             # Log the error or handle it as needed
-            print(f"Error deleting Other Feed transaction: {e}")
+            _LOGGER.error(f"Error deleting Other Feed transaction: {e}")
             # Rollback in case of error
             conn.rollback()
             return False
@@ -1637,7 +1637,7 @@ class BabyTrackerLocalDatabase:
     def insert_other_feed_transaction(self, transaction_data: Dict) -> bool:
         """
         Insert an other feed transaction into the OtherFeed table
-        
+
         :param transaction_data: Decoded other feed transaction data
         :return: True if insertion was successful, False otherwise
         """
@@ -1650,28 +1650,33 @@ class BabyTrackerLocalDatabase:
 
             # Handle amount and scale
             amount = 0
-            unit = ''
             is_english_scale = 0
             amount_data = transaction_data.get('amount', {})
             if isinstance(amount_data, dict):
                 amount = float(amount_data.get('value', 0))
-                # Check for string boolean for englishMeasure
                 english_measure = str(amount_data.get('englishMeasure', 'false')).lower()
                 is_english_scale = 1 if english_measure == 'true' else 0
 
             # Get feed type and other details
             feed_type = transaction_data.get('feedType', {})
             feed_type_id = feed_type.get('objectID', '')
-            is_bottle = 1 if str(feed_type.get('isBottle', 'false')).lower() == 'true' else 0
             unit = transaction_data.get('unit', '')
+
+            # Ensure OtherFeedSelection exists if we have feed type data
+            if feed_type_id and isinstance(feed_type, dict) and feed_type.get('name'):
+                is_bottle = 1 if str(feed_type.get('bottle', 'false')).lower() == 'true' else 0
+                cursor.execute('''
+                    INSERT OR IGNORE INTO OtherFeedSelection (ID, Name, IsBottle)
+                    VALUES (?, ?, ?)
+                ''', (feed_type_id, feed_type.get('name', ''), is_bottle))
 
             # Prepare insertion query
             cursor.execute('''
                 INSERT OR REPLACE INTO OtherFeed (
-                    ID, Timestamp, Time, Note, HasPicture, 
+                    ID, Timestamp, Time, Note, HasPicture,
                     BabyID, DescID, TypeID, Amount, IsEnglishScale,
-                    Unit, IsBottle
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    Unit
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 transaction_data.get('objectID', ''),  # ID
                 self.convert_timestamp(transaction_data.get('timestamp', '1970-01-01 00:00:00 +0000')),  # Timestamp
@@ -1681,10 +1686,9 @@ class BabyTrackerLocalDatabase:
                 transaction_data.get('baby', {}).get('objectID', ''),  # BabyID
                 feed_type.get('descID', ''),  # DescID
                 feed_type_id,  # TypeID
-                amount,  # Amount 
+                amount,  # Amount
                 is_english_scale,  # IsEnglishScale
-                unit,  # Unit
-                is_bottle  # IsBottle
+                unit  # Unit
             ))
 
             # Commit the transaction
@@ -1692,9 +1696,7 @@ class BabyTrackerLocalDatabase:
             return True
 
         except Exception as e:
-            # Log the error or handle it as needed
-            print(f"Error inserting other feed transaction: {e}")
-            # Rollback in case of error
+            _LOGGER.error(f"Error inserting other feed transaction: {e}")
             conn.rollback()
             return False
         finally:
@@ -3122,7 +3124,7 @@ class BabyTrackerLocalDatabase:
     def update_other_feed_transaction(self, transaction_data):
         """
         Update an other feed transaction in the OtherFeed table
-        
+
         :param transaction_data: Updated other feed transaction data
         :return: True if update was successful, False otherwise
         """
@@ -3132,12 +3134,12 @@ class BabyTrackerLocalDatabase:
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.cursor()
-            
+
             # Extract and convert data
             object_id = transaction_data.get('objectID', '')
             timestamp = self.convert_timestamp(transaction_data.get('timestamp', '1970-01-01 00:00:00 +0000'))
             time = self.convert_timestamp(transaction_data.get('time', '1970-01-01 00:00:00 +0000'))
-            
+
             # Handle amount and scale
             amount = 0
             is_english_scale = 0
@@ -3146,13 +3148,20 @@ class BabyTrackerLocalDatabase:
                 amount = float(amount_data.get('value', 0))
                 english_measure = str(amount_data.get('englishMeasure', 'false')).lower()
                 is_english_scale = 1 if english_measure == 'true' else 0
-                
+
             # Get feed type and other details
             feed_type = transaction_data.get('feedType', {})
             feed_type_id = feed_type.get('objectID', '')
-            is_bottle = 1 if str(feed_type.get('isBottle', 'false')).lower() == 'true' else 0
             unit = transaction_data.get('unit', '')
-            
+
+            # Ensure OtherFeedSelection exists if we have feed type data
+            if feed_type_id and isinstance(feed_type, dict) and feed_type.get('name'):
+                is_bottle = 1 if str(feed_type.get('bottle', 'false')).lower() == 'true' else 0
+                cursor.execute('''
+                    INSERT OR IGNORE INTO OtherFeedSelection (ID, Name, IsBottle)
+                    VALUES (?, ?, ?)
+                ''', (feed_type_id, feed_type.get('name', ''), is_bottle))
+
             # Prepare update query
             cursor.execute('''
                 UPDATE OtherFeed SET
@@ -3164,8 +3173,7 @@ class BabyTrackerLocalDatabase:
                     TypeID = ?,
                     Amount = ?,
                     IsEnglishScale = ?,
-                    Unit = ?,
-                    IsBottle = ?
+                    Unit = ?
                 WHERE ID = ? AND Timestamp < ?
             ''', (
                 timestamp,
@@ -3177,16 +3185,15 @@ class BabyTrackerLocalDatabase:
                 amount,
                 is_english_scale,
                 unit,
-                is_bottle,
                 object_id,
                 timestamp
             ))
-            
+
             conn.commit()
             return cursor.rowcount > 0
-        
+
         except Exception as e:
-            print(f"Error updating other feed transaction: {e}")
+            _LOGGER.error(f"Error updating other feed transaction: {e}")
             conn.rollback()
             return False
         finally:
@@ -3994,7 +4001,84 @@ class BabyTrackerLocalDatabase:
             conn.commit()
             return True
         except Exception as e:
-            print(f"Error deleting bath transaction: {e}")
+            _LOGGER.error(f"Error deleting bath transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    # ===== OTHER FEED SELECTION TRANSACTION METHODS =====
+
+    def insert_other_feed_selection_transaction(self, transaction_data: Dict) -> bool:
+        """Insert an other feed selection into the OtherFeedSelection table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            is_bottle = 1 if str(transaction_data.get('bottle', 'false')).lower() == 'true' else 0
+            cursor.execute('''
+                INSERT OR REPLACE INTO OtherFeedSelection (
+                    ID, Timestamp, Name, Description, IsBottle
+                ) VALUES (?, ?, ?, ?, ?)
+            ''', (
+                transaction_data.get('objectID', ''),
+                self.convert_timestamp(transaction_data.get('timestamp', '1970-01-01 00:00:00 +0000')),
+                transaction_data.get('name', ''),
+                transaction_data.get('description', ''),
+                is_bottle
+            ))
+            conn.commit()
+            return True
+        except Exception as e:
+            _LOGGER.error(f"Error inserting other feed selection transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def update_other_feed_selection_transaction(self, transaction_data: Dict) -> bool:
+        """Update an other feed selection in the OtherFeedSelection table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            is_bottle = 1 if str(transaction_data.get('bottle', 'false')).lower() == 'true' else 0
+            cursor.execute('''
+                UPDATE OtherFeedSelection SET
+                    Name = ?, Description = ?, IsBottle = ?
+                WHERE ID = ?
+            ''', (
+                transaction_data.get('name', ''),
+                transaction_data.get('description', ''),
+                is_bottle,
+                transaction_data.get('objectID', '')
+            ))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            _LOGGER.error(f"Error updating other feed selection transaction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def delete_other_feed_selection_transaction(self, transaction_data: Dict) -> bool:
+        """Delete an other feed selection from the OtherFeedSelection table"""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM OtherFeedSelection WHERE ID = ?', (transaction_data.get('objectID', ''),))
+            conn.commit()
+            return True
+        except Exception as e:
+            _LOGGER.error(f"Error deleting other feed selection transaction: {e}")
             conn.rollback()
             return False
         finally:

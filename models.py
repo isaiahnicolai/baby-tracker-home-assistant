@@ -304,74 +304,34 @@ class Formula(BaseModel):
         if self.baby_id:
                 data["baby"] = {"objectID": self.baby_id}
         return data
-class OtherFeed(BaseModel):
-    """Model representing other feeding types"""
-    
+class OtherFeedSelection(BaseModel):
+    """Model representing an other feed selection/type (e.g. Cereal, Solids)"""
+
     def __init__(self, data: Dict[str, Any] = None):
-        self.time: str = None
-        self.amount: VolumeMeasure = VolumeMeasure()
-        self.note: str = ""
-        self.baby_id: str = None
-        self.timezone: int = -21600
-        self.picture_loaded: bool = False
-        self.type_id: str = None        # Added field for type ID
-        self.desc_id: str = None        # Added field for description ID 
-        self.unit: str = ""             # Added field for unit
-        self.is_english_scale: bool = False  # Boolean flag for measurement system
-        
+        self.name: str = ""
+        self.description: str = ""
+        self.is_bottle: bool = False
+
         super().__init__(data)
-        self.object_type = "OtherFeed"
-    
+        self.object_type = "OtherFeedSelection"
+
     def from_dict(self, data: Dict[str, Any]) -> None:
-        """Load other feeding data from a dictionary"""
+        """Load other feed selection data from a dictionary"""
         super().from_dict(data)
-        self.time = data.get("time", self.timestamp)
-        
-        # Handle amount data
-        amount_data = data.get("amount", {})
-        if isinstance(amount_data, dict):
-            self.amount = VolumeMeasure(amount_data)
-        else:
-            # For backward compatibility
-            self.amount.value = float(data.get("amount", 0))
-            self.amount.english_measure = bool(data.get("isEnglishScale", False))
-        
-        # Handle additional OtherFeed specific fields
-        self.type_id = data.get("typeID", "")
-        self.desc_id = data.get("descID", "")
-        self.unit = data.get("unit", "")
-        self.is_english_scale = bool(data.get("isEnglishScale", False))
-        
-        self.note = data.get("note", "")
-        
-        # Handle baby reference
-        baby_data = data.get("baby", {})
-        if isinstance(baby_data, dict):
-            self.baby_id = baby_data.get("objectID", "")
-        else:
-            self.baby_id = data.get("baby_id", "")
-        
-        self.timezone = data.get("timezone", -21600)
-        self.picture_loaded = str(data.get("pictureLoaded", "false")).lower() == "true"
-    
+        self.name = data.get("name", "")
+        self.description = data.get("description", "")
+        self.is_bottle = str(data.get("bottle", "false")).lower() == "true"
+
     def to_dict(self) -> Dict[str, Any]:
-        """Convert other feeding model to a dictionary"""
+        """Convert other feed selection model to a dictionary"""
         data = super().to_dict()
         data.update({
-            "time": self.time,
-            "amount": self.amount.to_dict(),
-            "typeID": self.type_id,
-            "descID": self.desc_id,
-            "unit": self.unit,
-            "isEnglishScale": self.is_english_scale,
-            "note": self.note,
-            "timezone": self.timezone,
-            "pictureNote": [],
-            "pictureLoaded": str(self.picture_loaded).lower()
+            "name": self.name,
+            "description": self.description,
+            "bottle": str(self.is_bottle).lower()
         })
-        if self.baby_id:
-                data["baby"] = {"objectID": self.baby_id}
         return data
+
 class Temperature(BaseModel):
     """Model representing a temperature reading"""
     
@@ -503,15 +463,15 @@ class FeedType(BaseModel):
         super().from_dict(data)
         self.name = data.get("name", "")
         self.desc_id = data.get("descID", "")
-        self.is_bottle = str(data.get("isBottle", "false")).lower() == "true"
-    
+        self.is_bottle = str(data.get("bottle", "false")).lower() == "true"
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert feed type model to a dictionary"""
         data = super().to_dict()
         data.update({
             "name": self.name,
             "descID": self.desc_id,
-            "isBottle": str(self.is_bottle).lower()
+            "bottle": str(self.is_bottle).lower()
         })
         return data
 class OtherFeed(BaseModel):
