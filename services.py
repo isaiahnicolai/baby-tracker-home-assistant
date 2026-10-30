@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
@@ -44,14 +45,14 @@ NURSING_SCHEMA = vol.Schema({
 FORMULA_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
     vol.Required("amount"): vol.All(vol.Coerce(float), vol.Range(min=0)),
-    vol.Optional("is_english_measure", default=False): cv.boolean,
+    vol.Optional("is_english_measure"): cv.boolean,
     vol.Optional("note", default=""): cv.string,
 })
 
 PUMPED_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
     vol.Required("amount"): vol.All(vol.Coerce(float), vol.Range(min=0)),
-    vol.Optional("is_english_measure", default=False): cv.boolean,
+    vol.Optional("is_english_measure"): cv.boolean,
     vol.Optional("note", default=""): cv.string,
 })
 
@@ -154,30 +155,32 @@ async def async_register_services(hass: HomeAssistant):
         return
 
     async def _get_baby_id(coordinator, data):
-        """Helper to get baby_id from baby_name or use default."""
+        """Resolve the target baby from baby_name, or the only baby if there is one."""
         baby_name = data.get("baby_name")
 
         if baby_name:
-            # Look up baby by name
             baby = await hass.async_add_executor_job(
                 coordinator.baby_tracker.get_baby_by_name,
                 baby_name
             )
             if not baby:
-                _LOGGER.error(f"Baby '{baby_name}' not found")
-                return None
+                raise ServiceValidationError(f"Baby '{baby_name}' not found")
             return baby.object_id
-        else:
-            # Use first baby as default
-            baby_info = coordinator.data.get("baby_info")
-            if not baby_info:
-                _LOGGER.error("No baby info available")
-                return None
-            baby_id = baby_info.object_id if hasattr(baby_info, 'object_id') else None
-            if not baby_id:
-                _LOGGER.error("Could not determine baby_id")
-                return None
-            return baby_id
+
+        babies = (coordinator.data or {}).get("babies") or []
+        if len(babies) == 1:
+            return babies[0].object_id
+        if not babies:
+            raise ServiceValidationError("No babies found in Baby Tracker")
+        names = ", ".join(b.name for b in babies)
+        raise ServiceValidationError(f"baby_name is required when there are multiple babies ({names})")
+
+    def _check(result, what):
+        """Raise if a core write reported failure, so the caller sees the error."""
+        ok = result.get("status") == "success" if isinstance(result, dict) else bool(result)
+        if not ok:
+            message = result.get("message") if isinstance(result, dict) else None
+            raise HomeAssistantError(f"Failed to {what}: {message or 'unknown error'}")
 
     def _get_unit_system_from_config():
         """Get the configured unit system (imperial or metric)."""
@@ -194,39 +197,37 @@ async def async_register_services(hass: HomeAssistant):
         """Add a diaper change record."""
         data = call.data
         coordinator = _get_coordinator(hass)
-        
-        status = 2 if data["pee"] and data["poo"] else 1 if data["poo"] else 0 if data["pee"] else 3
-        
+        baby_id = await _get_baby_id(coordinator, data)
+
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.add_diaper,
+            baby_id,
             None,  # time_str
             data.get("pee"),
             data.get("poo"),
             data.get("pee_color", 0),
-            data.get("poo_color", 0), 
+            data.get("poo_color", 0),
             data.get("texture", 0),
             data.get("amount", 2),
             data.get("note", "")
         )
-        
-        if result["status"] != "success":
-            _LOGGER.error(f"Failed to add diaper: {result.get('message')}")
-            return False
-            
+
+        _check(result, "add diaper")
         await coordinator.async_refresh()
-        return True
-        
+
     async def add_nursing(call: ServiceCall):
         """Add a nursing session record."""
         data = call.data
         coordinator = _get_coordinator(hass)
-        
-        # Convert finish_side from string to integer
-        finish_side_map = {"Right": 0, "Left": 1, "Both": 2}
+        baby_id = await _get_baby_id(coordinator, data)
+
+        # Android NursingFinishSide: NotSet=0, Left=1, Right=2 ("Both" has no finish side)
+        finish_side_map = {"Both": 0, "Left": 1, "Right": 2}
         finish_side = finish_side_map.get(data.get("finish_side", "Left"), 1)
-        
+
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.add_nursing,
+            baby_id,
             None,  # time_str
             data.get("left_duration", 0),
             data.get("right_duration", 0),
@@ -234,18 +235,17 @@ async def async_register_services(hass: HomeAssistant):
             finish_side,
             data.get("note", "")
         )
-        
-        if result["status"] != "success":
-            _LOGGER.error(f"Failed to add nursing: {result.get('message')}")
-            return False
-            
+
+        _check(result, "add nursing")
         await coordinator.async_refresh()
-        return True
-        
+
     async def add_formula(call: ServiceCall):
         """Add a formula feeding record."""
-        data = call.data
+        await _add_formula(call.data)
+
+    async def _add_formula(data):
         coordinator = _get_coordinator(hass)
+        baby_id = await _get_baby_id(coordinator, data)
 
         # Use configured unit system as default if not explicitly provided
         is_english = data.get("is_english_measure")
@@ -254,23 +254,21 @@ async def async_register_services(hass: HomeAssistant):
 
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.add_formula,
+            baby_id,
             None,  # time_str
             data.get("amount"),
             is_english,
             data.get("note", "")
         )
 
-        if result["status"] != "success":
-            _LOGGER.error(f"Failed to add formula: {result.get('message')}")
-            return False
-
+        _check(result, "add formula")
         await coordinator.async_refresh()
-        return True
 
     async def add_pumped(call: ServiceCall):
         """Add a pumped milk record."""
         data = call.data
         coordinator = _get_coordinator(hass)
+        baby_id = await _get_baby_id(coordinator, data)
 
         # Use configured unit system as default if not explicitly provided
         is_english = data.get("is_english_measure")
@@ -279,73 +277,59 @@ async def async_register_services(hass: HomeAssistant):
 
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.add_pumped,
+            baby_id,
             None,  # time_str
             data.get("amount"),
             is_english,
             data.get("note", "")
         )
 
-        if result["status"] != "success":
-            _LOGGER.error(f"Failed to add pumped milk: {result.get('message')}")
-            return False
-
+        _check(result, "add pumped milk")
         await coordinator.async_refresh()
-        return True
-        
+
     async def add_temperature(call: ServiceCall):
         """Add a temperature record."""
         data = call.data
         coordinator = _get_coordinator(hass)
+        baby_id = await _get_baby_id(coordinator, data)
 
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.add_temperature,
+            baby_id,
             None,  # time_str
             data.get("temperature"),
             data.get("is_fahrenheit", True),
             data.get("note", "")
         )
 
-        if result["status"] != "success":
-            _LOGGER.error(f"Failed to add temperature: {result.get('message')}")
-            return False
-
+        _check(result, "add temperature")
         await coordinator.async_refresh()
-        return True
 
     async def log_bath(call: ServiceCall):
         """Log a bath record."""
         _LOGGER.debug(f"log_bath service called with data: {call.data}")
         data = call.data
         coordinator = _get_coordinator(hass)
+        baby_id = await _get_baby_id(coordinator, data)
 
-        try:
-            result = await hass.async_add_executor_job(
-                coordinator.baby_tracker.log_bath,
-                data.get("bath_type"),
-                data.get("note", ""),
-                None  # time (defaults to now)
-            )
+        result = await hass.async_add_executor_job(
+            coordinator.baby_tracker.log_bath,
+            baby_id,
+            data.get("bath_type"),
+            data.get("note", ""),
+            None  # time (defaults to now)
+        )
+        _check(result, "log bath")
 
-            if result.get("status") != "success":
-                _LOGGER.error(f"Failed to log bath: {result.get('message')}")
-                return False
-
-            _LOGGER.info(f"Successfully logged bath: type={data.get('bath_type')}, note={data.get('note')}")
-            await coordinator.async_refresh()
-            return True
-        except Exception as e:
-            _LOGGER.error(f"Exception in log_bath service: {str(e)}", exc_info=True)
-            return False
+        _LOGGER.info(f"Logged bath: type={data.get('bath_type')}, note={data.get('note')}")
+        await coordinator.async_refresh()
 
     async def log_pump(call: ServiceCall):
         """Log a pump session record."""
         data = call.data
         coordinator = _get_coordinator(hass)
 
-        # Get baby_id using helper
         baby_id = await _get_baby_id(coordinator, data)
-        if not baby_id:
-            return False
 
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.log_pump,
@@ -359,18 +343,16 @@ async def async_register_services(hass: HomeAssistant):
             None  # time (defaults to now)
         )
 
-        if not result:
-            _LOGGER.error("Failed to log pump session")
-            return False
+        _check(result, "log pump session")
 
-        _LOGGER.info(f"Successfully logged pump session: left={data.get('left_duration')}min/{data.get('left_amount')}, right={data.get('right_duration')}min/{data.get('right_amount')}")
+        _LOGGER.info(f"Logged pump session: left={data.get('left_duration')}min/{data.get('left_amount')}, right={data.get('right_duration')}min/{data.get('right_amount')}")
         await coordinator.async_refresh()
-        return True
 
     async def log_medicine(call: ServiceCall):
         """Log a medicine administration record."""
         data = call.data
         coordinator = _get_coordinator(hass)
+        baby_id = await _get_baby_id(coordinator, data)
 
         # Get medicine name and look up the med_id
         medicine_name = data.get("medicine_name")
@@ -388,69 +370,47 @@ async def async_register_services(hass: HomeAssistant):
                 break
 
         if not med_id:
-            _LOGGER.error(f"Medicine '{medicine_name}' not found in available medicines")
-            return False
+            raise ServiceValidationError(f"Medicine '{medicine_name}' not found")
 
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.add_medicine,
+            baby_id,
             None,  # time_str (defaults to now)
             med_id,
             data.get("amount"),
             data.get("note", "")
         )
 
-        if result.get("status") != "success":
-            _LOGGER.error(f"Failed to log medicine: {result.get('message')}")
-            return False
+        _check(result, "log medicine")
 
-        _LOGGER.info(f"Successfully logged medicine: {medicine_name}, amount={data.get('amount')}")
+        _LOGGER.info(f"Logged medicine: {medicine_name}, amount={data.get('amount')}")
         await coordinator.async_refresh()
-        return True
 
     async def log_sleep(call: ServiceCall):
         """Log a sleep start or end event."""
         _LOGGER.debug(f"log_sleep service called with data: {call.data}")
         data = call.data
         coordinator = _get_coordinator(hass)
+        baby_id = await _get_baby_id(coordinator, data)
 
-        try:
-            # Get baby_id using helper
-            baby_id = await _get_baby_id(coordinator, data)
-            if not baby_id:
-                _LOGGER.error("Could not determine baby_id for sleep event")
-                return False
+        is_start = data.get("is_start", True)
+        result = await hass.async_add_executor_job(
+            coordinator.baby_tracker.log_sleep_event,
+            baby_id,
+            is_start,
+            data.get("note", "")
+        )
+        _check(result, "start sleep" if is_start else "end sleep")
 
-            is_start = data.get("is_start", True)
-            note = data.get("note", "")
-
-            result = await hass.async_add_executor_job(
-                coordinator.baby_tracker.log_sleep_event,
-                baby_id,
-                is_start,
-                note
-            )
-
-            if result.get("status") != "success":
-                _LOGGER.error(f"Failed to log sleep: {result.get('message')}")
-                return False
-
-            action = "started" if is_start else "ended"
-            _LOGGER.info(f"Successfully logged sleep {action}")
-            await coordinator.async_refresh()
-            return True
-        except Exception as e:
-            _LOGGER.error(f"Exception in log_sleep service: {str(e)}", exc_info=True)
-            return False
+        _LOGGER.info(f"Logged sleep {'start' if is_start else 'end'}")
+        await coordinator.async_refresh()
 
     async def log_growth(call: ServiceCall):
         """Log a growth measurement record."""
         data = call.data
         coordinator = _get_coordinator(hass)
 
-        # Get baby_id using helper
         baby_id = await _get_baby_id(coordinator, data)
-        if not baby_id:
-            return False
 
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.log_growth,
@@ -464,23 +424,17 @@ async def async_register_services(hass: HomeAssistant):
             None  # time (defaults to now)
         )
 
-        if not result:
-            _LOGGER.error("Failed to log growth measurement")
-            return False
+        _check(result, "log growth measurement")
 
-        _LOGGER.info(f"Successfully logged growth: weight={data.get('weight')}, length={data.get('length')}, head={data.get('head')}")
+        _LOGGER.info(f"Logged growth: weight={data.get('weight')}, length={data.get('length')}, head={data.get('head')}")
         await coordinator.async_refresh()
-        return True
 
     async def log_milestone(call: ServiceCall):
         """Log a milestone achievement record."""
         data = call.data
         coordinator = _get_coordinator(hass)
 
-        # Get baby_id using helper
         baby_id = await _get_baby_id(coordinator, data)
-        if not baby_id:
-            return False
 
         # Get milestone name and look up the milestone_selection_id
         milestone_name = data.get("milestone_name")
@@ -498,8 +452,7 @@ async def async_register_services(hass: HomeAssistant):
                 break
 
         if not milestone_selection_id:
-            _LOGGER.error(f"Milestone '{milestone_name}' not found in available milestones")
-            return False
+            raise ServiceValidationError(f"Milestone '{milestone_name}' not found")
 
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.log_milestone,
@@ -509,23 +462,17 @@ async def async_register_services(hass: HomeAssistant):
             None  # time (defaults to now)
         )
 
-        if not result:
-            _LOGGER.error("Failed to log milestone")
-            return False
+        _check(result, "log milestone")
 
-        _LOGGER.info(f"Successfully logged milestone: {milestone_name}")
+        _LOGGER.info(f"Logged milestone: {milestone_name}")
         await coordinator.async_refresh()
-        return True
 
     async def log_doctor_visit(call: ServiceCall):
         """Log a doctor visit record."""
         data = call.data
         coordinator = _get_coordinator(hass)
 
-        # Get baby_id using helper
         baby_id = await _get_baby_id(coordinator, data)
-        if not baby_id:
-            return False
 
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.log_doctor_visit,
@@ -538,23 +485,17 @@ async def async_register_services(hass: HomeAssistant):
             None  # time (defaults to now)
         )
 
-        if not result:
-            _LOGGER.error("Failed to log doctor visit")
-            return False
+        _check(result, "log doctor visit")
 
-        _LOGGER.info(f"Successfully logged doctor visit: type={data.get('visit_type')}, appointment={data.get('is_appointment')}")
+        _LOGGER.info(f"Logged doctor visit: type={data.get('visit_type')}, appointment={data.get('is_appointment')}")
         await coordinator.async_refresh()
-        return True
 
     async def log_vaccine(call: ServiceCall):
         """Log a vaccine administration record."""
         data = call.data
         coordinator = _get_coordinator(hass)
 
-        # Get baby_id using helper
         baby_id = await _get_baby_id(coordinator, data)
-        if not baby_id:
-            return False
 
         # Get vaccine name and look up the vacc_id
         vaccine_name = data.get("vaccine_name")
@@ -572,8 +513,7 @@ async def async_register_services(hass: HomeAssistant):
                 break
 
         if not vacc_id:
-            _LOGGER.error(f"Vaccine '{vaccine_name}' not found in available vaccines")
-            return False
+            raise ServiceValidationError(f"Vaccine '{vaccine_name}' not found")
 
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.log_vaccine,
@@ -584,13 +524,10 @@ async def async_register_services(hass: HomeAssistant):
             None  # time (defaults to now)
         )
 
-        if not result:
-            _LOGGER.error("Failed to log vaccine")
-            return False
+        _check(result, "log vaccine")
 
-        _LOGGER.info(f"Successfully logged vaccine: {vaccine_name}")
+        _LOGGER.info(f"Logged vaccine: {vaccine_name}")
         await coordinator.async_refresh()
-        return True
 
     async def list_babies(call: ServiceCall):
         """List all babies in the database."""
@@ -614,7 +551,7 @@ async def async_register_services(hass: HomeAssistant):
                 {
                     "name": baby.name,
                     "id": baby.object_id,
-                    "dob": baby.dob.strftime("%Y-%m-%d") if hasattr(baby, 'dob') and baby.dob else None,
+                    "dob": baby.dob[:10] if baby.dob else None,
                     "gender": baby.gender if hasattr(baby, 'gender') else None
                 }
                 for baby in babies
@@ -630,12 +567,8 @@ async def async_register_services(hass: HomeAssistant):
             coordinator.baby_tracker.sync
         )
 
-        if result["status"] != "success":
-            _LOGGER.error(f"Failed to sync: {result.get('message')}")
-            return False
-
+        _check(result, "sync")
         await coordinator.async_refresh()
-        return True
 
     async def force_resync(call: ServiceCall):
         """Force a complete resync by deleting local database and re-downloading all data.
@@ -650,12 +583,10 @@ async def async_register_services(hass: HomeAssistant):
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.force_resync,
             coordinator.email,
-            coordinator.password
+            coordinator.password,
+            coordinator.device_uuid
         )
-
-        if result["status"] != "success":
-            _LOGGER.error(f"Force resync failed: {result.get('message')}")
-            return False
+        _check(result, "force resync")
 
         _LOGGER.info("Force resync completed successfully")
 
@@ -673,8 +604,6 @@ async def async_register_services(hass: HomeAssistant):
                     await hass.config_entries.async_reload(entry.entry_id)
                     _LOGGER.info(f"Config entry {entry_id} reloaded")
                 break
-
-        return True
 
     def _get_coordinator(hass):
         """Get the data coordinator for the first configured entry."""
@@ -744,6 +673,8 @@ async def async_register_services(hass: HomeAssistant):
         dismissed_count = 0
 
         for entity in coordinator._alert_entities:
+            if not hasattr(entity, "dismiss"):
+                continue
             if entity_id and entity.entity_id != entity_id:
                 continue
             if baby_name and entity._baby_name != baby_name:
@@ -764,6 +695,8 @@ async def async_register_services(hass: HomeAssistant):
         dismissed_count = 0
 
         for entity in coordinator._alert_entities:
+            if not hasattr(entity, "dismiss"):
+                continue
             if baby_name and entity._baby_name != baby_name:
                 continue
             entity.dismiss()
@@ -799,58 +732,44 @@ async def async_register_services(hass: HomeAssistant):
     async def add_4oz_bottle(call: ServiceCall):
         """Quick action: Add a 4oz/120ml bottle based on unit config."""
         data = dict(call.data)
-        amount, is_english = _get_bottle_amount("4oz")
-        data["amount"] = amount
-        data["is_english_measure"] = is_english
-        await add_formula(ServiceCall(DOMAIN, "add_formula", data))
+        data["amount"], data["is_english_measure"] = _get_bottle_amount("4oz")
+        await _add_formula(data)
 
     async def add_6oz_bottle(call: ServiceCall):
         """Quick action: Add a 6oz/180ml bottle based on unit config."""
         data = dict(call.data)
-        amount, is_english = _get_bottle_amount("6oz")
-        data["amount"] = amount
-        data["is_english_measure"] = is_english
-        await add_formula(ServiceCall(DOMAIN, "add_formula", data))
+        data["amount"], data["is_english_measure"] = _get_bottle_amount("6oz")
+        await _add_formula(data)
 
     async def add_8oz_bottle(call: ServiceCall):
         """Quick action: Add an 8oz/240ml bottle based on unit config."""
         data = dict(call.data)
-        amount, is_english = _get_bottle_amount("8oz")
-        data["amount"] = amount
-        data["is_english_measure"] = is_english
-        await add_formula(ServiceCall(DOMAIN, "add_formula", data))
+        data["amount"], data["is_english_measure"] = _get_bottle_amount("8oz")
+        await _add_formula(data)
 
     async def add_small_bottle(call: ServiceCall):
         """Quick action: Add a small (2oz/60ml) bottle based on unit config."""
         data = dict(call.data)
-        amount, is_english = _get_bottle_amount("small")
-        data["amount"] = amount
-        data["is_english_measure"] = is_english
-        await add_formula(ServiceCall(DOMAIN, "add_formula", data))
+        data["amount"], data["is_english_measure"] = _get_bottle_amount("small")
+        await _add_formula(data)
 
     async def add_medium_bottle(call: ServiceCall):
         """Quick action: Add a medium (4oz/120ml) bottle based on unit config."""
         data = dict(call.data)
-        amount, is_english = _get_bottle_amount("medium")
-        data["amount"] = amount
-        data["is_english_measure"] = is_english
-        await add_formula(ServiceCall(DOMAIN, "add_formula", data))
+        data["amount"], data["is_english_measure"] = _get_bottle_amount("medium")
+        await _add_formula(data)
 
     async def add_large_bottle(call: ServiceCall):
         """Quick action: Add a large (6oz/180ml) bottle based on unit config."""
         data = dict(call.data)
-        amount, is_english = _get_bottle_amount("large")
-        data["amount"] = amount
-        data["is_english_measure"] = is_english
-        await add_formula(ServiceCall(DOMAIN, "add_formula", data))
+        data["amount"], data["is_english_measure"] = _get_bottle_amount("large")
+        await _add_formula(data)
 
     async def add_xlarge_bottle(call: ServiceCall):
         """Quick action: Add an extra large (8oz/240ml) bottle based on unit config."""
         data = dict(call.data)
-        amount, is_english = _get_bottle_amount("xlarge")
-        data["amount"] = amount
-        data["is_english_measure"] = is_english
-        await add_formula(ServiceCall(DOMAIN, "add_formula", data))
+        data["amount"], data["is_english_measure"] = _get_bottle_amount("xlarge")
+        await _add_formula(data)
 
     # Register quick action services
     QUICK_BOTTLE_SCHEMA = vol.Schema({
@@ -878,6 +797,7 @@ async def async_unregister_services(hass: HomeAssistant):
         "log_bath",
         "log_pump",
         "log_medicine",
+        "log_sleep",
         "log_growth",
         "log_milestone",
         "log_doctor_visit",

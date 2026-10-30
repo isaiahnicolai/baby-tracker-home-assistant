@@ -1,6 +1,7 @@
 """Baby Tracker integration for Home Assistant."""
 import logging
 import os
+import uuid
 from datetime import timedelta
 
 import voluptuous as vol
@@ -12,7 +13,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 import homeassistant.helpers.config_validation as cv
 
 from .const import (
-    DOMAIN, CONF_EMAIL, CONF_PASSWORD, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL,
+    DOMAIN, CONF_EMAIL, CONF_PASSWORD, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, CONF_DEVICE_UUID,
     EVENT_FEEDING, EVENT_DIAPER, EVENT_SLEEP,
 )
 from .baby_tracker import BabyTracker
@@ -59,11 +60,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     db_path = os.path.join(hass.config.path(), "baby_tracker.db")
     _LOGGER.info(f"Setting up Baby Tracker with database at: {db_path}")
 
+    device_uuid = config.get(CONF_DEVICE_UUID)
+    if not device_uuid:
+        # Entries created before this was stored borrowed another device's
+        # identity (usually a phone). Give this install its own, and rebuild
+        # the local database since its per-device sync progress can't be trusted.
+        _LOGGER.warning("Registering Baby Tracker as its own sync device; local data will be re-downloaded")
+        device_uuid = str(uuid.uuid4())
+        hass.config_entries.async_update_entry(entry, data={**config, CONF_DEVICE_UUID: device_uuid})
+        await hass.async_add_executor_job(_remove_database, db_path)
+
     # Create the data coordinator
     coordinator = BabyTrackerDataCoordinator(
         hass,
         email=config[CONF_EMAIL],
         password=config[CONF_PASSWORD],
+        device_uuid=device_uuid,
         db_path=db_path,
         scan_interval=timedelta(minutes=config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)),
     )
@@ -90,29 +102,34 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if unload_ok:
-        coordinator = hass.data[DOMAIN].pop(entry.entry_id)
-        # Close any open connections or resources
+        hass.data[DOMAIN].pop(entry.entry_id)
 
-        # If this is the last entry, unregister services and clean up database
+        # If this is the last entry, unregister services
         if not any(entry_id != "config" for entry_id in hass.data[DOMAIN]):
             await async_unregister_services(hass)
 
-            # Delete the database file when the extension is removed
-            db_path = coordinator.db_path
-            if db_path and os.path.exists(db_path):
-                try:
-                    os.remove(db_path)
-                    _LOGGER.info(f"Deleted Baby Tracker database at: {db_path}")
-                except Exception as e:
-                    _LOGGER.error(f"Failed to delete database at {db_path}: {e}")
-
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry):
+    """Delete the local database when the integration is removed (not on reload)."""
+    db_path = os.path.join(hass.config.path(), "baby_tracker.db")
+    await hass.async_add_executor_job(_remove_database, db_path)
+
+
+def _remove_database(db_path):
+    if os.path.exists(db_path):
+        try:
+            os.remove(db_path)
+            _LOGGER.info(f"Deleted Baby Tracker database at: {db_path}")
+        except OSError as e:
+            _LOGGER.error(f"Failed to delete database at {db_path}: {e}")
 
 
 class BabyTrackerDataCoordinator(DataUpdateCoordinator):
     """Data update coordinator for Baby Tracker."""
 
-    def __init__(self, hass, email, password, db_path, scan_interval):
+    def __init__(self, hass, email, password, device_uuid, db_path, scan_interval):
         """Initialize the coordinator."""
         super().__init__(
             hass,
@@ -123,15 +140,17 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         
         # Create Baby Tracker instance
         self.baby_tracker = BabyTracker(
-            db_path=db_path
+            db_path=db_path,
+            time_zone=hass.config.time_zone
         )
         self.email = email
         self.password = password
+        self.device_uuid = device_uuid
         self.authenticated = False
         self.db_path = db_path
         self.alert_dismiss_state = {}
         self._alert_entities = []
-        self._previous_data = {}
+        self._previous_data = None  # None until the first refresh, so startup fires no events
         _LOGGER.info(f"Initialized Baby Tracker coordinator with database at: {db_path}")
 
     async def _async_update_data(self):
@@ -140,7 +159,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
             # Run authentication in an executor
             if not self.authenticated:
                 auth_result = await self.hass.async_add_executor_job(
-                    self.baby_tracker.authenticate, self.email, self.password
+                    self.baby_tracker.authenticate, self.email, self.password, self.device_uuid
                 )
                 if auth_result.get("status") != "success":
                     raise UpdateFailed(f"Authentication failed: {auth_result.get('message')}")
@@ -298,9 +317,12 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                     "sleep_analysis": sleep_analysis,
                 }
 
-            # Fire events for detected changes
-            for baby_name, current in baby_data.items():
+            # Fire events for detected changes (skipped on the first refresh,
+            # when everything would look new)
+            babies_by_name = {baby.name: baby for baby in all_babies}
+            for baby_name, current in (baby_data.items() if self._previous_data is not None else []):
                 prev = self._previous_data.get(baby_name, {})
+                baby_id = babies_by_name[baby_name].object_id
 
                 # Feeding change: compare last_feeding time
                 curr_feed_time = (current.get("last_feeding") or {}).get("time")
@@ -308,6 +330,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 if curr_feed_time and curr_feed_time != prev_feed_time:
                     self.hass.bus.async_fire(EVENT_FEEDING, {
                         "baby_name": baby_name,
+                        "baby_id": baby_id,
                         "type": (current.get("last_feeding") or {}).get("type"),
                         "time": curr_feed_time,
                     })
@@ -318,6 +341,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 if curr_diaper_time and curr_diaper_time != prev_diaper_time:
                     self.hass.bus.async_fire(EVENT_DIAPER, {
                         "baby_name": baby_name,
+                        "baby_id": baby_id,
                         "status": (current.get("last_diaper") or {}).get("status"),
                         "time": curr_diaper_time,
                     })
@@ -329,6 +353,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                         curr_sleep.get("is_sleeping") != prev_sleep.get("is_sleeping")):
                     self.hass.bus.async_fire(EVENT_SLEEP, {
                         "baby_name": baby_name,
+                        "baby_id": baby_id,
                         "is_sleeping": curr_sleep.get("is_sleeping"),
                         "time": curr_sleep.get("time"),
                     })

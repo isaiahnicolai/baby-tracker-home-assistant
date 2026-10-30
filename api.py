@@ -15,23 +15,37 @@ from .transaction import TransactionHandler
 _LOGGER = logging.getLogger(__name__)
 
 
-def _get_local_timezone_offset_seconds():
+def _get_local_timezone_offset_seconds(tz_name=None):
     """
-    Get the local timezone offset in seconds from UTC.
+    Get the standard (non-DST) UTC offset in seconds.
     Matches the Android app's TimeZone.getDefault().getRawOffset() / 1000.
+
+    Args:
+        tz_name: IANA zone name (e.g. Home Assistant's configured time zone).
+            Falls back to the host's zone when not given.
 
     Returns:
         int: Timezone offset in seconds (e.g., -21600 for CST, -18000 for EST)
     """
-    # Use the standard library to get the local UTC offset
-    # This accounts for the current timezone setting of the system
-    local_offset = _time.timezone if _time.daylight == 0 else _time.altzone
-    # time.timezone is seconds WEST of UTC (positive = west), but we need
-    # the offset in the same sign convention as Java's getRawOffset (negative = west)
-    return -local_offset
+    if tz_name:
+        try:
+            from zoneinfo import ZoneInfo
+            now = datetime.now(ZoneInfo(tz_name))
+            return int((now.utcoffset() - now.dst()).total_seconds())
+        except Exception as e:
+            _LOGGER.warning(f"Unknown time zone {tz_name!r}, using host zone: {e}")
+    # time.timezone is the standard offset in seconds WEST of UTC; Java's
+    # getRawOffset is east-positive and never includes DST
+    return -_time.timezone
+
+
+def _now_str():
+    """Current UTC time in the API's date format."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
 
 # API endpoints
 BASE_URL = "https://prodapp.babytrackers.com"
+REQUEST_TIMEOUT = 30  # seconds
 USER_AGENT = "Dalvik/2.1.0 (Linux; U; Android 13; sdk_gphone_x86_64 Build/TE1A.220922.034)"
 
 class BabyTrackerAPI:
@@ -40,9 +54,11 @@ class BabyTrackerAPI:
     Allows authentication, posting of feeding records, diapers, and group management.
     """
     
-    def __init__(self, async_mode=False, db_path=None):
+    def __init__(self, async_mode=False, db_path=None, time_zone=None):
         """Initialize the API client"""
         self.session = requests.Session()
+        self.time_zone = time_zone
+        self._in_login = False
         self.session_id = None
         self.baby_info = None
         self.devices = None
@@ -93,9 +109,10 @@ class BabyTrackerAPI:
         response = self.session.post(
             f"{BASE_URL}/session",
             headers=headers,
-            json=payload
+            json=payload,
+            timeout=REQUEST_TIMEOUT
         )
-        
+
         if response.status_code not in [200, 201]:
             raise Exception(f"Login failed with status code {response.status_code}: {response.text}")
         
@@ -115,28 +132,40 @@ class BabyTrackerAPI:
                     self.transaction_handler = TransactionHandler(self.local_db)
                     _LOGGER.info("Initialized transaction handler")
 
-                # Get devices and use an existing device UUID if our generated one doesn't exist
-                self.get_devices()
-                if self.devices:
-                    # Check if our device_uuid is in the list
-                    device_found = any(d["DeviceUUID"] == self.device_uuid for d in self.devices)
-                    if not device_found:
-                        # Use the first registered device's UUID instead
-                        self.device_uuid = self.devices[0]["DeviceUUID"]
-                        _LOGGER.info(f"Using existing device UUID: {self.device_uuid}")
-            except:
+            except ValueError:
                 _LOGGER.warning("Could not extract account ID from login response")
+
+            # Never adopt another device's UUID: posting under it would advance
+            # that device's SyncID and make every client skip its records.
+            self._in_login = True
+            try:
+                self.get_devices()
+            finally:
+                self._in_login = False
+            if not any(d["DeviceUUID"] == self.device_uuid for d in self.devices or []):
+                _LOGGER.debug(f"Device {self.device_uuid} not yet listed by server")
 
             return True
         else:
             raise Exception("No session ID found in response cookies")
-    
+
+    def _request(self, method, path, **kwargs):
+        """Send a request, logging in again once if the session has expired."""
+        kwargs.setdefault("timeout", REQUEST_TIMEOUT)
+        response = self.session.request(method, f"{BASE_URL}{path}", **kwargs)
+        if response.status_code == 401 and self.username and self.password and not self._in_login:
+            _LOGGER.info("Session expired, logging in again")
+            self.session.cookies.clear()
+            self.login(self.username, self.password, self.device_uuid)
+            response = self.session.request(method, f"{BASE_URL}{path}", **kwargs)
+        return response
+
     def get_devices(self):
         """Get information about registered devices"""
         if not self.session_id:
             raise Exception("Not logged in")
 
-        response = self.session.get(f"{BASE_URL}/account/device")
+        response = self._request("GET", "/account/device")
 
         if response.status_code not in [200, 201]:
             raise Exception(f"Failed to get devices: {response.status_code}")
@@ -268,7 +297,7 @@ class BabyTrackerAPI:
         if not self.session_id:
             raise Exception("Not logged in")
         
-        response = self.session.get(f"{BASE_URL}/account/seed")
+        response = self._request("GET", "/account/seed")
         
         if response.status_code not in [200, 201]:
             raise Exception(f"Failed to get seed data: {response.status_code}")
@@ -396,7 +425,7 @@ class BabyTrackerAPI:
                 last_sync_id = device["LastSyncID"]
                 # Start with the most recent transaction and work backward if needed
                 start_id = max(0, last_sync_id - 1)
-                response = self.session.get(f"{BASE_URL}/account/transaction/{device_uuid}/{start_id}")
+                response = self._request("GET", f"/account/transaction/{device_uuid}/{start_id}")
 
                 if response.status_code in [200, 201] and response.content:
                     transactions = response.json()
@@ -419,22 +448,11 @@ class BabyTrackerAPI:
             except Exception as e:
                 _LOGGER.error(f"Error getting transactions for device {device['DeviceUUID']}: {e}")
         
-        # If we still don't have baby info, create minimal version
+        # Never invent a baby: records posted against a made-up ID would be
+        # orphaned on every other client.
         if not self.baby_info:
-            baby_id = str(uuid.uuid4())
-            self.baby_info = {
-                "name": "Baby",
-                "objectID": baby_id,
-                "dob": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000"),
-                "dueDay": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000"),
-                "gender": False,
-                "newFlage": False,
-                "pictureName": "",
-                "timestamp": "1970-01-01 00:00:00 +0000",
-                "BCObjectType": "Baby"
-            }
-            _LOGGER.info("Created default baby info since none could be found")
-            
+            _LOGGER.warning("No baby found on the server")
+
         return self.baby_info
     
     def update_device_sync_info(self, device_uuid, last_sync_id):
@@ -614,15 +632,8 @@ class BabyTrackerAPI:
                 
             baby_info = seed_result.get("baby_info")
             if not baby_info:
-                _LOGGER.warning("No baby information found, creating default")
-                baby_info = {
-                    "name": "Baby",
-                    "objectID": str(uuid.uuid4()),
-                    "dob": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000"),
-                    "gender": False,
-                    "BCObjectType": "Baby"
-                }
-                
+                _LOGGER.warning("No baby information found in seed data")
+
             self.baby_info = baby_info
             
             # Initialize transaction handler
@@ -686,7 +697,7 @@ class BabyTrackerAPI:
                 
             try:
                 # Get transactions since the last known sync ID for this device
-                response = self.session.get(f"{BASE_URL}/account/transaction/{device_uuid}/{local_last_sync_id}")
+                response = self._request("GET", f"/account/transaction/{device_uuid}/{local_last_sync_id}")
                 
                 if response.status_code in [200, 201]:
                     device_transactions = response.json()
@@ -738,27 +749,27 @@ class BabyTrackerAPI:
     def post_transaction(self, transaction_data, op_code=0):  # 0 = INSERT
         """
         Post a transaction to the server
-        
+
         Args:
             transaction_data: JSON data for the transaction
             op_code: Operation code (default is INSERT = 0)
-            
+
         Returns:
-            Response from the server
+            int: The SyncID the transaction was posted under
         """
         if not self.session_id:
             raise Exception("Not logged in")
-            
+
         # Get the next sync ID
         next_sync_id = self.get_next_sync_id(self.device_uuid)
-        
+
         # Ensure the transaction data is a string
         if isinstance(transaction_data, dict):
             transaction_data = json.dumps(transaction_data)
-            
+
         # Encode the transaction data as base64
         transaction_b64 = base64.b64encode(transaction_data.encode('utf-8')).decode('utf-8')
-        
+
         # Prepare the payload
         # Note: OPCode must be a string (e.g., "0" or "1"), not an integer
         payload = {
@@ -766,11 +777,12 @@ class BabyTrackerAPI:
             "SyncID": next_sync_id,
             "Transaction": transaction_b64
         }
-        
+
         # Post the transaction
         _LOGGER.debug(f"post_transaction payload: OPCode={payload['OPCode']}, SyncID={payload['SyncID']}")
-        response = self.session.post(
-            f"{BASE_URL}/account/transaction",
+        response = self._request(
+            "POST",
+            "/account/transaction",
             headers={'Content-Type': 'application/json'},
             json=payload
         )
@@ -778,20 +790,76 @@ class BabyTrackerAPI:
         _LOGGER.debug(f"post_transaction response: status={response.status_code}, body={response.text[:200] if response.text else 'empty'}")
         if response.status_code not in [200, 201]:
             raise Exception(f"Failed to post transaction: {response.status_code} - {response.text}")
-            
+
         _LOGGER.info(f"Successfully posted transaction with sync ID {next_sync_id}")
-        
+
         # Update local sync ID
         self.update_device_sync_info(self.device_uuid, next_sync_id)
-        
-        return response
-    
-    
-    def post_diaper(self, time_str=None, pee_color=0, poo_color=0, texture=0, amount=2, status=0, note=""):
+
+        return next_sync_id
+
+    def _post_record(self, record, op_code=0):
+        """
+        Post a record and apply it to the local database straight away, so
+        sensors update without waiting for the next sync.
+
+        Raises on failure so callers can surface the error.
+
+        Returns:
+            dict: {"status": "success", "objectID": <id>}
+        """
+        if not self.is_authenticated:
+            raise Exception("Not authenticated")
+
+        sync_id = self.post_transaction(record, op_code=op_code)
+
+        if self.transaction_handler:
+            local = {
+                "SyncID": sync_id,
+                "OPCode": op_code,
+                "Transaction": base64.b64encode(json.dumps(record).encode('utf-8')).decode('utf-8'),
+            }
+            if not self.transaction_handler.process_transaction(local):
+                _LOGGER.warning(
+                    f"Posted {record.get('BCObjectType')} {record.get('objectID')} "
+                    "but could not apply it locally; it will appear after the next resync"
+                )
+
+        return {"status": "success", "objectID": record["objectID"]}
+
+    def _baby_ref(self, baby_id):
+        """
+        Build the nested baby object for a record from the local database.
+
+        Raises ValueError if the baby is unknown, rather than inventing one.
+        """
+        if not baby_id:
+            raise ValueError("A baby must be specified")
+        if not self.local_db:
+            raise ValueError("Local database not available")
+        for baby in self.local_db.get_all_babies():
+            if baby.object_id == baby_id:
+                return self._normalize_baby_info({
+                    "objectID": baby.object_id,
+                    "name": baby.name,
+                    "dob": baby.dob or "",
+                    "dueDay": baby.due_day or "",
+                    "gender": baby.gender,
+                    "pictureName": baby.picture_name or "",
+                    "timestamp": baby.timestamp,
+                    "BCObjectType": "Baby"
+                })
+        raise ValueError(f"Baby {baby_id} not found in local database")
+
+    def _tz_offset(self):
+        return _get_local_timezone_offset_seconds(self.time_zone)
+
+    def post_diaper(self, baby_id, time_str=None, pee_color=0, poo_color=0, texture=0, amount=2, status=0, note=""):
         """
         Post a diaper change record
-        
+
         Args:
+            baby_id: ID of the baby the record belongs to
             time_str: Time of the diaper change in format 'YYYY-MM-DD HH:MM:SS +0000'
             pee_color: Color code for pee (0-5)
             poo_color: Color code for poo (0-5)
@@ -799,197 +867,121 @@ class BabyTrackerAPI:
             amount: Amount (usually 2)
             status: Status code (0=wet, 1=poopy, 2=mixed, 3=dry)
             note: Optional note text
-            
-        Returns:
-            dict: API response
         """
-        if not self.is_authenticated:
-            raise Exception("Not authenticated")
-            
-        if not self.baby_info:
-            raise Exception("Baby information not available")
-            
-        # Use current time if not provided
-        if not time_str:
-            time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
-            
-        # Create the diaper transaction
         diaper_data = {
             "BCObjectType": "Diaper",
             "pooColor": poo_color,
             "peeColor": pee_color,
             "note": note,
-            "time": time_str,
+            "time": time_str or _now_str(),
             "texture": texture,
             "amount": amount,
-            "baby": self.baby_info,
+            "baby": self._baby_ref(baby_id),
             "flag": 0,
-            "timezone": _get_local_timezone_offset_seconds(),
+            "timezone": self._tz_offset(),
             "pictureNote": [],
             "status": status,
             "pictureLoaded": "true",
             "newFlage": "true",
             "objectID": str(uuid.uuid4()),
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
+            "timestamp": _now_str()
         }
-        
-        try:
-            response = self.post_transaction(diaper_data)
-            return {"status": "success"}
-        except Exception as e:
-            _LOGGER.error(f"Failed to post diaper: {e}")
-            return {"status": "error", "message": str(e)}
-    
-    def post_temperature(self, time_str=None, temperature=98.6, is_fahrenheit=True, note=""):
+        return self._post_record(diaper_data)
+
+    def post_temperature(self, baby_id, time_str=None, temperature=98.6, is_fahrenheit=True, note=""):
         """
         Post a temperature record
-        
+
         Args:
+            baby_id: ID of the baby the record belongs to
             time_str: Time of temperature reading in format 'YYYY-MM-DD HH:MM:SS +0000'
             temperature: Temperature value
             is_fahrenheit: Whether temperature is in Fahrenheit (True) or Celsius (False)
             note: Optional note text
-            
-        Returns:
-            dict: API response
         """
-        if not self.is_authenticated:
-            raise Exception("Not authenticated")
-            
-        if not self.baby_info:
-            raise Exception("Baby information not available")
-            
-        # Use current time if not provided
-        if not time_str:
-            time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
-            
-        # Create the temperature transaction
         temperature_data = {
             "BCObjectType": "Temperature",
             "note": note,
-            "time": time_str,
+            "time": time_str or _now_str(),
             "temperature": {
                 "value": temperature,
                 "englishMeasure": "true" if is_fahrenheit else "false",
                 "BCObjectType": "TemperatureMeasure"
             },
-            "timezone": _get_local_timezone_offset_seconds(),
+            "timezone": self._tz_offset(),
             "pictureNote": [],
             "pictureLoaded": "true",
             "newFlage": "true",
             "objectID": str(uuid.uuid4()),
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000"),
-            "baby": self.baby_info
+            "timestamp": _now_str(),
+            "baby": self._baby_ref(baby_id)
         }
-        
-        try:
-            response = self.post_transaction(temperature_data)
-            return {"status": "success"}
-        except Exception as e:
-            _LOGGER.error(f"Failed to post temperature: {e}")
-            return {"status": "error", "message": str(e)}
-    
-    def post_medicine(self, time_str=None, med_id=None, amount=0, note=""):
+        return self._post_record(temperature_data)
+
+    def post_medicine(self, baby_id, time_str=None, med_id=None, amount=0, note=""):
         """
         Post a medicine administration record
-        
+
         Args:
+            baby_id: ID of the baby the record belongs to
             time_str: Time of medicine administration in format 'YYYY-MM-DD HH:MM:SS +0000'
             med_id: ID of the medicine to administer
             amount: Amount of medicine administered
             note: Optional note text
-            
-        Returns:
-            dict: API response
         """
-        if not self.is_authenticated:
-            raise Exception("Not authenticated")
-            
-        if not self.baby_info:
-            raise Exception("Baby information not available")
-            
         if not med_id:
             raise ValueError("Medicine ID is required")
-        
-        # Use current time if not provided
-        if not time_str:
-            time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
-        
+
         # Get the medicine selection details for the full transaction
-        # Query the local database for medicine selection info
         med_selection = None
         if self.local_db:
-            try:
-                selections = self.local_db.get_medicine_selections()
-                for sel in selections:
-                    if sel.get("id") == med_id:
-                        med_selection = {
-                            "objectID": med_id,
-                            "name": sel.get("name", ""),
-                            "amountPerTime": sel.get("amount_per_time", amount),
-                            "interval": sel.get("interval", 0),
-                            "unit": sel.get("unit", "ml"),
-                            "prescription": sel.get("prescription", False),
-                            "newFlage": False,
-                            "timestamp": "1970-01-01 00:00:00 +0000"
-                        }
-                        break
-            except Exception as e:
-                _LOGGER.warning(f"Could not get medicine selection details: {e}")
+            for sel in self.local_db.get_medicine_selections():
+                if sel.get("id") == med_id:
+                    med_selection = {
+                        "objectID": med_id,
+                        "name": sel.get("name", ""),
+                        "amountPerTime": sel.get("amount_per_time", amount),
+                        "interval": sel.get("interval", 0),
+                        "unit": sel.get("unit", "ml"),
+                        "prescription": sel.get("prescription", False),
+                        "newFlage": False,
+                        "timestamp": "1970-01-01 00:00:00 +0000"
+                    }
+                    break
+        # Android's Medication only reads medicationSelection, so a record
+        # without one would arrive on other clients with no medicine.
+        if not med_selection:
+            raise ValueError(f"Medicine {med_id} not found in local database")
 
-        # Prepare medicine parameters - use "Medication" to match app format
+        # Use "Medication" to match app format
         medicine_data = {
             "BCObjectType": "Medication",
-            "time": time_str,
+            "time": time_str or _now_str(),
             "note": note,
             "amount": amount,
-            "baby": self.baby_info,
-            "timezone": _get_local_timezone_offset_seconds(),
+            "baby": self._baby_ref(baby_id),
+            "timezone": self._tz_offset(),
             "pictureNote": [],
             "pictureLoaded": True,
             "newFlage": True,
             "objectID": str(uuid.uuid4()),
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
+            "timestamp": _now_str(),
+            "medicationSelection": med_selection
         }
+        return self._post_record(medicine_data)
 
-        # Include the full medication selection if available
-        if med_selection:
-            medicine_data["medicationSelection"] = med_selection
-        else:
-            # Fall back to just the medID
-            medicine_data["medID"] = med_id
-        
-        try:
-            response = self.post_transaction(medicine_data)
-            return {"status": "success"}
-        except Exception as e:
-            _LOGGER.error(f"Failed to post medicine: {e}")
-            return {"status": "error", "message": str(e)}
-            
-    def post_other_activity(self, time_str=None, activity_name="Tummy Time", duration=0, location_id=None, note=""):
+    def post_other_activity(self, baby_id, time_str=None, activity_name="Tummy Time", duration=0, location_id=None, note=""):
         """
         Post an other activity record
-        
+
         Args:
+            baby_id: ID of the baby the record belongs to
             time_str: Time of activity in format 'YYYY-MM-DD HH:MM:SS +0000'
             activity_name: Name of the activity
             duration: Duration in minutes
             location_id: Optional location ID
             note: Optional note text
-            
-        Returns:
-            dict: API response
         """
-        if not self.is_authenticated:
-            raise Exception("Not authenticated")
-            
-        if not self.baby_info:
-            raise Exception("Baby information not available")
-            
-        # Use current time if not provided
-        if not time_str:
-            time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
-        
         # Create a description for the activity
         activity_desc = {
             "desc": "",
@@ -999,59 +991,37 @@ class BabyTrackerAPI:
             "BCObjectType": "OtherActivityDescription",
             "name": activity_name
         }
-        
-        # Create the other activity transaction
+
         activity_data = {
             "BCObjectType": "OtherActivity",
             "note": note,
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000"),
+            "timestamp": _now_str(),
             "newFlage": "true",
             "pictureLoaded": "true",
-            "time": time_str,
+            "time": time_str or _now_str(),
             "objectID": str(uuid.uuid4()),
             "desc": activity_desc,
-            "baby": self.baby_info,
+            "baby": self._baby_ref(baby_id),
             "duration": duration,
-            "timezone": _get_local_timezone_offset_seconds(),
+            "timezone": self._tz_offset(),
             "pictureNote": []
         }
-        
-        # Add location ID if provided
+
         if location_id:
             activity_data["locationID"] = location_id
-            
-        try:
-            response = self.post_transaction(activity_data)
-            return {"status": "success"}
-        except Exception as e:
-            _LOGGER.error(f"Failed to post activity: {e}")
-            return {"status": "error", "message": str(e)}
 
-    def post_bath(self, time_str=None, bath_type=None, note=""):
+        return self._post_record(activity_data)
+
+    def post_bath(self, baby_id, time_str=None, bath_type=None, note=""):
         """
         Post a bath record
 
         Args:
+            baby_id: ID of the baby the record belongs to
             time_str: Time of bath in format 'YYYY-MM-DD HH:MM:SS +0000'
             bath_type: Type of bath (optional) - "Bubble Bath", "Sponge Bath", "Shower", "Washed Hair"
             note: Optional note text
-
-        Returns:
-            dict: API response
         """
-        _LOGGER.debug(f"api.post_bath called: bath_type={bath_type}, note={note}")
-        if not self.is_authenticated:
-            _LOGGER.error("post_bath: Not authenticated")
-            raise Exception("Not authenticated")
-
-        if not self.baby_info:
-            _LOGGER.error("post_bath: Baby information not available")
-            raise Exception("Baby information not available")
-
-        # Use current time if not provided
-        if not time_str:
-            time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
-
         # Map bath type to known IDs (use Sponge Bath as default since it's a known type)
         bath_type_ids = {
             "Sponge Bath": "EasyLogSeeda1b71e20-86a3-11e2-9e96-0800200c9a66",
@@ -1060,7 +1030,6 @@ class BabyTrackerAPI:
             "Washed Hair": "EasyLogSeedc0395430-86a3-11e2-9e96-0800200c9a66",
         }
 
-        # Use provided bath_type or default to "Sponge Bath" (a known predefined type)
         effective_bath_type = bath_type if bath_type else "Sponge Bath"
         desc_id = bath_type_ids.get(effective_bath_type, bath_type_ids["Sponge Bath"])
 
@@ -1074,149 +1043,68 @@ class BabyTrackerAPI:
             "BCObjectType": "BathDesc"
         }
 
-        # Create the bath transaction (Bath objects don't have duration field)
+        # Bath objects don't have a duration field
         bath_data = {
             "BCObjectType": "Bath",
             "note": note,
-            "time": time_str,
-            "timezone": _get_local_timezone_offset_seconds(),
+            "time": time_str or _now_str(),
+            "timezone": self._tz_offset(),
             "pictureNote": [],
             "pictureLoaded": "true",
             "newFlage": "true",
             "objectID": str(uuid.uuid4()),
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000"),
-            "baby": self.baby_info,
+            "timestamp": _now_str(),
+            "baby": self._baby_ref(baby_id),
             "bathType": bath_desc  # Use bathType field as expected by server
         }
+        return self._post_record(bath_data)
 
-        _LOGGER.debug(f"Posting bath transaction: {bath_data}")
-        try:
-            response = self.post_transaction(bath_data)
-            _LOGGER.debug(f"Bath transaction posted successfully")
-
-            # Immediately write to local database so we don't have to wait for sync
-            if self.transaction_handler and self.local_db:
-                try:
-                    # Create a transaction object that the handler expects
-                    sync_id = self.get_next_sync_id(self.device_uuid) - 1  # Use the ID we just posted
-                    transaction_b64 = base64.b64encode(json.dumps(bath_data).encode('utf-8')).decode('utf-8')
-                    fake_transaction = {
-                        "SyncID": sync_id,
-                        "OPCode": 0,  # INSERT
-                        "Transaction": transaction_b64
-                    }
-                    self.transaction_handler.process_transaction(fake_transaction)
-                    _LOGGER.debug(f"Bath transaction written to local database")
-                except Exception as e:
-                    _LOGGER.debug(f"Failed to write bath to local database: {e}")
-
-            return {"status": "success"}
-        except Exception as e:
-            _LOGGER.error(f"Failed to post bath: {e}", exc_info=True)
-            return {"status": "error", "message": str(e)}
-
-    def post_sleep(self, time_str=None, duration=0, note=""):
+    def post_sleep(self, baby_id, time_str=None, duration=0, note=""):
         """
         Post a sleep record
 
         Args:
+            baby_id: ID of the baby the record belongs to
             time_str: Time of sleep start in format 'YYYY-MM-DD HH:MM:SS +0000'
-            duration: Duration in seconds (0 for sleep start, >0 for completed sleep)
+            duration: Duration in minutes (0 for sleep start)
             note: Optional note text
-
-        Returns:
-            dict: API response
         """
-        _LOGGER.debug(f"api.post_sleep called: duration={duration}, note={note}")
-        if not self.is_authenticated:
-            _LOGGER.error("post_sleep: Not authenticated")
-            raise Exception("Not authenticated")
-
-        if not self.baby_info:
-            _LOGGER.error("post_sleep: Baby information not available")
-            raise Exception("Baby information not available")
-
-        # Use current time if not provided
-        if not time_str:
-            time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
-
-        # Generate objectID for tracking
-        object_id = str(uuid.uuid4())
-
-        # Create the sleep transaction
         # Note: pictureLoaded and newFlage must be booleans (not strings) for the API to accept
         sleep_data = {
             "BCObjectType": "Sleep",
             "duration": duration,
-            "baby": self.baby_info,
+            "baby": self._baby_ref(baby_id),
             "note": note,
             "pictureLoaded": True,
             "pictureNote": [],
-            "time": time_str,
-            "timezone": _get_local_timezone_offset_seconds(),
+            "time": time_str or _now_str(),
+            "timezone": self._tz_offset(),
             "newFlage": True,
-            "objectID": object_id,
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
+            "objectID": str(uuid.uuid4()),
+            "timestamp": _now_str()
         }
+        return self._post_record(sleep_data)
 
-        _LOGGER.debug(f"Posting sleep transaction: {sleep_data}")
-        try:
-            response = self.post_transaction(sleep_data)
-            _LOGGER.debug(f"Sleep transaction posted successfully with objectID: {object_id}")
-
-            # Immediately write to local database so we don't have to wait for sync
-            if self.transaction_handler and self.local_db:
-                try:
-                    # Create a transaction object that the handler expects
-                    sync_id = self.get_next_sync_id(self.device_uuid) - 1  # Use the ID we just posted
-                    transaction_b64 = base64.b64encode(json.dumps(sleep_data).encode('utf-8')).decode('utf-8')
-                    fake_transaction = {
-                        "SyncID": sync_id,
-                        "OPCode": 0,  # INSERT
-                        "Transaction": transaction_b64
-                    }
-                    self.transaction_handler.process_transaction(fake_transaction)
-                    _LOGGER.debug(f"Sleep transaction written to local database")
-                except Exception as e:
-                    _LOGGER.debug(f"Failed to write sleep to local database: {e}")
-
-            return {"status": "success", "objectID": object_id}
-        except Exception as e:
-            _LOGGER.error(f"Failed to post sleep: {e}", exc_info=True)
-            return {"status": "error", "message": str(e)}
-
-    def update_sleep(self, object_id, time_str, duration_minutes, note=""):
+    def update_sleep(self, baby_id, object_id, time_str, duration_minutes, note=""):
         """
         Update an existing sleep record (for wake-up/end sleep).
         Uses OPCode 1 (UPDATE) to modify the existing record.
 
         Args:
-            object_id: The objectID of the sleep record to update (from post_sleep)
+            baby_id: ID of the baby the sleep record belongs to
+            object_id: The objectID of the sleep record to update
             time_str: Original sleep start time in format 'YYYY-MM-DD HH:MM:SS +0000'
             duration_minutes: Duration in minutes
             note: Optional note text
-
-        Returns:
-            dict: API response
         """
-        _LOGGER.debug(f"api.update_sleep called: object_id={object_id}, duration_minutes={duration_minutes}")
-        if not self.is_authenticated:
-            _LOGGER.error("update_sleep: Not authenticated")
-            raise Exception("Not authenticated")
-
-        if not self.baby_info:
-            _LOGGER.error("update_sleep: Baby information not available")
-            raise Exception("Baby information not available")
-
+        baby = self._baby_ref(baby_id)
         # For updates, use minimal baby object (just gender, newFlage, objectID)
         minimal_baby = {
-            "gender": self.baby_info.get("gender", False),
+            "gender": baby.get("gender", False),
             "newFlage": False,
-            "objectID": self.baby_info.get("objectID", "")
+            "objectID": baby["objectID"]
         }
 
-        # Create the sleep update transaction
-        # For updates: newFlage is False, duration is the actual duration in minutes
         sleep_data = {
             "BCObjectType": "Sleep",
             "duration": duration_minutes,
@@ -1225,136 +1113,72 @@ class BabyTrackerAPI:
             "pictureLoaded": True,
             "pictureNote": [],
             "time": time_str,
-            "timezone": _get_local_timezone_offset_seconds(),
+            "timezone": self._tz_offset(),
             "newFlage": False,
             "objectID": object_id,
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
+            "timestamp": _now_str()
         }
+        return self._post_record(sleep_data, op_code=1)
 
-        _LOGGER.debug(f"Posting sleep UPDATE transaction: {sleep_data}")
-        try:
-            # Use OPCode 1 for UPDATE
-            response = self.post_transaction(sleep_data, op_code=1)
-            _LOGGER.debug(f"Sleep UPDATE transaction posted successfully")
-
-            # Update local database
-            if self.transaction_handler and self.local_db:
-                try:
-                    sync_id = self.get_next_sync_id(self.device_uuid) - 1
-                    transaction_b64 = base64.b64encode(json.dumps(sleep_data).encode('utf-8')).decode('utf-8')
-                    fake_transaction = {
-                        "SyncID": sync_id,
-                        "OPCode": 1,  # UPDATE
-                        "Transaction": transaction_b64
-                    }
-                    self.transaction_handler.process_transaction(fake_transaction)
-                    _LOGGER.debug(f"Sleep UPDATE transaction written to local database")
-                except Exception as e:
-                    _LOGGER.debug(f"Failed to write sleep update to local database: {e}")
-
-            return {"status": "success"}
-        except Exception as e:
-            _LOGGER.error(f"Failed to post sleep update: {e}", exc_info=True)
-            return {"status": "error", "message": str(e)}
-
-    def post_nursing(self, time_str=None, left_duration=0, right_duration=0, both_duration=0, finish_side=1, note=""):
+    def post_nursing(self, baby_id, time_str=None, left_duration=0, right_duration=0, both_duration=0, finish_side=1, note=""):
         """
         Post a nursing session record
-        
+
         Args:
+            baby_id: ID of the baby the record belongs to
             time_str: Time of the nursing in format 'YYYY-MM-DD HH:MM:SS +0000'
             left_duration: Duration of left side nursing in minutes
             right_duration: Duration of right side nursing in minutes
             both_duration: Duration of both sides nursing simultaneously in minutes
-            finish_side: Which side finished on (0=right, 1=left, 2=both)
+            finish_side: Which side finished on (0=not set, 1=left, 2=right)
             note: Optional note text
-            
-        Returns:
-            dict: API response
         """
-        if not self.is_authenticated:
-            raise Exception("Not authenticated")
-            
-        if not self.baby_info:
-            raise Exception("Baby information not available")
-            
-        # Use current time if not provided
-        if not time_str:
-            time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
-            
-        # Create the nursing transaction
         nursing_data = {
             "BCObjectType": "Nursing",
             "note": note,
-            "time": time_str,
+            "time": time_str or _now_str(),
             "rightDuration": right_duration,
-            "baby": self.baby_info,
+            "baby": self._baby_ref(baby_id),
             "finishSide": finish_side,
             "bothDuration": both_duration,
             "leftDuration": left_duration,
-            "timezone": _get_local_timezone_offset_seconds(),
+            "timezone": self._tz_offset(),
             "pictureNote": [],
             "pictureLoaded": "true",
             "newFlage": "true",
             "objectID": str(uuid.uuid4()),
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
+            "timestamp": _now_str()
         }
-        
-        try:
-            response = self.post_transaction(nursing_data)
-            return {"status": "success"}
-        except Exception as e:
-            _LOGGER.error(f"Failed to post nursing: {e}")
-            return {"status": "error", "message": str(e)}
-    
-    def post_formula(self, time_str=None, amount=0, is_english_measure=False, note=""):
-        """
-        Post a formula feeding record
+        return self._post_record(nursing_data)
 
-        Args:
-            time_str: Time of feeding in format 'YYYY-MM-DD HH:MM:SS +0000'
-            amount: Amount (in oz if is_english_measure=True, ml if False)
-            is_english_measure: Whether amount is in oz (True) or ml (False)
-            note: Optional note text
-
-        Returns:
-            dict: API response
-        """
-        if not self.is_authenticated:
-            raise Exception("Not authenticated")
-
-        if not self.baby_info:
-            raise Exception("Baby information not available")
-
-        # Use current time if not provided
-        if not time_str:
-            time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
-
-        # Create the formula transaction
-        formula_data = {
+    def _post_volume_feed(self, object_type, baby_id, time_str, amount, is_english_measure, note):
+        """Post a Formula or Pumped (bottle of expressed milk) record."""
+        data = {
             "amount": {
                 "value": amount,
                 "englishMeasure": "true" if is_english_measure else "false",
                 "BCObjectType": "VolumeMeasure"
             },
-            "BCObjectType": "Formula",
+            "BCObjectType": object_type,
             "note": note,
-            "time": time_str,
-            "timezone": _get_local_timezone_offset_seconds(),
+            "time": time_str or _now_str(),
+            "timezone": self._tz_offset(),
             "newFlage": "true",
             "pictureLoaded": "true",
             "pictureNote": [],
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000"),
-            "baby": self.baby_info,
+            "timestamp": _now_str(),
+            "baby": self._baby_ref(baby_id),
             "objectID": str(uuid.uuid4())
         }
-        
-        try:
-            response = self.post_transaction(formula_data)
-            return {"status": "success"}
-        except Exception as e:
-            _LOGGER.error(f"Failed to post formula: {e}")
-            return {"status": "error", "message": str(e)}
+        return self._post_record(data)
+
+    def post_formula(self, baby_id, time_str=None, amount=0, is_english_measure=False, note=""):
+        """Post a formula feeding record (amount in oz if is_english_measure, else ml)."""
+        return self._post_volume_feed("Formula", baby_id, time_str, amount, is_english_measure, note)
+
+    def post_pumped(self, baby_id, time_str=None, amount=0, is_english_measure=False, note=""):
+        """Post a pumped milk feeding record (amount in oz if is_english_measure, else ml)."""
+        return self._post_volume_feed("Pumped", baby_id, time_str, amount, is_english_measure, note)
 
     def get_picture(self, picture_name):
         """
@@ -1377,8 +1201,9 @@ class BabyTrackerAPI:
             url = f"{BASE_URL}/account/picture/{picture_name}"
             _LOGGER.debug(f"Fetching picture from: {url}")
 
-            response = self.session.get(
-                url,
+            response = self._request(
+                "GET",
+                f"/account/picture/{picture_name}",
                 headers={'User-Agent': self.USER_AGENT}
             )
 
@@ -1421,52 +1246,3 @@ class BabyTrackerAPI:
         except Exception as e:
             _LOGGER.error(f"Error downloading picture {picture_name}: {e}")
             return None
-
-    def post_pumped(self, time_str=None, amount=0, is_english_measure=False, note=""):
-        """
-        Post a pumped milk feeding record (feeding expressed breast milk to baby)
-
-        Args:
-            time_str: Time of feeding in format 'YYYY-MM-DD HH:MM:SS +0000'
-            amount: Amount (in oz if is_english_measure=True, ml if False)
-            is_english_measure: Whether amount is in oz (True) or ml (False)
-            note: Optional note text
-
-        Returns:
-            dict: API response
-        """
-        if not self.is_authenticated:
-            raise Exception("Not authenticated")
-
-        if not self.baby_info:
-            raise Exception("Baby information not available")
-
-        # Use current time if not provided
-        if not time_str:
-            time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
-
-        # Create the pumped milk transaction
-        pumped_data = {
-            "amount": {
-                "value": amount,
-                "englishMeasure": "true" if is_english_measure else "false",
-                "BCObjectType": "VolumeMeasure"
-            },
-            "BCObjectType": "Pumped",
-            "note": note,
-            "time": time_str,
-            "timezone": _get_local_timezone_offset_seconds(),
-            "newFlage": "true",
-            "pictureLoaded": "true",
-            "pictureNote": [],
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000"),
-            "baby": self.baby_info,
-            "objectID": str(uuid.uuid4())
-        }
-
-        try:
-            response = self.post_transaction(pumped_data)
-            return {"status": "success"}
-        except Exception as e:
-            _LOGGER.error(f"Failed to post pumped: {e}")
-            return {"status": "error", "message": str(e)}

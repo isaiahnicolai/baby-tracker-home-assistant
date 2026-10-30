@@ -1,6 +1,7 @@
 """Config flow for Baby Tracker integration."""
 import logging
 import os
+import uuid
 import voluptuous as vol
 
 from homeassistant import config_entries, core, exceptions
@@ -13,6 +14,7 @@ from .const import (
     CONF_PASSWORD,
     CONF_SCAN_INTERVAL,
     CONF_UNIT_SYSTEM,
+    CONF_DEVICE_UUID,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_UNIT_SYSTEM,
     UNIT_SYSTEM_IMPERIAL,
@@ -37,11 +39,11 @@ async def validate_input(hass: core.HomeAssistant, data):
     from .baby_tracker import BabyTracker
 
     db_path = os.path.join(hass.config.path(), "baby_tracker.db")
-    baby_tracker = BabyTracker(db_path=db_path)
+    baby_tracker = BabyTracker(db_path=db_path, time_zone=hass.config.time_zone)
 
     # Authenticate with Baby Tracker
     result = await hass.async_add_executor_job(
-        baby_tracker.authenticate, data[CONF_EMAIL], data[CONF_PASSWORD]
+        baby_tracker.authenticate, data[CONF_EMAIL], data[CONF_PASSWORD], data[CONF_DEVICE_UUID]
     )
 
     if result.get("status") != "success":
@@ -65,6 +67,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
+            # Register this integration as its own device on the sync server,
+            # and keep that identity for the life of the entry
+            user_input = {**user_input, CONF_DEVICE_UUID: str(uuid.uuid4())}
             try:
                 info = await validate_input(self.hass, user_input)
                 

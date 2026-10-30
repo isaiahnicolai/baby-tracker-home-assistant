@@ -127,9 +127,7 @@ class BabyTrackerAlert(CoordinatorEntity, BinarySensorEntity):
         if not self.coordinator.data:
             return None
         baby_data = self.coordinator.data.get("baby_data", {})
-        if self._baby_name in baby_data:
-            return baby_data[self._baby_name]
-        return self.coordinator.data
+        return baby_data.get(self._baby_name)
 
     def _get_baby_info(self):
         """Get the Baby object for this alert's baby."""
@@ -407,9 +405,7 @@ class BabyTrackerNightModeSensor(CoordinatorEntity, BinarySensorEntity):
         if not self.coordinator.data:
             return None
         baby_data = self.coordinator.data.get("baby_data", {})
-        if self._baby_name in baby_data:
-            return baby_data[self._baby_name]
-        return self.coordinator.data
+        return baby_data.get(self._baby_name)
 
     @property
     def is_on(self):

@@ -17,7 +17,7 @@ class BabyTracker:
     Combines API and database access with a simple interface.
     Always requires network connectivity for adding records.
     """
-    def __init__(self, db_path=None, async_mode=False):
+    def __init__(self, db_path=None, async_mode=False, time_zone=None):
         """Initialize the BabyTracker wrapper."""
         # Set up database path - use the provided path or a default in the config directory
         self.db_path = db_path
@@ -25,7 +25,7 @@ class BabyTracker:
         self.db = None
         
         # Create components
-        self.api = BabyTrackerAPI(async_mode=async_mode, db_path=self.db_path)
+        self.api = BabyTrackerAPI(async_mode=async_mode, db_path=self.db_path, time_zone=time_zone)
         
         # State tracking
         self.is_authenticated = False
@@ -148,7 +148,7 @@ class BabyTracker:
         self.last_sync_time = result["last_sync_time"]
         return result
 
-    def force_resync(self, email, password):
+    def force_resync(self, email, password, device_uuid=None):
         """
         Force a complete resync by deleting the local database and re-downloading
         all data from the server. This is useful when the group leader resets sync
@@ -185,7 +185,7 @@ class BabyTracker:
 
             # Step 3: Re-join the group (downloads seed database and syncs all transactions)
             _LOGGER.info("Re-joining group to download fresh data")
-            result = self.api.join_group(email, password)
+            result = self.api.join_group(email, password, device_uuid)
 
             if result.get("status") == "success":
                 # Re-initialize the database reference
@@ -669,7 +669,7 @@ class BabyTracker:
 
         return self.db.get_bath_records(limit)
 
-    def log_bath(self, bath_type=None, note="", time=None):
+    def log_bath(self, baby_id, bath_type=None, note="", time=None):
         """
         Log a new bath record.
 
@@ -702,12 +702,11 @@ class BabyTracker:
 
         try:
             response = self.api.post_bath(
+                baby_id=baby_id,
                 time_str=time_str,
                 bath_type=bath_type,
                 note=note
             )
-            # Trigger a sync to update local database right after posting
-            self.sync()
             return {"status": "success", "message": "Bath record added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add bath record: {str(e)}")
@@ -1236,7 +1235,7 @@ class BabyTracker:
     # === Data Entry Methods ===
     # These methods always go through the API
     
-    def add_diaper(self, time_str=None, pee=True, poo=False, pee_color=0, poo_color=0, 
+    def add_diaper(self, baby_id, time_str=None, pee=True, poo=False, pee_color=0, poo_color=0, 
                   texture=0, amount=2, note=""):
         """
         Add a diaper change record through the API.
@@ -1266,6 +1265,7 @@ class BabyTracker:
         
         try:
             response = self.api.post_diaper(
+                baby_id=baby_id,
                 time_str=time_str,
                 pee_color=pee_color,
                 poo_color=poo_color,
@@ -1274,14 +1274,12 @@ class BabyTracker:
                 status=status,
                 note=note
             )
-            # Trigger a sync to update local database right after posting
-            self.sync()
             return {"status": "success", "message": "Diaper record added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add diaper record: {str(e)}")
             return {"status": "error", "message": f"Failed to add diaper record: {str(e)}"}
     
-    def add_nursing(self, time_str=None, left_duration=0, right_duration=0, 
+    def add_nursing(self, baby_id, time_str=None, left_duration=0, right_duration=0, 
                    both_duration=0, finish_side=1, note=""):
         """
         Add a nursing session record through the API.
@@ -1306,6 +1304,7 @@ class BabyTracker:
         
         try:
             response = self.api.post_nursing(
+                baby_id=baby_id,
                 time_str=time_str,
                 left_duration=left_duration,
                 right_duration=right_duration,
@@ -1313,14 +1312,12 @@ class BabyTracker:
                 finish_side=finish_side,
                 note=note
             )
-            # Trigger a sync to update local database right after posting
-            self.sync()
             return {"status": "success", "message": "Nursing record added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add nursing record: {str(e)}")
             return {"status": "error", "message": f"Failed to add nursing record: {str(e)}"}
     
-    def add_pumped(self, time_str=None, amount=0, is_english_measure=False, note=""):
+    def add_pumped(self, baby_id, time_str=None, amount=0, is_english_measure=False, note=""):
         """
         Add a pumped milk record through the API.
         
@@ -1342,19 +1339,18 @@ class BabyTracker:
         
         try:
             response = self.api.post_pumped(
+                baby_id=baby_id,
                 time_str=time_str,
                 amount=amount,
                 is_english_measure=is_english_measure,
                 note=note
             )
-            # Trigger a sync to update local database right after posting
-            self.sync()
             return {"status": "success", "message": "Pumped milk record added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add pumped milk record: {str(e)}")
             return {"status": "error", "message": f"Failed to add pumped milk record: {str(e)}"}
     
-    def add_formula(self, time_str=None, amount=0, is_english_measure=False, note=""):
+    def add_formula(self, baby_id, time_str=None, amount=0, is_english_measure=False, note=""):
         """
         Add a formula feeding record through the API.
         
@@ -1376,19 +1372,18 @@ class BabyTracker:
         
         try:
             response = self.api.post_formula(
+                baby_id=baby_id,
                 time_str=time_str,
                 amount=amount,
                 is_english_measure=is_english_measure,
                 note=note
             )
-            # Trigger a sync to update local database right after posting
-            self.sync()
             return {"status": "success", "message": "Formula feeding record added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add formula feeding record: {str(e)}")
             return {"status": "error", "message": f"Failed to add formula feeding record: {str(e)}"}
     
-    def add_temperature(self, time_str=None, temperature=98.6, is_fahrenheit=True, note=""):
+    def add_temperature(self, baby_id, time_str=None, temperature=98.6, is_fahrenheit=True, note=""):
         """
         Add a temperature record through the API.
         
@@ -1410,19 +1405,18 @@ class BabyTracker:
         
         try:
             response = self.api.post_temperature(
+                baby_id=baby_id,
                 time_str=time_str,
                 temperature=temperature,
                 is_fahrenheit=is_fahrenheit,
                 note=note
             )
-            # Trigger a sync to update local database right after posting
-            self.sync()
             return {"status": "success", "message": "Temperature record added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add temperature record: {str(e)}")
             return {"status": "error", "message": f"Failed to add temperature record: {str(e)}"}
             
-    def add_medicine(self, time_str=None, med_id=None, amount=0, note=""):
+    def add_medicine(self, baby_id, time_str=None, med_id=None, amount=0, note=""):
         """
         Add a medicine administration record through the API.
         
@@ -1444,13 +1438,12 @@ class BabyTracker:
         
         try:
             response = self.api.post_medicine(
+                baby_id=baby_id,
                 time_str=time_str,
                 med_id=med_id,
                 amount=amount,
                 note=note
             )
-            # Trigger a sync to update local database right after posting
-            self.sync()
             return {"status": "success", "message": "Medicine record added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add medicine record: {str(e)}")
@@ -1482,6 +1475,7 @@ class BabyTracker:
             if is_start:
                 # Starting sleep: post with duration = 0
                 response = self.api.post_sleep(
+                    baby_id=baby_id,
                     time_str=time_str,
                     duration=0,
                     note=note
@@ -1526,6 +1520,7 @@ class BabyTracker:
                     # UPDATE the existing sleep record (don't create a new one)
                     start_time_str = datetime.fromtimestamp(start_time, timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
                     response = self.api.update_sleep(
+                        baby_id=baby_id,
                         object_id=sleep_object_id,
                         time_str=start_time_str,
                         duration_minutes=duration_minutes,
@@ -1537,14 +1532,12 @@ class BabyTracker:
                     _LOGGER.warning(f"No active sleep session found for baby {baby_id}")
                     return {"status": "error", "message": "No active sleep session found"}
 
-            # Trigger a sync to update local database
-            self.sync()
             return {"status": "success", "message": "Sleep event logged"}
         except Exception as e:
             _LOGGER.error(f"Failed to log sleep event: {str(e)}")
             return {"status": "error", "message": f"Failed to log sleep event: {str(e)}"}
 
-    def add_activity(self, time_str=None, activity_name="Tummy Time", duration=0, location_id=None, note=""):
+    def add_activity(self, baby_id, time_str=None, activity_name="Tummy Time", duration=0, location_id=None, note=""):
         """
         Add an other activity record through the API.
         
@@ -1567,14 +1560,13 @@ class BabyTracker:
         
         try:
             response = self.api.post_other_activity(
+                baby_id=baby_id,
                 time_str=time_str,
                 activity_name=activity_name,
                 duration=duration,
                 location_id=location_id,
                 note=note
             )
-            # Trigger a sync to update local database right after posting
-            self.sync()
             return {"status": "success", "message": "Activity record added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add activity record: {str(e)}")
