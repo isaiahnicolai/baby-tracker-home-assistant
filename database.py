@@ -646,9 +646,10 @@ class BabyTrackerLocalDatabase:
             
             # Get counts by status
             cursor.execute("""
-                SELECT Status, COUNT(ID) FROM Diaper 
-                WHERE BabyID = ? AND Time >= ? AND Time <= ? 
-                GROUP BY Status
+                SELECT CASE WHEN Status = 0 AND Amount = 0 THEN 3 ELSE Status END AS DisplayStatus, COUNT(ID)
+                FROM Diaper
+                WHERE BabyID = ? AND Time >= ? AND Time <= ?
+                GROUP BY DisplayStatus
             """, (baby_id, start_timestamp, end_timestamp))
             status_rows = cursor.fetchall()
             
@@ -666,7 +667,7 @@ class BabyTrackerLocalDatabase:
             # Get pee color distribution
             cursor.execute("""
                 SELECT PeeColor, COUNT(ID) FROM Diaper 
-                WHERE BabyID = ? AND Time >= ? AND Time <= ? AND (Status = 0 OR Status = 2)
+                WHERE BabyID = ? AND Time >= ? AND Time <= ? AND (Status = 0 OR Status = 2) AND NOT (Status = 0 AND Amount = 0)
                 GROUP BY PeeColor
             """, (baby_id, start_timestamp, end_timestamp))
             pee_rows = cursor.fetchall()
@@ -791,7 +792,7 @@ class BabyTrackerLocalDatabase:
 
             cursor.execute("""
                 SELECT COUNT(ID) FROM Diaper
-                WHERE BabyID = ? AND Time >= ? AND Status IN (0, 2)
+                WHERE BabyID = ? AND Time >= ? AND Status IN (0, 2) AND NOT (Status = 0 AND Amount = 0)
             """, (baby_id, today_start))
             row = cursor.fetchone()
             return row[0] if row else 0
@@ -1117,7 +1118,7 @@ class BabyTrackerLocalDatabase:
                 diapers.append({
                     "id": row[0],
                     "time": self._format_timestamp(row[1]) if row[1] else None,
-                    "status": self._get_diaper_status(row[2]),
+                    "status": self._get_diaper_status(row[2], row[3]),
                     "amount": row[3],
                     "note": row[4]
                 })
@@ -1210,13 +1211,16 @@ class BabyTrackerLocalDatabase:
             return pumped_sessions
         finally:
             conn.close()
-    def _get_diaper_status(self, status_code: int) -> str:
+    def _get_diaper_status(self, status_code: int, amount: int = None) -> str:
         """
         Convert diaper status code to human-readable string
-        
+
         :param status_code: Status code from the database
+        :param amount: DiaperAmount; the app stores dry as wet with amount 0 (None)
         :return: Diaper status description
         """
+        if status_code == 0 and amount == 0:
+            return "Dry"
         status_map = {
             0: "Wet",    # DiaperStatusWet
             1: "Poopy",  # DiaperStatusPoopy
@@ -1224,16 +1228,40 @@ class BabyTrackerLocalDatabase:
             3: "Dry"     # DiaperStatusDry
         }
         return status_map.get(status_code, "Unknown")
+    # Localised AM/PM markers the Android app accepts (DateTypeAdapter), in
+    # its order; only the first match is replaced
+    _AM_PM_TOKENS = [
+        ("a.m.", "AM"), ("p.m.", "PM"), ("vorm.", "AM"), ("nachm.", "PM"),
+        ("午前", "AM"), ("午後", "PM"), ("上午", "AM"), ("下午", "PM"),
+        ("a. m.", "AM"), ("p. m.", "PM"), ("fm", "AM"), ("em", "PM"),
+        ("오전", "AM"), ("오후", "PM"),
+    ]
+
     def convert_timestamp(self, timestamp_str: str) -> float:
-        """Convert timestamp string to Unix timestamp with decimal places"""
-        try:
-            # Correct the format if it's in UTC format
-            dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S +0000")
-            # Return Unix timestamp as float
-            return float(dt.replace(tzinfo=timezone.utc).timestamp())
-        except Exception as e:
-            print(f"Error converting timestamp {timestamp_str}: {e}")
-            return 0.0  # Return 0.0 in case of error
+        """
+        Convert an API date ("yyyy-MM-dd HH:mm:ss Z") to Unix seconds.
+
+        Accepts the same fallbacks as the Android app's DateTypeAdapter
+        (12-hour times with localised AM/PM markers). Raises ValueError for
+        anything else rather than silently returning 1970.
+        """
+        if timestamp_str is None or timestamp_str == "":
+            return 0.0
+        if isinstance(timestamp_str, (int, float)):
+            return float(timestamp_str)
+        text = str(timestamp_str).strip().replace(" UTC", " +0000").replace(" GMT", " +0000")
+        candidates = [text]
+        for token, marker in self._AM_PM_TOKENS:
+            if token in text:
+                candidates.append(text.replace(token, marker, 1))
+                break
+        for candidate in candidates:
+            for fmt in ("%Y-%m-%d %H:%M:%S %z", "%Y-%m-%d %I:%M:%S %p %z"):
+                try:
+                    return datetime.strptime(candidate, fmt).timestamp()
+                except ValueError:
+                    continue
+        raise ValueError(f"Unrecognised date: {timestamp_str!r}")
     def _format_timestamp(self, timestamp):
         """
         Format a timestamp to a readable format
@@ -4253,7 +4281,7 @@ class BabyTrackerLocalDatabase:
                     "id": progress_data["progress_id"],
                     "time": progress_data["progress_time_formatted"],
                     "raw_time": progress_data["progress_time"],
-                    "status": self._get_diaper_status(diaper_row[0]),
+                    "status": self._get_diaper_status(diaper_row[0], diaper_row[4]),
                     "status_code": diaper_row[0],
                     "note": diaper_row[1] if diaper_row[1] else "",
                     "pee_color": diaper_row[2],
@@ -4474,7 +4502,7 @@ class BabyTrackerLocalDatabase:
                     "id": row[0],
                     "time": self._format_timestamp(row[1]) if row[1] else None,
                     "raw_time": row[1],
-                    "status": self._get_diaper_status(row[2]),
+                    "status": self._get_diaper_status(row[2], row[6]),
                     "status_code": row[2],
                     "note": row[3] if row[3] else "",
                     "pee_color": row[4],
@@ -5836,6 +5864,227 @@ class BabyTrackerLocalDatabase:
             conn.close()
 
     # Example usage
+
+    # ===== SYNC SUPPORT =====
+    # Generic helpers used by TransactionHandler and the upload queue. These
+    # mirror BTDatabaseImple's merge/TransactionLog behaviour in the Android app.
+
+    # Tables carrying a BabyID, re-pointed when two babies are merged
+    # (BTDatabaseImple.updateBabyReference). Pump has no BabyID.
+    BABY_REFERENCE_TABLES = [
+        "Allergen", "Bath", "Diaper", "DoctorVisit", "Formula", "Growth",
+        "HealthQuestion", "Journal", "Joy", "Medicine", "Milestone", "Nursing",
+        "OtherActivity", "OtherFeed", "Pumped", "Sick", "Sleep", "Temperature",
+        "Vaccine",
+    ]
+
+    def _connect(self):
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+        return sqlite3.connect(self.db_path)
+
+    def _table_exists(self, cursor, table):
+        cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,))
+        return cursor.fetchone() is not None
+
+    def get_row_timestamp(self, table: str, object_id: str) -> Optional[float]:
+        """Timestamp of an existing row, or None if the row (or table) doesn't exist."""
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            if not self._table_exists(cursor, table):
+                return None
+            cursor.execute(f'SELECT Timestamp FROM "{table}" WHERE ID = ?', (object_id,))
+            row = cursor.fetchone()
+            return None if row is None else float(row[0] or 0)
+        finally:
+            conn.close()
+
+    def find_id_by_name(self, table: str, name: str) -> Optional[tuple]:
+        """(ID, Timestamp) of the row with this Name, for UNIQUE(Name) clashes."""
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            if not self._table_exists(cursor, table):
+                return None
+            cursor.execute(f'SELECT ID, Timestamp FROM "{table}" WHERE Name = ?', (name,))
+            row = cursor.fetchone()
+            return None if row is None else (row[0], float(row[1] or 0))
+        finally:
+            conn.close()
+
+    def is_referenced(self, usages, object_id: str) -> bool:
+        """True if any (table, column) in usages refers to object_id."""
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            for table, column in usages:
+                if not self._table_exists(cursor, table):
+                    continue
+                cursor.execute(f'SELECT 1 FROM "{table}" WHERE "{column}" = ? LIMIT 1', (object_id,))
+                if cursor.fetchone():
+                    return True
+            return False
+        finally:
+            conn.close()
+
+    def merge_references(self, table: str, usages, winner_id: str, loser_id: str) -> None:
+        """Re-point every reference from loser to winner, then delete the loser row."""
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            for ref_table, column in usages:
+                if self._table_exists(cursor, ref_table):
+                    cursor.execute(
+                        f'UPDATE "{ref_table}" SET "{column}" = ? WHERE "{column}" = ?',
+                        (winner_id, loser_id),
+                    )
+            cursor.execute(f'DELETE FROM "{table}" WHERE ID = ?', (loser_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _ensure_sync_tables(self, cursor):
+        # Same schema as the Android app (BTSQLiteOpenHelper)
+        cursor.execute('CREATE TABLE IF NOT EXISTS "TransactionLog" '
+                       '("ID" INTEGER PRIMARY KEY AUTOINCREMENT, "OpCode" INTEGER NOT NULL, "Log" BLOB NOT NULL)')
+        cursor.execute('CREATE TABLE IF NOT EXISTS "ReliveList" ("ID" TEXT PRIMARY KEY NOT NULL UNIQUE)')
+
+    def add_relive(self, object_id: str) -> None:
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            self._ensure_sync_tables(cursor)
+            cursor.execute('INSERT OR IGNORE INTO ReliveList (ID) VALUES (?)', (object_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def pop_relive(self, object_id: str) -> bool:
+        """Consume a pending relive for this ID; True if there was one."""
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            self._ensure_sync_tables(cursor)
+            cursor.execute('DELETE FROM ReliveList WHERE ID = ?', (object_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def enqueue_transaction(self, op_code: int, transaction_b64: str, min_sync_id: int = 0) -> int:
+        """
+        Queue a transaction for upload. Its row ID is the SyncID it is sent
+        under, as in the Android app; the sequence is first raised past
+        min_sync_id (the server's LastSyncID for this device) so IDs never go back.
+        """
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            self._ensure_sync_tables(cursor)
+            cursor.execute("SELECT seq FROM sqlite_sequence WHERE name = 'TransactionLog'")
+            row = cursor.fetchone()
+            if row is None:
+                cursor.execute("INSERT INTO sqlite_sequence (name, seq) VALUES ('TransactionLog', ?)", (min_sync_id,))
+            elif row[0] < min_sync_id:
+                cursor.execute("UPDATE sqlite_sequence SET seq = ? WHERE name = 'TransactionLog'", (min_sync_id,))
+            cursor.execute('INSERT INTO TransactionLog (OpCode, Log) VALUES (?, ?)', (op_code, transaction_b64))
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+
+    def get_pending_transactions(self) -> List[tuple]:
+        """Queued uploads as (SyncID, OpCode, Transaction), oldest first."""
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            self._ensure_sync_tables(cursor)
+            cursor.execute('SELECT ID, OpCode, Log FROM TransactionLog ORDER BY ID')
+            return [(r[0], r[1], r[2].decode() if isinstance(r[2], bytes) else r[2]) for r in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    def delete_pending_transaction(self, sync_id: int) -> None:
+        conn = self._connect()
+        try:
+            conn.execute('DELETE FROM TransactionLog WHERE ID = ?', (sync_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def clear_sync_state(self) -> None:
+        """
+        Drop queued uploads and relives inherited from a seed database
+        (BTDatabaseImple.deleteAllTransactionLogImple), so another device's
+        pending work is never uploaded as ours.
+        """
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            self._ensure_sync_tables(cursor)
+            cursor.execute('DELETE FROM TransactionLog')
+            cursor.execute('DELETE FROM ReliveList')
+            conn.commit()
+        finally:
+            conn.close()
+
+    def insert_milestone_selection_transaction(self, transaction_data: Dict) -> bool:
+        """Insert or replace a MilestoneSelection (ID, Timestamp, Name, Description, ForAge, BabyID)."""
+        conn = self._connect()
+        try:
+            conn.execute('''
+                INSERT OR REPLACE INTO MilestoneSelection (ID, Timestamp, Name, Description, ForAge, BabyID)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                transaction_data.get('objectID', ''),
+                self.convert_timestamp(transaction_data.get('timestamp', '1970-01-01 00:00:00 +0000')),
+                transaction_data.get('name', ''),
+                transaction_data.get('desc', ''),
+                transaction_data.get('forAge', 0),
+                transaction_data.get('babyID'),
+            ))
+            conn.commit()
+            return True
+        except Exception as e:
+            _LOGGER.error(f"Error inserting milestone selection: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def insert_vaccine_selection_transaction(self, transaction_data: Dict) -> bool:
+        """Insert or replace a VaccineSelection (ID, Timestamp, Name, Description, ForAge)."""
+        conn = self._connect()
+        try:
+            conn.execute('''
+                INSERT OR REPLACE INTO VaccineSelection (ID, Timestamp, Name, Description, ForAge)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (
+                transaction_data.get('objectID', ''),
+                self.convert_timestamp(transaction_data.get('timestamp', '1970-01-01 00:00:00 +0000')),
+                transaction_data.get('name', ''),
+                transaction_data.get('desc', ''),
+                transaction_data.get('forAge', 0),
+            ))
+            conn.commit()
+            return True
+        except Exception as e:
+            _LOGGER.error(f"Error inserting vaccine selection: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def delete_row(self, table: str, object_id: str) -> bool:
+        """Delete a row by ID from a sync table (used for selections without a dedicated handler)."""
+        conn = self._connect()
+        try:
+            conn.execute(f'DELETE FROM "{table}" WHERE ID = ?', (object_id,))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
+
 def main():
     # Initialize the database from a seed file
     try:

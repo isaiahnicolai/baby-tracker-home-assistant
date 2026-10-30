@@ -8,6 +8,22 @@ import json
 import logging
 
 
+def _measure(value):
+    """Decode a Measure ({value, englishMeasure}) or a bare number to (value, english or None)."""
+    if isinstance(value, dict):
+        english = value.get("englishMeasure")
+        return float(value.get("value", 0) or 0), (None if english is None else str(english).lower() == "true")
+    if value in (None, ""):
+        return 0.0, None
+    return float(value), None
+
+
+def _flag(explicit, derived):
+    if explicit is not None:
+        return str(explicit).lower() == "true" if isinstance(explicit, str) else bool(explicit)
+    return True if derived is None else derived
+
+
 class BaseModel:
     """Base class for all Baby Tracker models"""
     
@@ -140,18 +156,18 @@ class Diaper(BaseModel):
             return data
 class Nursing(BaseModel):
     """Model representing a nursing session"""
-    
-    # Define finish side constants
-    FINISH_RIGHT = 0
+
+    # Android NursingFinishSide: NotSet=0, Left=1, Right=2
+    FINISH_NONE = 0
     FINISH_LEFT = 1
-    FINISH_BOTH = 2
+    FINISH_RIGHT = 2
     
     def __init__(self, data: Dict[str, Any] = None):
         self.time: str = None
         self.left_duration: int = 0
         self.right_duration: int = 0
         self.both_duration: int = 0
-        self.finish_side: int = self.FINISH_LEFT
+        self.finish_side: int = self.FINISH_NONE
         self.note: str = ""
         self.baby_id: str = None
         self.timezone: int = -21600
@@ -167,7 +183,7 @@ class Nursing(BaseModel):
         self.left_duration = data.get("leftDuration", 0)
         self.right_duration = data.get("rightDuration", 0)
         self.both_duration = data.get("bothDuration", 0)
-        self.finish_side = data.get("finishSide", self.FINISH_LEFT)
+        self.finish_side = data.get("finishSide", self.FINISH_NONE)
         self.note = data.get("note", "")
         
         # Handle baby reference
@@ -537,14 +553,14 @@ class OtherFeed(BaseModel):
 class Pump(BaseModel):
     """Model representing a pumping session"""
     
-    # Define finish side constants
-    FINISH_RIGHT = 0
+    # Android PumpFinishSide: None=0, Left=1, Right=2
+    FINISH_NONE = 0
     FINISH_LEFT = 1
-    FINISH_BOTH = 2
+    FINISH_RIGHT = 2
     
     def __init__(self, data: Dict[str, Any] = None):
         self.time: str = None
-        self.finish_side: int = self.FINISH_RIGHT
+        self.finish_side: int = self.FINISH_NONE
         self.sides: int = 0
         self.amount: VolumeMeasure = VolumeMeasure()
         self.left_amount: float = 0.0
@@ -566,7 +582,7 @@ class Pump(BaseModel):
         """Load pump data from a dictionary"""
         super().from_dict(data)
         self.time = data.get("time", self.timestamp)
-        self.finish_side = data.get("finishSide", self.FINISH_RIGHT)
+        self.finish_side = data.get("finishSide", self.FINISH_NONE)
         self.sides = data.get("sides", 0)
         
         # Handle amount data
@@ -594,7 +610,18 @@ class Pump(BaseModel):
         
         self.left_duration = int(data.get("leftDuration", 0))
         self.right_duration = int(data.get("rightDuration", 0))
-        self.is_english_scale = str(data.get("isEnglishScale", "false")).lower() == "true"
+        if "isEnglishScale" in data:
+            self.is_english_scale = str(data["isEnglishScale"]).lower() == "true"
+        else:
+            # As Pump.putValues: from amount, else the per-side measures
+            english = None
+            for key in ("amount", "leftAmount", "rightAmount"):
+                measure = data.get(key)
+                if isinstance(measure, dict) and "englishMeasure" in measure:
+                    english = str(measure["englishMeasure"]).lower() == "true"
+                    if key == "amount" or english:
+                        break
+            self.is_english_scale = bool(english)
         self.label = data.get("label", "")
         self.pumped_id = data.get("pumpedID", "")
         self.note = data.get("note", "")
@@ -994,15 +1021,20 @@ class MilestoneSelection(BaseModel):
         """Load milestone selection data from a dictionary"""
         super().from_dict(data)
         self.name = data.get("name", "")
-        self.description = data.get("description", "")
+        self.description = data.get("desc", data.get("description", ""))
+        self.for_age = data.get("forAge", 0)
+        self.baby_id = data.get("babyID")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert milestone selection model to a dictionary"""
         data = super().to_dict()
         data.update({
             "name": self.name,
-            "description": self.description
+            "desc": self.description,
+            "forAge": self.for_age,
         })
+        if self.baby_id:
+            data["babyID"] = self.baby_id
         return data
 
 class Milestone(BaseModel):
@@ -1025,8 +1057,8 @@ class Milestone(BaseModel):
         self.time = data.get("time", self.timestamp)
         self.note = data.get("note", "")
 
-        # Handle milestone selection reference
-        milestone_data = data.get("milestoneSelection", {})
+        # Handle milestone selection reference (Android/iOS send milestoneType)
+        milestone_data = data.get("milestoneType", data.get("milestoneSelection", {}))
         if isinstance(milestone_data, dict):
             self.milestone_selection = MilestoneSelection(milestone_data)
             self.milestone_selection_id = milestone_data.get("objectID", "")
@@ -1135,14 +1167,16 @@ class VaccineSelection(BaseModel):
         """Load vaccine selection data from a dictionary"""
         super().from_dict(data)
         self.name = data.get("name", "")
-        self.description = data.get("description", "")
+        self.description = data.get("desc", data.get("description", ""))
+        self.for_age = data.get("forAge", 0)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert vaccine selection model to a dictionary"""
         data = super().to_dict()
         data.update({
             "name": self.name,
-            "description": self.description
+            "desc": self.description,
+            "forAge": self.for_age,
         })
         return data
 
@@ -1165,11 +1199,11 @@ class Vaccine(BaseModel):
         """Load vaccine data from a dictionary"""
         super().from_dict(data)
         self.time = data.get("time", self.timestamp)
-        self.doc_visit_id = data.get("docVisitID", "")
+        self.doc_visit_id = data.get("docVisitID") or "NotUsed"
         self.note = data.get("note", "")
 
-        # Handle vaccine selection reference
-        vaccine_data = data.get("vaccineSelection", {})
+        # Handle vaccine selection reference (Android/iOS send vaccineType)
+        vaccine_data = data.get("vaccineType", data.get("vaccineSelection", {}))
         if isinstance(vaccine_data, dict):
             self.vaccine_selection = VaccineSelection(vaccine_data)
             self.vacc_id = vaccine_data.get("objectID", "")
@@ -1225,11 +1259,16 @@ class Growth(BaseModel):
         """Load growth data from a dictionary"""
         super().from_dict(data)
         self.time = data.get("time", self.timestamp)
-        self.weight = float(data.get("weight", 0.0))
-        self.length = float(data.get("length", 0.0))
-        self.head = float(data.get("head", 0.0))
-        self.is_english_weight_scale = bool(data.get("isEnglishWeightScale", True))
-        self.is_english_length_scale = bool(data.get("isEnglishLengthScale", True))
+        weight, weight_english = _measure(data.get("weight"))
+        length, length_english = _measure(data.get("length"))
+        head, head_english = _measure(data.get("head"))
+        self.weight, self.length, self.head = weight, length, head
+        # As Growth.putValues: weight scale from weight; length scale from length, else head
+        self.is_english_weight_scale = _flag(data.get("isEnglishWeightScale"), weight_english)
+        self.is_english_length_scale = _flag(
+            data.get("isEnglishLengthScale"),
+            length_english if length_english is not None else head_english,
+        )
         self.note = data.get("note", "")
 
         # Handle baby reference

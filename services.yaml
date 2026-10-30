@@ -217,7 +217,7 @@ log_pump:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (required when you have more than one baby)
+      description: Not used; pump sessions belong to the account, not a baby
       required: false
       selector:
         text:
@@ -395,7 +395,7 @@ log_milestone:
 
 log_doctor_visit:
   name: Log Doctor Visit
-  description: Log a doctor visit or appointment to Baby Tracker
+  description: Log a doctor visit or appointment. Saved in Home Assistant only; it is not synced to the app, which has no doctor visit format Home Assistant can send safely.
   fields:
     baby_name:
       name: Baby Name
