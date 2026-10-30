@@ -185,11 +185,9 @@ class BabyTrackerSensor(CoordinatorEntity, SensorEntity):
 
         # Try to get baby-specific data
         baby_data = self.coordinator.data.get("baby_data", {})
-        if self._baby_name in baby_data:
-            return baby_data[self._baby_name]
-
-        # Fallback to backwards compatibility mode (single baby)
-        return self.coordinator.data
+        # No fallback to the top-level data: that is the first baby's, and
+        # showing it under another baby's name would be wrong
+        return baby_data.get(self._baby_name)
 
     @property
     def available(self) -> bool:

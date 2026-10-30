@@ -7,6 +7,7 @@ CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_UNIT_SYSTEM = "unit_system"
+CONF_DEVICE_UUID = "device_uuid"  # This integration's own device identity on the sync server
 DEFAULT_SCAN_INTERVAL = 15  # minutes
 DEFAULT_UNIT_SYSTEM = "imperial"  # "imperial" (oz, lbs, F) or "metric" (ml, kg, C)
 

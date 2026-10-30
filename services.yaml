@@ -6,7 +6,7 @@ add_diaper:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -36,7 +36,7 @@ add_nursing:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -94,7 +94,7 @@ add_formula:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -108,9 +108,8 @@ add_formula:
           max: 500
     is_english_measure:
       name: English Measure
-      description: Whether amount is in oz (true) or ml (false)
+      description: Whether amount is in oz (true) or ml (false); defaults to the integration's unit setting
       required: false
-      default: false
       selector:
         boolean:
     note:
@@ -126,7 +125,7 @@ add_pumped:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -140,9 +139,8 @@ add_pumped:
           max: 500
     is_english_measure:
       name: English Measure
-      description: Whether amount is in oz (true) or ml (false)
+      description: Whether amount is in oz (true) or ml (false); defaults to the integration's unit setting
       required: false
-      default: false
       selector:
         boolean:
     note:
@@ -158,7 +156,7 @@ add_temperature:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -191,7 +189,7 @@ log_bath:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -219,7 +217,7 @@ log_pump:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -283,7 +281,7 @@ log_medicine:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -316,7 +314,7 @@ log_growth:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -377,7 +375,7 @@ log_milestone:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -401,7 +399,7 @@ log_doctor_visit:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -446,7 +444,7 @@ log_vaccine:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -481,7 +479,7 @@ add_4oz_bottle:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -498,7 +496,7 @@ add_6oz_bottle:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -515,7 +513,7 @@ add_8oz_bottle:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -532,7 +530,7 @@ add_small_bottle:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -549,7 +547,7 @@ add_medium_bottle:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -566,7 +564,7 @@ add_large_bottle:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -583,7 +581,7 @@ add_xlarge_bottle:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
@@ -600,7 +598,7 @@ log_sleep:
   fields:
     baby_name:
       name: Baby Name
-      description: Name of the baby (leave empty for first/default baby)
+      description: Name of the baby (required when you have more than one baby)
       required: false
       selector:
         text:
