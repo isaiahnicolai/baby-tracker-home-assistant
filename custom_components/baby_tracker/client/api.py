@@ -6,11 +6,12 @@ import base64
 import uuid
 import os
 import logging
-import sqlite3
 import time as _time
 from urllib.parse import quote
 from datetime import datetime, timezone, tzinfo
 
+from . import dbconn as sqlite3  # sqlite3 with a busy timeout and WAL
+from .dbconn import remove_sidecar_files
 from .transaction import TransactionHandler
 
 _LOGGER = logging.getLogger(__name__)
@@ -333,6 +334,7 @@ class BabyTrackerAPI:
                     raise Exception("Database file not found in seed data")
                 
                 # Copy the database file to the root directory
+                remove_sidecar_files(db_file_path)
                 shutil.copy2(db_source_path, db_file_path)
                 _LOGGER.info(f"Extracted database to: {db_file_path}")
                 
@@ -1159,14 +1161,16 @@ class BabyTrackerAPI:
             location_id: Optional location ID
             note: Optional note text
         """
-        # Create a description for the activity
+        # The activity's description: the account's own of that name, else a new one
+        known = next((row for row in (self.local_db.get_activity_types() if self.local_db else [])
+                      if (row["name"] or "").lower() == activity_name.lower()), None)
         activity_desc = {
-            "desc": "",
+            "desc": known["description"] or "" if known else "",
             "newFlage": "false",
-            "objectID": f"EasyLogSeed{uuid.uuid4().hex[:24]}",
+            "objectID": known["id"] if known else f"EasyLogSeed{uuid.uuid4().hex[:24]}",
             "timestamp": "1970-01-01 00:00:00 +0000",
             "BCObjectType": "OtherActivityDescription",
-            "name": activity_name
+            "name": known["name"] if known else activity_name
         }
 
         activity_data = {
@@ -1356,6 +1360,48 @@ class BabyTrackerAPI:
     def post_pumped(self, baby_id, time_str=None, amount=0, is_english_measure=False, note=""):
         """Post a pumped milk feeding record (amount in oz if is_english_measure, else ml)."""
         return self._post_volume_feed("Pumped", baby_id, time_str, amount, is_english_measure, note)
+
+    def post_other_feed(self, baby_id, feed_type_id, time_str=None, amount=0, unit="", is_english_measure=True,
+                        note=""):
+        """
+        Post a solids/supplement feed of an existing OtherFeedSelection (a food).
+
+        Args:
+            feed_type_id: ID of the OtherFeedSelection
+            amount: How much, in the given unit
+            unit: The unit's name as the app shows it, e.g. "tbsp"
+            is_english_measure: Whether the amount is in English units
+        """
+        food = next((row for row in self.local_db.get_other_feed_selections() if row["id"] == feed_type_id), None)
+        if not food:
+            raise ValueError(f"Food {feed_type_id} not found in local database")
+        data = {
+            "BCObjectType": "OtherFeed",
+            "feedType": {
+                "objectID": food["id"],
+                "name": food["name"],
+                "desc": food["description"],
+                "bottle": food["is_bottle"],
+                "newFlage": False,
+                "timestamp": "1970-01-01 00:00:00 +0000",
+            },
+            "amount": {
+                "value": amount,
+                "englishMeasure": "true" if is_english_measure else "false",
+                "BCObjectType": "VolumeMeasure"
+            },
+            "unit": unit or "",
+            "note": note,
+            "time": time_str or _now_str(),
+            "timezone": self._tz_offset(),
+            "newFlage": "true",
+            "pictureLoaded": "true",
+            "pictureNote": [],
+            "timestamp": _now_str(),
+            "baby": self._baby_ref(baby_id),
+            "objectID": str(uuid.uuid4())
+        }
+        return self._post_record(data)
 
     def get_picture(self, picture_name):
         """
