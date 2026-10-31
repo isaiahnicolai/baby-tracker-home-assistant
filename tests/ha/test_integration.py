@@ -1096,14 +1096,43 @@ async def test_feeding_overdue_turns_on_after_two_hours_when_set_to_two(hass, ba
     assert hass.states.get("binary_sensor.everly_feeding_overdue").state == "off"
 
 
-async def test_fever_threshold_is_in_the_entrys_unit(hass, backend):
-    # Everly's last reading was 99.1 F (37.3 C)
+async def test_fever_threshold_is_in_the_entrys_unit(hass, backend, freezer):
+    # Everly's last reading was 99.1 F (37.3 C), taken at 06:00
+    freezer.move_to("2026-03-01 08:00:00+00:00")
     await setup(hass, make_entry(options={"fever_threshold": 99.0}))
     fever = hass.states.get("binary_sensor.everly_fever")
     assert fever.state == "on" and fever.attributes["threshold"] == 99.0
 
 
-async def test_fever_threshold_in_celsius(hass, backend):
+async def test_an_old_temperature_reading_no_longer_raises_the_fever_alert(hass, backend, freezer):
+    freezer.move_to("2026-03-01 08:00:00+00:00")
+    await setup(hass, make_entry(options={"fever_threshold": 99.0}))
+    assert hass.states.get("binary_sensor.everly_fever").state == "on"
+
+    # 24 hours after the 06:00 reading it stops counting, with no new refresh
+    freezer.move_to("2026-03-02 06:01:00+00:00")
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    fever = hass.states.get("binary_sensor.everly_fever")
+    assert fever.state == "off" and fever.attributes["current_value"] is None
+
+
+async def test_long_sleep_follows_the_clock_between_refreshes(hass, backend, freezer):
+    # Everly fell asleep at 11:00; for a baby of unknown age the limit is 4 hours
+    freezer.move_to("2026-03-01 12:00:00+00:00")
+    await setup(hass, make_entry())
+    sleep = hass.states.get("binary_sensor.everly_long_sleep")
+    assert sleep.state == "off" and sleep.attributes["current_value"] == 1.0
+
+    freezer.move_to("2026-03-01 15:30:00+00:00")
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    sleep = hass.states.get("binary_sensor.everly_long_sleep")
+    assert sleep.state == "on" and sleep.attributes["current_value"] == 4.5
+
+
+async def test_fever_threshold_in_celsius(hass, backend, freezer):
+    freezer.move_to("2026-03-01 08:00:00+00:00")
     await setup(hass, make_entry(unit_system="metric", options={"fever_threshold": 37.0}))
     fever = hass.states.get("binary_sensor.everly_fever")
     assert fever.state == "on" and fever.attributes["current_value"] == 37.3

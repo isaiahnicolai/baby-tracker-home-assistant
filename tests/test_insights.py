@@ -565,3 +565,9 @@ def test_get_insights_without_data_or_babies(tracker, app_db):
     assert empty["growth"] is None
     assert empty["weight_velocity"] is None
     assert tracker.get_insights("NO-SUCH-BABY", now=NOW) == {}
+
+
+def test_get_insights_opens_the_database_in_the_trackers_zone(tracker):
+    tracker.db = None  # not opened yet, as after a restart before the first sync
+    tracker.get_insights(EVERLY, now=NOW)
+    assert tracker.db.tz == tracker.tz == CHICAGO

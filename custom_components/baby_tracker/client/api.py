@@ -95,7 +95,8 @@ class BabyTrackerAPI:
         self.device_uuid = None
         self.is_authenticated = False
         self.last_sync_time = None
-        
+        self.last_picture_status = None  # see get_picture
+
         # API state
         self.transaction_handler = None
         self._merge_failures = {}  # (device, SyncID) -> failed apply attempts
@@ -1445,6 +1446,9 @@ class BabyTrackerAPI:
             _LOGGER.debug("No picture name provided")
             return None
 
+        # The HTTP status of the last request (None when it never got an answer), so a caller
+        # can tell "the server doesn't have it" (404) from a failure worth trying again
+        self.last_picture_status = None
         try:
             url = f"{BASE_URL}/account/picture/{picture_name}"
             _LOGGER.debug(f"Fetching picture from: {url}")
@@ -1454,6 +1458,7 @@ class BabyTrackerAPI:
                 f"/account/picture/{picture_name}",
                 headers={'User-Agent': self.USER_AGENT}
             )
+            self.last_picture_status = response.status_code
 
             _LOGGER.debug(f"Picture response: status={response.status_code}, content-type={response.headers.get('Content-Type', 'unknown')}, content-length={len(response.content) if response.content else 0}")
 

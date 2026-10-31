@@ -159,6 +159,31 @@ def test_baby_picture_gets_a_jpg_extension_unless_it_has_one(tracker, server, tm
     assert asked == ["/account/picture/BABYPIC.jpg", "/account/picture/other.png"]
 
 
+def test_a_transient_baby_picture_failure_is_not_remembered(tracker, server, tmp_path):
+    server.online = False
+    assert tracker.download_baby_picture("BABYPIC", str(tmp_path)) is None
+    assert not (tmp_path / "BABYPIC.jpg.failed").exists()
+
+    server.online = True
+    server.pictures = {"BABYPIC.jpg": b"j" * 200}
+    assert os.path.basename(tracker.download_baby_picture("BABYPIC", str(tmp_path))) == "BABYPIC.jpg"
+
+
+def test_a_missing_baby_picture_is_left_alone_for_a_day(tracker, server, tmp_path):
+    assert tracker.download_baby_picture("BABYPIC", str(tmp_path)) is None  # 404
+    placeholder = tmp_path / "BABYPIC.jpg.failed"
+    assert placeholder.exists()
+
+    server.pictures = {"BABYPIC.jpg": b"j" * 200}  # uploaded since
+    assert tracker.download_baby_picture("BABYPIC", str(tmp_path)) is None
+    assert [p for _, p in server.requests if p.startswith("/account/picture/")] == ["/account/picture/BABYPIC.jpg"]
+
+    old = placeholder.stat().st_mtime - 25 * 3600
+    os.utime(placeholder, (old, old))
+    assert os.path.basename(tracker.download_baby_picture("BABYPIC", str(tmp_path))) == "BABYPIC.jpg"
+    assert not placeholder.exists()
+
+
 # ----- picture upload --------------------------------------------------------------
 
 def test_upload_picture_posts_multipart_form_data(tracker, server, tmp_path):

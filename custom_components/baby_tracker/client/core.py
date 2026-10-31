@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import functools
 import logging
 import threading
+import time as _time
 
 from . import dbconn as sqlite3  # sqlite3 with a busy timeout and WAL
 from . import insights
@@ -15,6 +16,8 @@ from .dbconn import remove_sidecar_files
 from .models import Baby
 
 _LOGGER = logging.getLogger(__name__)
+
+PICTURE_RETRY_SECONDS = 24 * 3600  # how long a picture the server doesn't have is left alone
 
 
 def _time_str(time):
@@ -417,22 +420,24 @@ class BabyTracker:
                 _LOGGER.debug(f"Picture already exists locally: {local_path}")
                 return local_path
 
-            # Check if we already tried and failed
+            # A picture the server said it doesn't have isn't asked for again for a day (it may
+            # be uploaded since)
             placeholder_path = local_path + ".failed"
             if os.path.exists(placeholder_path):
-                _LOGGER.debug(f"Picture download previously failed: {picture_name}")
-                return None
+                if _time.time() - os.path.getmtime(placeholder_path) < PICTURE_RETRY_SECONDS:
+                    _LOGGER.debug(f"Picture is not on the server: {picture_name}")
+                    return None
+                os.remove(placeholder_path)
 
             # Download the picture from the API
             picture_data = self.api.get_picture(picture_name)
             if not picture_data:
-                # Only log once per picture to avoid spam
                 _LOGGER.debug(f"Could not download picture: {picture_name}")
-                # Create an empty placeholder to prevent repeated attempts
-                placeholder_path = local_path + ".failed"
-                if not os.path.exists(placeholder_path):
+                # Only a definite "not found" is remembered. Any other failure (a timeout, a
+                # server error, a dropped session) is tried again on the next refresh.
+                if self.api.last_picture_status == 404:
                     with open(placeholder_path, 'w') as f:
-                        f.write("download_failed")
+                        f.write("not_found")
                 return None
 
             # Save the picture locally
@@ -1872,12 +1877,8 @@ class BabyTracker:
             plain dict, or None when the data it needs is missing. Empty when
             the baby isn't found.
         """
-        if not self.db:
-            if self.db_path and os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
-                self.api.local_db = self.db
-            else:
-                return {}
+        if not self._open_db():
+            return {}
 
         if baby_id:
             baby = next((b for b in self.db.get_all_babies() if b.object_id == baby_id), None)
