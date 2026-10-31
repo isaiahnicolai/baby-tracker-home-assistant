@@ -1910,16 +1910,17 @@ class BabyTrackerLocalDatabase:
                 duration = row[2] or 0
                 start_time = row[1]
 
-                # CRITICAL: duration == 0 means sleep is IN PROGRESS (currently sleeping)
-                # duration > 0 means sleep is COMPLETED
-                is_sleeping = (duration == 0)
+                # duration == 0 means sleep is IN PROGRESS (currently sleeping), duration > 0
+                # means COMPLETED - but an unfinished sleep older than IN_PROGRESS_SLEEP_SECONDS
+                # was never ended, so it is still returned as the last sleep but not as running
+                current_time = datetime.now(timezone.utc).timestamp()
+                is_sleeping = (duration == 0 and bool(start_time)
+                               and current_time - start_time < IN_PROGRESS_SLEEP_SECONDS)
 
                 # If sleep is in progress, calculate current duration
                 current_duration = duration
-                if is_sleeping and start_time:
-                    # Calculate how long they've been sleeping
-                    current_time = datetime.now(timezone.utc).timestamp()
-                    current_duration = int((current_time - start_time) / 60)  # minutes
+                if is_sleeping:
+                    current_duration = max(int((current_time - start_time) / 60), 0)  # minutes
 
                 return {
                     "id": row[0],
@@ -1941,7 +1942,8 @@ class BabyTrackerLocalDatabase:
         """
         Check if the baby is currently sleeping (has an in-progress sleep).
 
-        In Baby Tracker, a sleep with duration=0 indicates "in progress" sleep.
+        In Baby Tracker, a sleep with duration=0 indicates "in progress" sleep, for
+        IN_PROGRESS_SLEEP_SECONDS; an older one was never ended.
 
         :param baby_id: Optional baby ID
         :return: True if baby is currently sleeping, False otherwise
@@ -1950,7 +1952,6 @@ class BabyTrackerLocalDatabase:
         if not last_sleep:
             return False
 
-        # duration == 0 means sleep is in progress
         return last_sleep.get("is_sleeping", False)
 
     def get_last_nursing_direct(self, baby_id: Optional[str] = None) -> Optional[Dict]:

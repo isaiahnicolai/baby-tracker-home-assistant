@@ -150,6 +150,10 @@ before upgrading.
 - A transient photo download failure is retried instead of remembered.
 - Only one account can be added (`single_config_entry`); the registry
   migration cannot capture account-level entities.
+- A sleep left running (duration 0) for more than 24 hours is no longer
+  reported as in progress by the last-sleep reads, `is_currently_sleeping`
+  or the Long Sleep alert; it is still the last sleep, with `is_sleeping`
+  false. This is the same window that stops Wake Up from ending it.
 
 ## [0.2.0] - 2026-10-30
 
