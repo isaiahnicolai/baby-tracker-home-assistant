@@ -1,6 +1,10 @@
 {
   "domain": "baby_tracker",
   "name": "Baby Tracker",
+  "after_dependencies": [
+    "intent",
+    "repairs"
+  ],
   "codeowners": [
     "@isaiahnicolai"
   ],

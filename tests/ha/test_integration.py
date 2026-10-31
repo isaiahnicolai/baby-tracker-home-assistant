@@ -12,6 +12,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import intent
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
@@ -23,6 +24,7 @@ from pytest_homeassistant_custom_component.common import (
 from pytest_homeassistant_custom_component.components.diagnostics import get_diagnostics_for_config_entry
 
 from custom_components.baby_tracker import BabyTrackerDataCoordinator
+from custom_components.baby_tracker import intent as bt_intent
 from custom_components.baby_tracker.client import AccountResetError, AuthenticationError
 from custom_components.baby_tracker.client.models import Baby
 from custom_components.baby_tracker.const import DOMAIN
@@ -1711,3 +1713,295 @@ async def test_a_landscape_photo_without_a_portrait(hass, hass_client):
     landscape = hass.states.get("image.everly_photo_landscape")
     response = await (await hass_client()).get(landscape.attributes["entity_picture"])
     assert response.status == 200 and await response.read() == b"landscape-bytes"
+
+
+# ----- Assist: voice intents and the sentence file -----
+
+async def start_assist(hass, freezer, tmp_path, unit_system="imperial"):
+    """Set the integration up at 12:00 with the config directory in tmp_path, and register the intents."""
+    freezer.move_to("2026-03-01 12:00:00+00:00")
+    hass.config.config_dir = str(tmp_path)
+    entry = make_entry(unit_system)
+    await setup(hass, entry)
+    await bt_intent.async_setup_intents(hass)
+    return entry
+
+
+@pytest.fixture
+async def assist(hass, backend, freezer, tmp_path):
+    return await start_assist(hass, freezer, tmp_path)
+
+
+async def ask(hass, intent_type, **slots):
+    return await intent.async_handle(hass, "test", intent_type, {name: {"value": value} for name, value in slots.items()})
+
+
+def said(result):
+    return result.speech["plain"]["speech"]
+
+
+def at(hour, minute=0):
+    """A time on the test day (in UTC) as Home Assistant says it, in its time zone."""
+    return bt_intent.clock(datetime(2026, 3, 1, hour, minute, tzinfo=UTC))
+
+
+@pytest.mark.parametrize(("kind", "pee", "poo", "spoken"), [
+    ("wet", True, False, "wet"), ("dirty", False, True, "dirty"), ("poopy", False, True, "dirty"),
+    ("mixed", True, True, "mixed"), ("dry", False, False, "dry"),
+])
+async def test_the_diaper_intent_logs_for_the_named_baby(hass, assist, kind, pee, poo, spoken):
+    with patch(f"{CORE}.add_diaper", return_value={"status": "success"}) as add_diaper:
+        result = await ask(hass, "BabyTrackerLogDiaper", baby="everly", kind=kind)  # any capitalisation
+    add_diaper.assert_called_once_with("ID-EVERLY", None, pee, poo, 5, 5, 5, 2, "Added by voice")
+    assert result.response_type is intent.IntentResponseType.ACTION_DONE
+    assert said(result) == f"Logged a {spoken} diaper for Everly."
+
+
+async def test_the_bottle_intent_uses_the_entrys_unit_and_the_babys_bottle_type(hass, assist, backend):
+    result = await ask(hass, "BabyTrackerLogBottle", baby="Everly", amount=4.0)
+    assert backend[-1] == ("add_formula", "ID-EVERLY", 4.0, True)  # an imperial entry: oz
+    assert said(result) == "Logged a 4 oz formula bottle for Everly."
+
+    result = await ask(hass, "BabyTrackerLogBottle", baby="Everly", amount=120.0, unit="ml", type="breast milk")
+    assert backend[-1] == ("add_pumped", "ID-EVERLY", 120.0, False)
+    assert said(result) == "Logged a 120 ml bottle of pumped milk for Everly."
+
+    # No type said: the baby's Bottle Type control decides
+    coordinator_for(hass, assist).set_control("ID-EVERLY", "bottle_type", "pumped")
+    await ask(hass, "BabyTrackerLogBottle", baby="Everly", amount=3.0)
+    assert backend[-1] == ("add_pumped", "ID-EVERLY", 3.0, True)
+
+
+async def test_a_bottle_too_big_to_be_real_is_not_logged(hass, assist, backend):
+    logged = len(backend)
+    result = await ask(hass, "BabyTrackerLogBottle", baby="Everly", amount=1200.0, unit="oz")
+    assert len(backend) == logged
+    assert result.response_type is intent.IntentResponseType.ERROR
+    assert "doesn't sound like a bottle" in said(result)
+
+
+async def test_the_temperature_intent_tells_fahrenheit_from_celsius(hass, assist, backend):
+    result = await ask(hass, "BabyTrackerLogTemperature", baby="Everly", temperature=98.6)
+    assert backend[-1] == ("add_temperature", "ID-EVERLY", 98.6, True)
+    assert said(result) == "Logged a temperature of 98.6 degrees Fahrenheit for Everly."
+
+    await ask(hass, "BabyTrackerLogTemperature", baby="Everly", temperature=37.2)
+    assert backend[-1] == ("add_temperature", "ID-EVERLY", 37.2, False)
+
+    logged = len(backend)
+    result = await ask(hass, "BabyTrackerLogTemperature", baby="Everly", temperature=60.0)
+    assert len(backend) == logged and result.response_type is intent.IntentResponseType.ERROR
+
+
+async def test_the_sleep_intents_log_the_start_and_end_of_a_sleep(hass, assist):
+    with patch(f"{CORE}.log_sleep_event", return_value={"status": "success"}) as log_sleep:
+        # The fixture's Everly has been asleep since 11:00
+        result = await ask(hass, "BabyTrackerStartSleep", baby="Everly")
+        log_sleep.assert_not_called()
+        assert said(result) == "Everly is already asleep."
+
+        result = await ask(hass, "BabyTrackerEndSleep", baby="Everly")
+        log_sleep.assert_called_once_with("ID-EVERLY", False, "Added by voice", None)
+        assert said(result) == "Logged that Everly woke up after 1 hour."
+
+        log_sleep.reset_mock()
+        coordinator_for(hass, assist).data["baby_data"]["Everly"]["last_sleep"] = {
+            "time": "2026-03-01 10:00:00 +0000", "is_sleeping": False, "duration": 45, "current_duration": 45}
+        result = await ask(hass, "BabyTrackerEndSleep", baby="Everly")
+        log_sleep.assert_not_called()
+        assert said(result) == "Everly isn't asleep, so there's no sleep to end."
+
+        result = await ask(hass, "BabyTrackerStartSleep", baby="Everly")
+        log_sleep.assert_called_once_with("ID-EVERLY", True, "Added by voice", None)
+        assert said(result) == "Logged that Everly fell asleep."
+
+
+async def test_the_nursing_intents_time_a_session_and_log_it(hass, assist, backend, freezer):
+    result = await ask(hass, "BabyTrackerEndNursing", baby="Everly")
+    assert said(result) == "No nursing session is running for Everly."
+
+    result = await ask(hass, "BabyTrackerStartNursing", baby="Everly", side="left")
+    assert said(result) == "Started timing Everly on the left."
+    assert hass.states.get("binary_sensor.everly_nursing").state == "on"
+
+    freezer.tick(timedelta(minutes=10))
+    result = await ask(hass, "BabyTrackerEndNursing", baby="Everly")
+    assert backend[-1] == ("add_nursing", "ID-EVERLY", "2026-03-01 12:00:00 +0000", 10, 0, 1)
+    assert said(result) == "Logged Everly's nursing: 10 min on the left."
+    assert hass.states.get("binary_sensor.everly_nursing").state == "off"
+
+
+async def test_a_failed_write_is_spoken_not_raised(hass, assist):
+    with patch(f"{CORE}.add_diaper", return_value={"status": "error", "message": "offline"}):
+        result = await ask(hass, "BabyTrackerLogDiaper", baby="Everly", kind="wet")
+    assert result.response_type is intent.IntentResponseType.ERROR
+    assert result.error_code is intent.IntentResponseErrorCode.FAILED_TO_HANDLE
+    assert said(result) == "Sorry, I couldn't do that in Baby Tracker."
+
+
+async def test_the_question_intents_answer_from_the_babys_data(hass, assist):
+    # It is 12:00; Everly last ate at 9:30 (a 4 oz bottle), had a wet diaper at 10:00 and fell asleep at 11:00
+    assert said(await ask(hass, "BabyTrackerLastFeed", baby="Everly")) == "Everly last ate 2 h 30 min ago, a 4 oz bottle."
+    assert said(await ask(hass, "BabyTrackerLastDiaper", baby="Everly")) == "Everly's last diaper was wet, 2 hours ago."
+    assert said(await ask(hass, "BabyTrackerNextFeed", baby="Everly")) == (
+        f"Everly's next feed is expected around {at(12, 30)}, in 30 minutes.")
+    assert said(await ask(hass, "BabyTrackerSleepStatus", baby="Everly")) == (
+        f"Everly has been asleep for 1 hour, since {at(11)}.")
+    assert said(await ask(hass, "BabyTrackerLastFeed", baby="Ann Marie")) == "I don't have any feeds logged for Ann Marie."
+    assert said(await ask(hass, "BabyTrackerNextFeed", baby="Ann Marie")) == (
+        "I don't have enough feeds logged to predict Ann Marie's next feed yet.")
+
+
+async def test_the_intake_intent_reports_in_the_entrys_unit(hass, backend, freezer, tmp_path):
+    await start_assist(hass, freezer, tmp_path, unit_system="metric")
+    assert said(await ask(hass, "BabyTrackerIntakeToday", baby="Everly")) == (
+        "Everly has had 420 ml in the last 24 hours, which is low. Expected is 600 to 800 ml.")
+
+
+async def test_the_sleep_question_says_how_long_an_awake_baby_has_been_up(hass, assist):
+    coordinator_for(hass, assist).data["baby_data"]["Everly"]["last_sleep"] = {
+        "time": "2026-03-01 10:00:00 +0000", "is_sleeping": False, "duration": 45, "current_duration": 45}
+    assert said(await ask(hass, "BabyTrackerSleepStatus", baby="Everly")) == (
+        "Everly has been awake for 1 h 15 min. The last sleep lasted 45 minutes.")
+
+
+async def test_the_summary_covers_every_baby_when_none_is_named(hass, assist):
+    everly = (f"Everly last ate 2 h 30 min ago, a 4 oz bottle. Everly's last diaper was wet, 2 hours ago. "
+              f"Everly has been asleep for 1 hour, since {at(11)}. "
+              f"Everly's next feed is expected around {at(12, 30)}, in 30 minutes.")
+    assert said(await ask(hass, "BabyTrackerSummary", baby="Everly")) == everly
+    assert said(await ask(hass, "BabyTrackerSummary")) == f"I don't have anything logged for Ann Marie yet. {everly}"
+
+
+async def test_with_two_babies_and_none_named_the_intent_asks_which(hass, assist, backend):
+    logged = len(backend)
+    result = await ask(hass, "BabyTrackerLogDiaper", kind="wet")
+    assert len(backend) == logged
+    assert result.response_type is intent.IntentResponseType.ERROR
+    assert result.error_code is intent.IntentResponseErrorCode.NO_VALID_TARGETS
+    assert said(result) == "Which baby? Ann Marie or Everly."
+
+    result = await ask(hass, "BabyTrackerLastFeed", baby="Nobody")
+    assert said(result) == "I don't know a baby called Nobody."
+
+
+async def test_the_only_baby_is_used_when_none_is_named(hass, backend, freezer, tmp_path):
+    def one_baby(self, photo_dir):
+        return [EVERLY], EVERLY, {}, {"Everly": {"baby_info": EVERLY, **EVERLY_DATA}}, ACCOUNT, MEDICINES
+
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", one_baby):
+        await start_assist(hass, freezer, tmp_path)
+        result = await ask(hass, "BabyTrackerLogDiaper", kind="wet")
+    assert backend[-1][:2] == ("add_diaper", "ID-EVERLY")
+    assert said(result) == "Logged a wet diaper for Everly."
+
+
+async def test_the_intents_say_so_when_baby_tracker_is_not_set_up(hass):
+    await bt_intent.async_setup_intents(hass)
+    result = await ask(hass, "BabyTrackerLastFeed", baby="Everly")
+    assert result.response_type is intent.IntentResponseType.ERROR
+    assert said(result) == "Baby Tracker isn't set up."
+
+
+async def test_the_intents_are_registered_once(hass):
+    await bt_intent.async_setup_intents(hass)
+    await bt_intent.async_setup_intents(hass)
+    registered = [h.intent_type for h in intent.async_get(hass) if h.intent_type.startswith("BabyTracker")]
+    assert sorted(registered) == sorted(h.intent_type for h in bt_intent.HANDLERS) and len(registered) == 13
+
+
+def test_baby_names_become_list_values_without_template_syntax():
+    from custom_components.baby_tracker.sentences import baby_values
+
+    assert baby_values(["Everly", "ann marie", " Everly ", "Zoe (Z)", "", None]) == [
+        "ann marie", "Everly", {"in": "Zoe Z", "out": "Zoe (Z)"}]
+
+
+async def test_a_missing_sentence_file_raises_a_repair_and_nothing_is_written(hass, backend, tmp_path):
+    hass.config.config_dir = str(tmp_path)
+    await setup(hass, make_entry())
+
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, "custom_sentences")
+    assert issue is not None
+    assert issue.is_fixable is True and issue.severity is ir.IssueSeverity.WARNING
+    assert issue.translation_key == "custom_sentences"
+    assert issue.translation_placeholders == {"folder": str(tmp_path / "custom_sentences")}
+    assert not (tmp_path / "custom_sentences").exists()  # not without the confirmation
+
+
+async def test_confirming_the_repair_writes_the_sentences_with_the_babys_names(hass, backend, tmp_path):
+    import yaml
+
+    from custom_components.baby_tracker.repairs import async_create_fix_flow
+    from custom_components.baby_tracker.sentences import async_check_sentences
+
+    hass.config.config_dir = str(tmp_path)
+    entry = make_entry()
+    await setup(hass, entry)
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, "custom_sentences") is not None
+
+    flow = await async_create_fix_flow(hass, "custom_sentences", None)
+    flow.hass, flow.handler, flow.issue_id = hass, DOMAIN, "custom_sentences"
+    form = await flow.async_step_init()
+    assert form["type"] is FlowResultType.FORM and form["step_id"] == "confirm"
+    assert form["description_placeholders"] == {"folder": str(tmp_path / "custom_sentences")}
+    assert not (tmp_path / "custom_sentences").exists()  # showing the form writes nothing
+
+    done = await flow.async_step_confirm({})
+    assert done["type"] is FlowResultType.CREATE_ENTRY
+
+    sentences_file = tmp_path / "custom_sentences" / "en" / "baby_tracker.yaml"
+    written = yaml.safe_load(sentences_file.read_text(encoding="utf-8"))
+    assert written["lists"]["baby"]["values"] == ["Ann Marie", "Everly"]
+    assert "BabyTrackerLogDiaper" in written["intents"]
+
+    # What is there now is what the integration wants: the repair clears
+    await async_check_sentences(hass, coordinator_for(hass, entry))
+    assert registry.async_get_issue(DOMAIN, "custom_sentences") is None
+
+    # A hand-edited file is out of date again
+    sentences_file.write_text("language: en\n", encoding="utf-8")
+    await async_check_sentences(hass, coordinator_for(hass, entry))
+    assert registry.async_get_issue(DOMAIN, "custom_sentences") is not None
+
+
+async def test_the_repair_reports_a_folder_it_cannot_write(hass, backend, tmp_path):
+    from custom_components.baby_tracker.repairs import async_create_fix_flow
+
+    hass.config.config_dir = str(tmp_path)
+    await setup(hass, make_entry())
+    flow = await async_create_fix_flow(hass, "custom_sentences", None)
+    flow.hass, flow.handler, flow.issue_id = hass, DOMAIN, "custom_sentences"
+
+    with patch("custom_components.baby_tracker.sentences.write", side_effect=PermissionError("read-only")):
+        result = await flow.async_step_confirm({})
+    assert result["type"] is FlowResultType.FORM and result["errors"] == {"base": "write_failed"}
+
+
+def test_the_shipped_sentences_are_understood_by_assist():
+    hassil = pytest.importorskip("hassil")
+    import yaml
+
+    from custom_components.baby_tracker.sentences import render, template_languages
+
+    intents = hassil.Intents.from_dict(yaml.safe_load(render(template_languages()["en"], ["Everly", "Ann Marie"])))
+    for text, intent_type, slots in (
+        ("Everly had a wet diaper", "BabyTrackerLogDiaper", {"baby": "Everly", "kind": "wet"}),
+        ("log a 120 ml bottle for ann marie", "BabyTrackerLogBottle", {"baby": "Ann Marie", "amount": 120, "unit": "ml"}),
+        ("Everly is asleep", "BabyTrackerStartSleep", {"baby": "Everly"}),
+        ("Everly woke up", "BabyTrackerEndSleep", {"baby": "Everly"}),
+        ("start nursing Everly on the left", "BabyTrackerStartNursing", {"baby": "Everly", "side": "left"}),
+        ("stop nursing Everly", "BabyTrackerEndNursing", {"baby": "Everly"}),
+        ("when did Everly last eat", "BabyTrackerLastFeed", {"baby": "Everly"}),
+        ("when was Everly's last diaper change", "BabyTrackerLastDiaper", {"baby": "Everly"}),
+        ("when is Everly's next feed", "BabyTrackerNextFeed", {"baby": "Everly"}),
+        ("how much has Everly eaten today", "BabyTrackerIntakeToday", {"baby": "Everly"}),
+        ("is Everly sleeping", "BabyTrackerSleepStatus", {"baby": "Everly"}),
+        ("how is Everly doing", "BabyTrackerSummary", {"baby": "Everly"}),
+    ):
+        result = hassil.recognize(text, intents)
+        assert result is not None, text
+        assert result.intent.name == intent_type, text
+        got = {name: entity.value for name, entity in result.entities.items()}
+        assert got == slots, text  # 120.0 == 120

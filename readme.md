@@ -298,6 +298,7 @@ Problems you can act on show up on *Settings > Repairs*:
 - **Old baby photos are publicly readable**: the `www/baby_tracker` folder from earlier versions still exists. Delete it; the photos are kept privately now. The repair goes away on its own after you delete it and restart or reload the integration.
 - **Baby Tracker records aren't reaching the server**: records logged in Home Assistant have stayed unsent for more than 3 refreshes in a row. They are kept and sent when the server accepts them; the repair clears once they have gone.
 - **Baby Tracker account was reset**: the account was reset or recreated in the app, so the data here belongs to the old group and syncing has stopped. Press Force Resync. The repair clears after the next successful sync.
+- **Install the Baby Tracker voice commands**: the Assist sentence file with your babies' names is missing or out of date. Confirm the repair to write it (see [Voice control](#voice-control-assist)).
 
 Refreshes, service calls and button presses never write to the local database at the same time, and the database waits up to 10 seconds for a lock rather than failing.
 
@@ -636,6 +637,37 @@ data:
 ```
 
 Dismissed until the condition clears and comes back. `baby_tracker.dismiss_all_alerts` dismisses every active alert (a baby's, with `baby_name`).
+
+## Voice control (Assist)
+
+Home Assistant's Assist (the voice assistant on phones, satellites and the dashboard, and any voice or text pipeline that uses Home Assistant's own conversation agent) can log things and answer questions about your babies. Say the baby's name as it is in the Baby Tracker app. With only one baby you can leave the name out; with several, leave it out and Assist asks *Which baby?*
+
+**Logging**
+
+| Say | What it does |
+| --- | --- |
+| "Everly had a wet diaper", "log a dirty diaper for Everly", "Everly pooped" | Logs a wet, dirty, mixed or dry diaper |
+| "log a 120 ml bottle for Everly", "Everly drank 4 ounces of pumped milk", "I gave Everly a 4 oz formula bottle" | Logs a bottle of formula or pumped milk. Without a unit it is in the unit chosen for the integration; without a type it is the baby's Bottle Type |
+| "Everly is asleep", "Everly went to sleep", "start a nap for Everly" | Logs the start of a sleep |
+| "Everly woke up", "end Everly's nap" | Ends the sleep in progress |
+| "start nursing Everly on the left", "Everly is nursing on the right side" | Starts the nursing timer on a side (the other side switches the timer) |
+| "stop nursing Everly", "Everly is done nursing" | Logs the session, dated when it started |
+| "log a temperature of 98.6 for Everly", "Everly's temperature is 37.2" | Logs a temperature. 90 to 110 is taken as Fahrenheit and 34 to 43 as Celsius, whatever the units setting |
+
+**Questions**
+
+| Ask | Answer |
+| --- | --- |
+| "when did Everly last eat", "when was Everly's last feed" | "Everly last ate 2 hours ago, a 4 oz bottle." |
+| "when was Everly's last diaper change" | "Everly's last diaper was wet, 45 minutes ago." |
+| "when is Everly's next feed" | The predicted time from the [insights](#insights) |
+| "how much has Everly eaten today", "is Everly eating enough" | The last 24 hours of intake against the expected range |
+| "is Everly sleeping", "is Everly awake", "how long has Everly been asleep" | Asleep since, or awake since |
+| "how is Everly doing", "baby status" | A short status: last feed, last diaper, sleep and next feed (every baby when none is named) |
+
+The sentences are in the English file `custom_components/baby_tracker/custom_sentences/en/baby_tracker.yaml`. Home Assistant only reads sentence files from `<config>/custom_sentences/<language>/`, and the file needs your babies' names, so there is a one-time step: after the integration is set up, a repair appears in *Settings > Repairs* ("Install the Baby Tracker voice commands"). Select it and confirm, and the integration writes `<config>/custom_sentences/en/baby_tracker.yaml` with your babies' names filled in, then asks the conversation agent to reload. If a command is not recognised straight away, restart Home Assistant. Nothing is written to your configuration folder until you confirm. The repair comes back when a baby is added or renamed, or if the file changes, so the names stay current.
+
+Assist can only run the sentences if its language is English and Home Assistant's own conversation agent handles them. With an AI conversation agent that has *Control Home Assistant* turned on, the same actions are available to it as tools (`BabyTrackerLogDiaper`, `BabyTrackerLastFeed` and so on) without the sentence file.
 
 ## Google Home Integration
 

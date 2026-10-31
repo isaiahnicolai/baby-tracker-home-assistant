@@ -16,7 +16,9 @@ custom_components/baby_tracker/      the Home Assistant integration (what HACS i
     sensor.py, binary_sensor.py,     entities (one platform per file)
     button.py, number.py, select.py,
     image.py, calendar.py, event.py
-    services.py, services.yaml       service calls
+    services.py, services.yaml       service calls (and the writes the buttons and Assist intents share)
+    intent.py, sentences.py,         Assist: intents, the sentence template and the repair that installs it
+    repairs.py, custom_sentences/
     diagnostics.py, strings.json,    diagnostics, English strings, icons
     icons.json, translations/
     client/                          the sync client: no Home Assistant imports

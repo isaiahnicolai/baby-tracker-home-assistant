@@ -75,6 +75,15 @@ before upgrading.
   Nursing buttons with a Nursing binary sensor. The record is written when
   you press End.
 - **New services**: `log_activity` and `add_solids`.
+- **Voice control through Assist**: log diapers, bottles, sleeps, nursing
+  sessions and temperatures, and ask when a baby last ate, when the next
+  feed is, how much they have had today and whether they are asleep
+  ("Everly had a wet diaper", "when did Everly last eat"). The intents are
+  `BabyTracker...` (also available to AI conversation agents as tools). Home
+  Assistant only reads sentence files from `<config>/custom_sentences/`, so a
+  repair offers to write the English file there with your babies' names;
+  nothing is written until you confirm. See "Voice control (Assist)" in the
+  readme.
 - **Blueprints** for feed due, wake to feed and a daily intake summary.
 - **Alert options** in the options flow: feeding-overdue hours, minimum wet
   diapers, night hours and fever temperature.
