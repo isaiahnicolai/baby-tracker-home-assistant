@@ -3,7 +3,7 @@ import mimetypes
 
 from homeassistant.components.image import ImageEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -58,6 +58,7 @@ class BabyTrackerPhoto(CoordinatorEntity, ImageEntity):
         self._attr_image_last_updated = photo["updated"] if photo else None
         self._attr_content_type = (mimetypes.guess_type(self._path)[0] if self._path else None) or "image/jpeg"
 
+    @callback
     def _handle_coordinator_update(self) -> None:
         self._use_photo_from_data()
         super()._handle_coordinator_update()
