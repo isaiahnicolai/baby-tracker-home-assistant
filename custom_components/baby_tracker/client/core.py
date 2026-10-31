@@ -4,6 +4,7 @@ from .api import AuthenticationError, BabyTrackerAPI
 from .database import BabyTrackerLocalDatabase
 import os
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import sqlite3
 import logging
 
@@ -24,15 +25,30 @@ class BabyTracker:
     Combines API and database access with a simple interface.
     Always requires network connectivity for adding records.
     """
-    def __init__(self, db_path=None, async_mode=False, time_zone=None):
-        """Initialize the BabyTracker wrapper."""
+    def __init__(self, db_path=None, async_mode=False, time_zone=None, tz=None):
+        """
+        Initialize the BabyTracker wrapper.
+
+        Args:
+            time_zone: IANA zone name, used for the timezone offset sent to the server
+                (and for day boundaries when tz is not given)
+            tz: tzinfo that "today" and night hours are worked out in. Defaults to the
+                zone named by time_zone, else the system's local zone.
+        """
         # Set up database path - use the provided path or a default in the config directory
         self.db_path = db_path
         self.async_mode = async_mode
         self.db = None
-        
+        if tz is None and time_zone:
+            try:
+                tz = ZoneInfo(time_zone)
+            except Exception as e:
+                _LOGGER.warning(f"Unknown time zone {time_zone!r}, using host zone: {e}")
+        self.tz = tz  # None means the system's local zone
+
         # Create components
-        self.api = BabyTrackerAPI(async_mode=async_mode, db_path=self.db_path, time_zone=time_zone)
+        self.api = BabyTrackerAPI(async_mode=async_mode, db_path=self.db_path,
+                                  time_zone=time_zone or tz)
         
         # State tracking
         self.is_authenticated = False
@@ -57,7 +73,7 @@ class BabyTracker:
         """
         try:
             # Always initialize the database object first
-            self.db = BabyTrackerLocalDatabase(self.db_path)
+            self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
             
             # Make sure API has reference to the database
             self.api.local_db = self.db
@@ -301,7 +317,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return None
@@ -375,7 +391,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return []
@@ -394,7 +410,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return None
@@ -414,7 +430,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return {}
@@ -434,7 +450,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return {}
@@ -445,7 +461,7 @@ class BabyTracker:
         """Get all pumped milk sessions."""
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return []
@@ -465,7 +481,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return []
@@ -483,7 +499,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return None
@@ -501,7 +517,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return None
@@ -520,7 +536,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return None
@@ -531,7 +547,7 @@ class BabyTracker:
         """Get today's daily summary totals."""
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return {}
@@ -541,7 +557,7 @@ class BabyTracker:
         """Get sleep/bedtime analysis over the last N days."""
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return {}
@@ -559,7 +575,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return 0
@@ -579,7 +595,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return None
@@ -599,7 +615,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return None
@@ -618,7 +634,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return False
@@ -638,7 +654,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return None
@@ -658,7 +674,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return None
@@ -677,7 +693,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return None
@@ -696,7 +712,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return []
@@ -755,7 +771,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return []
@@ -774,7 +790,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return None
@@ -794,7 +810,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return []
@@ -821,7 +837,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return False
@@ -851,7 +867,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return {}
@@ -870,7 +886,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return None
@@ -889,7 +905,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return None
@@ -909,7 +925,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return []
@@ -936,7 +952,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return False
@@ -966,7 +982,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return None
@@ -986,7 +1002,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return []
@@ -1002,7 +1018,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return []
@@ -1024,7 +1040,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return False
@@ -1050,7 +1066,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return None
@@ -1070,7 +1086,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return []
@@ -1096,7 +1112,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return False
@@ -1125,7 +1141,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return None
@@ -1145,7 +1161,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return []
@@ -1161,7 +1177,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return []
@@ -1184,7 +1200,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return False
@@ -1206,7 +1222,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return []
@@ -1225,7 +1241,7 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return []
@@ -1241,31 +1257,32 @@ class BabyTracker:
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return []
                 
         return self.db.get_activity_types()
 
-    def get_activity_records(self, limit=50):
+    def get_activity_records(self, limit=50, baby_id=None):
         """
         Get other activity records.
-        
+
         Args:
             limit: Maximum number of records to return
-            
+            baby_id: Optional baby ID to filter by (defaults to the first baby)
+
         Returns:
             list: Activity records
         """
         if not self.db:
             if os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                 self.api.local_db = self.db
             else:
                 return []
                 
-        return self.db.get_activity_records(limit)
+        return self.db.get_activity_records(limit, baby_id)
         
     # === Data Entry Methods ===
     # These methods always go through the API
@@ -1524,7 +1541,7 @@ class BabyTracker:
                 _LOGGER.debug(f"Wake up requested for baby {baby_id}")
                 if not self.db:
                     if os.path.exists(self.db_path):
-                        self.db = BabyTrackerLocalDatabase(self.db_path)
+                        self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
                         self.api.local_db = self.db
                     else:
                         _LOGGER.error("Database not initialized")

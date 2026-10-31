@@ -9,6 +9,7 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .entity import baby_device_info, baby_unique_id
 from .const import (
@@ -287,7 +288,7 @@ class LowWetDiapersAlert(BabyTrackerAlert):
 
     def _evaluate_condition(self):
         # Only check after LOW_WET_CHECK_HOUR (8pm)
-        now = datetime.now()
+        now = dt_util.now()
         if now.hour < LOW_WET_CHECK_HOUR:
             return False
 
@@ -319,7 +320,8 @@ class FeverAlert(BabyTrackerAlert):
         temp_data = baby_data.get("last_temperature")
         if not temp_data:
             return None
-        return temp_data.get("temp")
+        # Compared in Fahrenheit whatever scale the reading was recorded in
+        return temp_data.get("fahrenheit")
 
     def _get_threshold_info(self):
         return FEVER_THRESHOLD_F, "all ages"
@@ -411,7 +413,7 @@ class BabyTrackerNightModeSensor(CoordinatorEntity, BinarySensorEntity):
         if not is_sleeping:
             return False
 
-        now = datetime.now()
+        now = dt_util.now()
         current_hour = now.hour
         # Night hours: 7pm (19) to 7am (7) — wraps around midnight
         is_night = current_hour >= NIGHT_START_HOUR or current_hour < NIGHT_END_HOUR

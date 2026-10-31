@@ -14,13 +14,16 @@ class BabyTrackerLocalDatabase:
     """
     Local SQLite database for Baby Tracker, focusing on baby info, diapers, and feedings
     """
-    def __init__(self, db_path=None, db_filename='babytracker.db'):
+    def __init__(self, db_path=None, db_filename='babytracker.db', tz=None):
         """
         Initialize the local database
-        
+
         :param db_path: Path to the database file
         :param db_filename: Name of the database file (defaults to 'babytracker.db')
+        :param tz: tzinfo that "today", day buckets and night hours are worked out in
+            (defaults to the system's local zone)
         """
+        self.tz = tz  # None: the system's local zone, looked up at use so DST changes are followed
         # Determine the database path
         if db_path:
             self.db_path = db_path
@@ -35,7 +38,16 @@ class BabyTrackerLocalDatabase:
         
         _LOGGER.info(f"Initialized database at {self.db_path}")
 
-   
+    def _now(self) -> datetime:
+        """The current time in the configured zone."""
+        return datetime.now(self.tz) if self.tz else datetime.now().astimezone()
+
+    def _local(self, timestamp: float) -> datetime:
+        """A UTC timestamp as a datetime in the configured zone."""
+        if self.tz:
+            return datetime.fromtimestamp(timestamp, self.tz)
+        return datetime.fromtimestamp(timestamp).astimezone()
+
     def load_seed_database(self, db_file_path):
         """
         Load a seed database file into the application
@@ -369,7 +381,7 @@ class BabyTrackerLocalDatabase:
             raise ValueError("No database loaded")
 
         # Calculate date range
-        end_date = datetime.now()
+        end_date = self._now()
         start_date = end_date - timedelta(days=days)
 
         # Get timestamp values for the date range
@@ -506,7 +518,7 @@ class BabyTrackerLocalDatabase:
             raise ValueError("No database loaded")
 
         # Calculate date range
-        end_date = datetime.now()
+        end_date = self._now()
         start_date = end_date - timedelta(days=days)
 
         # Get timestamp values for the date range
@@ -636,7 +648,7 @@ class BabyTrackerLocalDatabase:
                 summary["last_poopy_time"] = self._format_timestamp(last_poopy_timestamp)
                 
                 # Calculate how many hours since last poopy diaper
-                now_timestamp = datetime.now().timestamp()
+                now_timestamp = self._now().timestamp()
                 hours_since = (now_timestamp - last_poopy_timestamp) / 3600
                 summary["hours_since_last_poopy"] = round(hours_since, 1)
             
@@ -692,7 +704,7 @@ class BabyTrackerLocalDatabase:
             if not baby_id:
                 return 0
 
-            today_start = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+            today_start = int(self._now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
 
             cursor.execute("""
                 SELECT COUNT(ID) FROM Diaper
@@ -724,7 +736,7 @@ class BabyTrackerLocalDatabase:
             if not baby_id:
                 return {}
 
-            today_start = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+            today_start = int(self._now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
 
             summary = {
                 "total_feedings": 0,
@@ -821,7 +833,7 @@ class BabyTrackerLocalDatabase:
             if not baby_id:
                 return {}
 
-            cutoff = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
+            cutoff = int((self._now() - timedelta(days=days)).timestamp())
 
             cursor.execute("""
                 SELECT Time, Duration FROM Sleep
@@ -845,17 +857,17 @@ class BabyTrackerLocalDatabase:
             # Classify night sleeps: start hour between 6pm (18) and midnight (0-5)
             night_sleeps = []
             for start_ts, duration_minutes in rows:
-                start_dt = datetime.fromtimestamp(start_ts, timezone.utc)
+                start_dt = self._local(start_ts)
                 start_hour = start_dt.hour
 
-                # Night sleep: started between 6pm-midnight
+                # Night sleep: started at or after 6pm, local time
                 is_night = start_hour >= 18
 
                 if not is_night:
                     continue
 
                 end_ts = start_ts + duration_minutes * 60
-                end_dt = datetime.fromtimestamp(end_ts, timezone.utc)
+                end_dt = self._local(end_ts)
 
                 # Normalize bedtime hour for averaging:
                 # Hours before 6am treated as 24+hour to avoid midnight crossing issues
@@ -967,20 +979,31 @@ class BabyTrackerLocalDatabase:
                     return None  # No baby found in database
             
             # Correct SQL syntax: WHERE comes before ORDER BY
-            query = "SELECT Temp, Time FROM Temperature WHERE BabyID = ? ORDER BY Time DESC LIMIT 1"
+            query = ("SELECT Temp, Time, IsEnglishScale FROM Temperature "
+                     "WHERE BabyID = ? ORDER BY Time DESC LIMIT 1")
             params = [baby_id]
             cursor.execute(query, params)
-            
+
             temp_reading = cursor.fetchone()
-            
+
             if temp_reading:
+                value = temp_reading[0]
+                # The app records each reading in the scale it was entered in
+                english = temp_reading[2] is None or bool(temp_reading[2])
+                if english:
+                    fahrenheit, celsius = value, (value - 32) * 5 / 9
+                else:
+                    fahrenheit, celsius = value * 9 / 5 + 32, value
                 return {
-                    "temp": temp_reading[0],
+                    "temp": value,
+                    "unit": "°F" if english else "°C",
+                    "fahrenheit": round(fahrenheit, 2),
+                    "celsius": round(celsius, 2),
                     "time": self._format_timestamp(temp_reading[1]) if temp_reading[1] else None
                 }
             return None
         except Exception as e:
-            print(f"Error getting last temperature: {e}")
+            _LOGGER.error(f"Error getting last temperature: {e}")
             return None
         finally:
             conn.close()
@@ -1183,7 +1206,7 @@ class BabyTrackerLocalDatabase:
             # Use %z (lowercase) to get "+0000" format, not %Z which gives "UTC"
             return dt.strftime("%Y-%m-%d %H:%M:%S %z")
         except Exception as e:
-            print(f"Error formatting timestamp {timestamp}: {e}")
+            _LOGGER.error(f"Error formatting timestamp {timestamp}: {e}")
             return None
     def get_medicine_selections(self) -> List[Dict]:
         """
@@ -1264,24 +1287,25 @@ class BabyTrackerLocalDatabase:
         finally:
             conn.close()
 
-    def get_activity_records(self, limit=50) -> List[Dict]:
+    def get_activity_records(self, limit=50, baby_id: Optional[str] = None) -> List[Dict]:
         """
         Retrieve other activity records
-        
+
         :param limit: Maximum number of records to return
+        :param baby_id: Optional baby ID to filter by (defaults to first baby)
         :return: List of dictionaries with activity details
         """
         if not os.path.exists(self.db_path):
             raise ValueError("No database loaded")
-        
+
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.cursor()
-            
-            # Get baby ID for reference
-            cursor.execute("SELECT ID FROM Baby LIMIT 1")
-            baby_id_row = cursor.fetchone()
-            baby_id = baby_id_row[0] if baby_id_row else None
+
+            if not baby_id:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_id_row = cursor.fetchone()
+                baby_id = baby_id_row[0] if baby_id_row else None
             
             # Query for activity records
             cursor.execute(f"""
@@ -1322,16 +1346,17 @@ class BabyTrackerLocalDatabase:
         finally:
             conn.close()
 
-    def get_last_activity(self) -> Optional[Dict]:
+    def get_last_activity(self, baby_id: Optional[str] = None) -> Optional[Dict]:
         """
         Retrieve the most recent other activity
-        
+
+        :param baby_id: Optional baby ID to filter by (defaults to first baby)
         :return: Dictionary with activity details
         """
         if not os.path.exists(self.db_path):
             raise ValueError("No database loaded")
-        
-        records = self.get_activity_records(limit=1)
+
+        records = self.get_activity_records(limit=1, baby_id=baby_id)
         return records[0] if records else None
 
     def get_medicine_records(self, limit=50, baby_id: Optional[str] = None) -> List[Dict]:
@@ -2316,16 +2341,24 @@ class BabyTrackerLocalDatabase:
         try:
             cursor = conn.cursor()
 
+            if not baby_id:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+                if baby_id is None:
+                    return None
+
             # Build query
             query = """
                 SELECT ID, Time, Weight, Length, Head,
                        IsEnglishWeightScale, IsEnglishLengthScale, Note
                 FROM Growth
+                WHERE BabyID = ?
                 ORDER BY Time DESC
                 LIMIT 1
             """
 
-            cursor.execute(query)
+            cursor.execute(query, (baby_id,))
             row = cursor.fetchone()
 
             if not row:
@@ -2371,16 +2404,24 @@ class BabyTrackerLocalDatabase:
         try:
             cursor = conn.cursor()
 
+            if not baby_id:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                baby_id = baby_row[0] if baby_row else None
+                if baby_id is None:
+                    return []
+
             # Build query
             query = f"""
                 SELECT ID, Time, Weight, Length, Head,
                        IsEnglishWeightScale, IsEnglishLengthScale, Note
                 FROM Growth
+                WHERE BabyID = ?
                 ORDER BY Time DESC
                 LIMIT {limit}
             """
 
-            cursor.execute(query)
+            cursor.execute(query, (baby_id,))
             records = []
 
             for row in cursor.fetchall():

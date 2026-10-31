@@ -11,6 +11,11 @@ MILESTONE = "MILESTONE-SMILE"
 VACCINE = "VACCINE-HEPB"
 
 
+# The fields every baby record carries
+COMMON = {"timestamp": "2026-10-30 12:00:00 +0000", "time": "2026-10-30 11:00:00 +0000", "note": "",
+          "pictureLoaded": True, "pictureNote": [], "baby": {"objectID": EVERLY}}
+
+
 def b64(record):
     return base64.b64encode(json.dumps(record).encode()).decode()
 

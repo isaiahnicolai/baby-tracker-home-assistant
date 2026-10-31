@@ -46,6 +46,7 @@ from .const import (
     UNIT_ML,
     UNIT_F,
     UNIT_C,
+    UNIT_SYSTEM_METRIC,
     ATTR_BABY_NAME,
     ATTR_BABY_DOB,
     ATTR_BABY_GENDER,
@@ -726,22 +727,22 @@ class BabyTrackerLastTemperatureSensor(BabyTrackerSensor):
             baby_name,
             SENSOR_TYPE_LAST_TEMPERATURE,
             "Temperature",
-            UNIT_F,  # Default to Fahrenheit, can be overridden later
+            UNIT_C if coordinator.unit_system == UNIT_SYSTEM_METRIC else UNIT_F,
         )
+        self._metric = coordinator.unit_system == UNIT_SYSTEM_METRIC
 
     @property
     def state(self):
-        """Return the state of the sensor."""
+        """Return the state of the sensor, in the unit chosen for this entry."""
         baby_data = self._get_baby_data()
         if not baby_data or "last_temperature" not in baby_data:
             return None
-            
+
         temp = baby_data["last_temperature"]
         if not temp:
             return None
-            
-        # Return temperature in F by default
-        return temp.get("temp")
+
+        return temp.get("celsius" if self._metric else "fahrenheit")
 
     def _handle_coordinator_update(self):
         """Handle updated data from the coordinator."""
@@ -760,8 +761,8 @@ class BabyTrackerLastTemperatureSensor(BabyTrackerSensor):
         # Set attributes
         attrs = {
             ATTR_TIME: temp.get("time"),
-            ATTR_TEMPERATURE_F: temp.get("temp"),  # Assuming temp is in F
-            ATTR_TEMPERATURE_C: (temp.get("temp") - 32) * 5/9,  # Convert to C
+            ATTR_TEMPERATURE_F: temp.get("fahrenheit"),
+            ATTR_TEMPERATURE_C: temp.get("celsius"),
         }
         
         self._attr_extra_state_attributes = attrs

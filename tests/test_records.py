@@ -2,19 +2,7 @@
 import pytest
 
 from babytracker_client.api import _get_local_timezone_offset_seconds
-from helpers import EVERLY, b64
-
-COMMON = {"timestamp": "2026-10-30 12:00:00 +0000", "time": "2026-10-30 11:00:00 +0000", "note": "",
-          "pictureLoaded": True, "pictureNote": [], "baby": {"objectID": EVERLY}}
-
-
-@pytest.fixture
-def apply(tracker):
-    def run(record, op=0):
-        result = tracker.api.transaction_handler.merge({"SyncID": 1, "OPCode": op, "Transaction": b64(record)})
-        assert result != "error", record
-        return result
-    return run
+from helpers import COMMON, EVERLY, IPHONE
 
 
 def test_temperature_uses_the_apps_columns(apply, query, tracker):
@@ -77,6 +65,61 @@ def test_delete_removes_the_record(apply, query):
     apply({**COMMON, "BCObjectType": "Diaper", "objectID": "GONE", "status": 0})
     apply({**COMMON, "BCObjectType": "Diaper", "objectID": "GONE"}, op=2)
     assert query("SELECT COUNT(*) FROM Diaper WHERE ID='GONE'") == [(0,)]
+
+
+@pytest.mark.parametrize("object_type, table", [("Joy", "Joy"), ("Journal", "Journal")])
+def test_joy_and_journal_are_merged_from_other_devices(tracker, server, query, object_type, table):
+    server.publish(IPHONE, [{**COMMON, "BCObjectType": object_type, "objectID": "X1", "note": "first giggle",
+                             "time": "2026-10-30 10:30:00 +0000"}])
+    assert tracker.sync()["status"] == "success"
+    rows = query(f"SELECT BabyID, Note, HasPicture, Time FROM {table} WHERE ID='X1'")
+    assert rows == [(EVERLY, "first giggle", 0, tracker.db.convert_timestamp("2026-10-30 10:30:00 +0000"))]
+
+
+def test_nursing_session_is_stored_as_nursing(tracker, server, query):
+    server.publish(IPHONE, [{**COMMON, "BCObjectType": "NursingSession", "objectID": "NS1",
+                             "finishSide": 1, "leftDuration": 6, "rightDuration": 4}])
+    assert tracker.sync()["status"] == "success"
+    assert query("SELECT BabyID, FinishSide, LeftDuration, RightDuration FROM Nursing WHERE ID='NS1'") == [(EVERLY, 1, 6, 4)]
+
+
+@pytest.mark.parametrize("duration, stored", [(45, 45), (-30, 0), (None, 0)])
+def test_sleep_duration_is_never_negative(apply, query, duration, stored):
+    apply({**COMMON, "BCObjectType": "Sleep", "objectID": "S1", "duration": duration})
+    assert query("SELECT Duration FROM Sleep WHERE ID='S1'") == [(stored,)]
+
+
+def growth(weight=None, length=None, head=None):
+    return {**COMMON, "BCObjectType": "Growth", "objectID": "G1",
+            **{key: value for key, value in (("weight", weight), ("length", length), ("head", head)) if value is not None}}
+
+
+def metric(value):
+    return {"value": value, "englishMeasure": False}
+
+
+def english(value):
+    return {"value": value, "englishMeasure": True}
+
+
+COLUMNS = "Weight, Length, Head, IsEnglishWeightScale, IsEnglishLengthScale"
+
+
+@pytest.mark.parametrize("record, stored", [
+    # The length's scale wins over the head's
+    (growth(weight=metric(4.2), length=english(21.0), head=metric(35.0)), (4.2, 21.0, 35.0, 0, 1)),
+    # Without a length, the head's scale is used
+    (growth(weight=english(9.0), head=metric(35.0)), (9.0, 0.0, 35.0, 1, 0)),
+    # A zero length is not a measurement: the head decides the scale
+    (growth(length=english(0), head=metric(35.0)), (0.0, 0.0, 35.0, 1, 0)),
+    # Nothing measured: weight and length scales default to English
+    (growth(weight=metric(0)), (0.0, 0.0, 0.0, 1, 1)),
+    (growth(weight=metric(-3.0), length=metric(-1.0)), (0.0, 0.0, 0.0, 1, 1)),
+    (growth(), (0.0, 0.0, 0.0, 1, 1)),
+])
+def test_growth_follows_the_apps_scale_rules(apply, query, record, stored):
+    apply(record)
+    assert query(f"SELECT {COLUMNS} FROM Growth WHERE ID='G1'") == [stored]
 
 
 def test_dates_accept_the_apps_fallback_formats(tracker):
