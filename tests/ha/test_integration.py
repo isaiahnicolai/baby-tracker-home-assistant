@@ -859,6 +859,18 @@ async def test_unchanged_data_fires_no_activity_event(hass, backend):
     assert hass.states.get("event.everly_activity").state == "unknown"
 
 
+async def test_an_older_record_becoming_the_latest_is_not_announced(hass, backend):
+    """After an undo the previous feed is the newest again; that is not a new feeding."""
+    entry = make_entry()
+    await setup(hass, entry)
+    older = {"last_feeding": {"time": "2026-03-01 08:00:00 +0000", "type": "Nursing"},
+             "last_diaper": {"time": "2026-03-01 07:00:00 +0000", "status": "Wet"}}
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch_with(**older)):
+        await hass.data[DOMAIN][entry.entry_id].async_refresh()
+        await hass.async_block_till_done()
+    assert hass.states.get("event.everly_activity").state == "unknown"
+
+
 async def test_calendar_returns_a_days_feed_and_sleep(hass, backend):
     await setup(hass, make_entry())
     feed = datetime(2026, 3, 1, 9, 30, tzinfo=UTC)

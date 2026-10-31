@@ -176,6 +176,22 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry):
         ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
+def _is_newer(current, previous):
+    """Whether a record time (text, "2026-03-01 12:00:00 +0000") is later than the one seen last.
+
+    A plain "changed" check would also fire when the newest record is deleted
+    (undone) and an older one becomes the latest again.
+    """
+    if not current:
+        return False
+    if not previous:
+        return True
+    try:
+        return datetime.fromisoformat(current) > datetime.fromisoformat(previous)
+    except (TypeError, ValueError):
+        return current != previous
+
+
 def _remove_database(db_path):
     if os.path.exists(db_path):
         try:
@@ -573,7 +589,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 # Feeding change: compare last_feeding time
                 curr_feed_time = (current.get("last_feeding") or {}).get("time")
                 prev_feed_time = (prev.get("last_feeding") or {}).get("time")
-                if curr_feed_time and curr_feed_time != prev_feed_time:
+                if _is_newer(curr_feed_time, prev_feed_time):
                     self._announce("feeding", baby_name, baby_id, {
                         "type": (current.get("last_feeding") or {}).get("type"),
                         "time": curr_feed_time,
@@ -582,7 +598,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 # Diaper change: compare last_diaper time
                 curr_diaper_time = (current.get("last_diaper") or {}).get("time")
                 prev_diaper_time = (prev.get("last_diaper") or {}).get("time")
-                if curr_diaper_time and curr_diaper_time != prev_diaper_time:
+                if _is_newer(curr_diaper_time, prev_diaper_time):
                     self._announce("diaper", baby_name, baby_id, {
                         "status": (current.get("last_diaper") or {}).get("status"),
                         "time": curr_diaper_time,
@@ -591,7 +607,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 # Sleep change: compare last_sleep time or status
                 curr_sleep = current.get("last_sleep") or {}
                 prev_sleep = prev.get("last_sleep") or {}
-                if (curr_sleep.get("time") != prev_sleep.get("time") or
+                if (_is_newer(curr_sleep.get("time"), prev_sleep.get("time")) or
                         curr_sleep.get("is_sleeping") != prev_sleep.get("is_sleeping")):
                     self._announce("sleep_start" if curr_sleep.get("is_sleeping") else "sleep_end",
                                    baby_name, baby_id, {
@@ -601,12 +617,12 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
 
                 # Baths and medicines are only reported by the Activity event entity
                 curr_bath = current.get("last_bath") or {}
-                if curr_bath.get("time") and curr_bath.get("time") != (prev.get("last_bath") or {}).get("time"):
+                if _is_newer(curr_bath.get("time"), (prev.get("last_bath") or {}).get("time")):
                     self._announce("bath", baby_name, baby_id, {
                         "bath_type": curr_bath.get("bath_type"), "time": curr_bath.get("time")})
 
                 curr_medicine = current.get("last_medicine") or {}
-                if curr_medicine.get("time") and curr_medicine.get("time") != (prev.get("last_medicine") or {}).get("time"):
+                if _is_newer(curr_medicine.get("time"), (prev.get("last_medicine") or {}).get("time")):
                     self._announce("medicine", baby_name, baby_id, {
                         "medicine_name": curr_medicine.get("medicine_name"),
                         "amount": curr_medicine.get("amount"),
