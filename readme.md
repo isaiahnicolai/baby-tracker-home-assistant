@@ -35,6 +35,16 @@ This custom component integrates the Baby Tracker app data with Home Assistant, 
 
 Requires Home Assistant 2024.12 or newer.
 
+### Upgrading from 0.2
+
+Version 0.3 changes how several entities report their state, so check your dashboards and automations after upgrading. [CHANGELOG.md](CHANGELOG.md#breaking-changes-in-030) has the full list. The ones that most often need a fix:
+
+- **Enum states are lowercase.** *Last Diaper* is `wet`, `poopy`, `mixed` or `dry` (it used to be `Wet`, `Poopy`, ...), and *Last Feeding* is `nursing`, `formula`, `pumped` or `supplement`. Update any `is_state(...)` or `states(...) == ...` check. The `status` attribute keeps its capitalised text.
+- **States are numbers and timestamps, not text.** Durations are minutes and volumes, weights and lengths are numbers with units. Use the new *Last Feeding Time*, *Last Diaper Time* and *Last Sleep Time* timestamp sensors instead of parsing text. Times in attributes are still text in the form `2026-10-30 11:00:00 +0000`, so parse them with `strptime(value, '%Y-%m-%d %H:%M:%S %z')`.
+- **Bottle oz is gone.** *Bottle oz* and *Bottle ml* are now one *Bottle Volume* sensor that keeps the entity of *Bottle ml*, so an upgraded install has `sensor.<baby>_bottle_ml` and a new one has `sensor.<baby>_bottle_volume`. Point anything that used `sensor.<baby>_bottle_oz` at it; the oz totals are in its `bottle_amount_oz` attribute.
+- **Photos moved out of `www/`.** The `/local/baby_tracker/...` URLs no longer work; use each baby's *Photo* image entity and delete `www/baby_tracker`. See [Photos](#photos).
+- **Config entries are migrated to version 2 on their own.** Back up first if you may want to go back to 0.2, because 0.2 cannot open a migrated entry.
+
 ### Two or more babies
 
 Each baby gets its own device with its own sensors and buttons (for example "Add Wet Diaper", "Add Dirty Diaper" and "Add Mixed Diaper"). When calling a service yourself, choose the baby with the **Baby** device picker or `baby_name`; one of them is required when the account has more than one baby. Pump sessions belong to the account rather than a baby.
@@ -64,15 +74,23 @@ export BABYTRACKER_EMAIL=you@example.com   # the password is asked for, or read 
 babytracker babies
 babytracker last diaper --baby Everly
 babytracker add-diaper wet --baby Everly
+babytracker add-bottle --baby Everly --amount 4 --unit oz --type formula   # or --unit ml, --type pumped
+babytracker add-nursing --baby Everly --left 10 --right 8                  # minutes per side
+babytracker insights --baby Everly          # next feed, 24 hour intake, diapers, growth percentiles
+babytracker next                            # each baby's predicted next feed, and who is due first
+babytracker calendar --baby Everly --days 2 # feeds, sleeps, baths, visits and medicines
+babytracker inventory                       # pumped milk in store
 babytracker devices
 babytracker raw <device-uuid> --since 100   # decoded records exactly as the server sends them
 ```
+
+Every command prints JSON. `--baby` is a baby's name and can be left out when the account has only one baby; `--offline` skips the sync that normally runs first.
 
 Each client registers as its own device in the app. The CLI keeps its device ID and local database in `~/.babytracker`, separate from Home Assistant's.
 
 ### Development
 
-The repo follows Home Assistant's [integration blueprint](https://github.com/ludeeus/integration_blueprint) setup:
+[CONTRIBUTING.md](CONTRIBUTING.md) covers the layout, adding a record type and running the tests. In short, the repo follows Home Assistant's [integration blueprint](https://github.com/ludeeus/integration_blueprint) setup:
 
 1. Open the repo in VS Code and choose **Reopen in Container** (needs Docker). The dev container installs Home Assistant, the test harness and the client package (`scripts/setup`).
 2. `scripts/develop` starts Home Assistant on http://localhost:8123 with this integration loaded from the repo and debug logging on. Its data lives in `config/`, which is git-ignored apart from `configuration.yaml`.
@@ -163,7 +181,7 @@ These are totals over a rolling 7 days (the `window_days` attribute says so), up
 | Nursing Minutes | Total nursing time | min, duration |
 | Bottle Volume | Formula and pumped milk from the bottle (oz equivalents in the attributes). Replaces the old *Bottle oz* and *Bottle ml* sensors; it keeps the entity of *Bottle ml* | mL, volume |
 | Diapers | Total diaper changes | diapers |
-| Poopy Diapers | Dirty diapers, mixed ones included | diapers |
+| Poopy Diapers | Dirty diapers, mixed ones included; `last_poopy_time` and `hours_since_last_poopy` in the attributes | diapers |
 | Wet Diapers | Wet diapers, mixed ones included | diapers |
 
 ### Health & Growth Sensors
@@ -788,7 +806,7 @@ entities:
     name: Diapers
   - entity: sensor.everly_nursing_minutes
     name: Nursing
-  - entity: sensor.everly_bottle_volume
+  - entity: sensor.everly_bottle_volume # sensor.everly_bottle_ml if you upgraded from 0.2
     name: Bottles
 ```
 
@@ -978,11 +996,11 @@ header:
   show: true
   title: Feeding Timeline
 series:
-  - entity: sensor.everly_feedings
+  - entity: sensor.everly_daily_summary # feedings so far today, so each day's highest value is its total
     type: column
     name: Daily Feedings
     group_by:
-      func: sum
+      func: max
       duration: 1d
 ```
 
@@ -1020,13 +1038,16 @@ automation:
           title: "Daily Baby Summary"
           message: >
             Today's totals for Everly:
-            - Feedings: {{ states('sensor.everly_feedings') }}
-            - Diapers: {{ states('sensor.everly_diapers') }}
-            - Nursing minutes: {{ states('sensor.everly_nursing_minutes') }}
+            - Feedings: {{ states('sensor.everly_daily_summary') }}
+            - Diapers: {{ state_attr('sensor.everly_daily_summary', 'diaper_count') }}
+            - Nursing minutes: {{ state_attr('sensor.everly_daily_summary', 'nursing_minutes') }}
+            - Sleep hours: {{ state_attr('sensor.everly_daily_summary', 'sleep_hours') }}
             - Current weight: {{ states('sensor.everly_weight') }} {{ state_attr('sensor.everly_weight', 'unit_of_measurement') }}
 ```
 
 ### Reminder to Feed Baby
+
+The *Last Feeding Time* sensor is a timestamp, so it needs no parsing. (The *Feed Due* alert and the [blueprints](#blueprints) do this from a prediction instead of a fixed three hours.)
 
 ```yaml
 automation:
@@ -1034,7 +1055,8 @@ automation:
     trigger:
       platform: template
       value_template: >
-        {{ (now() - states('sensor.everly_last_feeding_time') | as_datetime).total_seconds() > 10800 }}
+        {{ has_value('sensor.everly_last_feeding_time')
+           and (now() - states('sensor.everly_last_feeding_time') | as_datetime).total_seconds() > 10800 }}
     action:
       - service: notify.mobile_app
         data:
@@ -1042,7 +1064,9 @@ automation:
           message: "It's been over 3 hours since Everly's last feeding"
 ```
 
-### Low Medicine Alert
+### Medicine Logged Notification
+
+The sensor's state is the medicine's name; the `time` attribute is when it was given, in UTC (`2026-10-30 11:00:00 +0000`).
 
 ```yaml
 automation:
@@ -1058,7 +1082,9 @@ automation:
       - service: notify.mobile_app
         data:
           title: "Vitamin D Given"
-          message: "Vitamin D logged at {{ state_attr('sensor.everly_last_medicine', 'time') }}"
+          message: >
+            Vitamin D logged at
+            {{ strptime(state_attr('sensor.everly_last_medicine', 'time'), '%Y-%m-%d %H:%M:%S %z') | as_local }}
 ```
 
 ### Age-Based Sleep Monitoring
@@ -1181,6 +1207,7 @@ automation:
             • Total: {{ recommended_hours }} hours
             • Night: {{ nighttime_hours }} hours
             • Day: {{ daytime_hours }} hours
+```
 
 **Sleep Recommendations by Age:**
 
@@ -1197,7 +1224,9 @@ automation:
 
 ### Dirty Diaper Monitoring
 
-Alert if baby hasn't had a dirty diaper for too long (important for health monitoring):
+Alert if baby hasn't had a dirty diaper for too long (important for health monitoring).
+
+The *Poopy Diapers* sensor (`sensor.everly_poopy_diapers`) counts dirty and mixed diapers over 7 days and carries `last_poopy_time` (text such as `2026-10-30 11:00:00 +0000`) and `hours_since_last_poopy` as attributes, so you do not have to look through the diaper history. The *No Poop* alert (`binary_sensor.everly_no_poop`) already does this with age-based limits (24, 48 or 72 hours) and can be used as a trigger on its own. The *Last Diaper* sensor's state is one of `wet`, `poopy`, `mixed` or `dry`.
 
 **Basic Version - Fixed Time Alert:**
 
@@ -1210,18 +1239,16 @@ automation:
     condition:
       - condition: template
         value_template: >
-          {% set last_diaper = state_attr('sensor.everly_last_diaper', 'status') %}
-          {% set last_time = state_attr('sensor.everly_last_diaper', 'time') %}
-          {% set hours_since = ((as_timestamp(now()) - as_timestamp(strptime(last_time, '%Y-%m-%d %H:%M:%S'))) / 3600) | round(1) %}
-          {{ (last_diaper in ['Wet', 'Clean']) and hours_since > 24 }}
+          {% set hours = state_attr('sensor.everly_poopy_diapers', 'hours_since_last_poopy') %}
+          {{ hours is number and hours > 24 }}
     action:
       - service: notify.mobile_app
         data:
           title: "⚠️ No Dirty Diaper Alert"
           message: >
-            It's been over 24 hours since Everly's last dirty diaper.
-            Last diaper was {{ state_attr('sensor.everly_last_diaper', 'status') }}
-            at {{ state_attr('sensor.everly_last_diaper', 'time') }}.
+            It's been over 24 hours since Everly's last dirty diaper
+            ({{ state_attr('sensor.everly_poopy_diapers', 'last_poopy_time') }}).
+            The last diaper was {{ states('sensor.everly_last_diaper') }}.
           data:
             priority: high
             tag: "dirty_diaper_alert"
@@ -1241,21 +1268,10 @@ automation:
       - variables:
           # Get last diaper info
           last_diaper_time: "{{ state_attr('sensor.everly_last_diaper', 'time') }}"
-          last_diaper_status: "{{ state_attr('sensor.everly_last_diaper', 'status') }}"
+          last_diaper_status: "{{ states('sensor.everly_last_diaper') }}"
 
-          # Calculate hours since last dirty diaper
-          hours_since_dirty: >
-            {% set count = states('sensor.everly_poopy_diapers') | int(0) %}
-            {% if count == 0 %}
-              {% set last_time = state_attr('sensor.everly_last_diaper', 'time') %}
-              {% if last_time %}
-                {{ ((as_timestamp(now()) - as_timestamp(strptime(last_time, '%Y-%m-%d %H:%M:%S'))) / 3600) | round(1) }}
-              {% else %}
-                0
-              {% endif %}
-            {% else %}
-              0
-            {% endif %}
+          # Hours since the last dirty (poopy or mixed) diaper; 0 when there has never been one
+          hours_since_dirty: "{{ state_attr('sensor.everly_poopy_diapers', 'hours_since_last_poopy') | float(0) }}"
 
           # Calculate baby's age (if you have DOB in attributes)
           baby_age_months: 6  # Manually set, or calculate from DOB
@@ -1291,9 +1307,9 @@ automation:
             tag: "dirty_diaper_alert"
 ```
 
-**Using Poopy Count Sensor:**
+**Using the Hours Since Last Dirty Diaper:**
 
-Simpler approach using the daily poopy count:
+Simpler approach: at 6 PM, check whether the last dirty diaper was before midnight. The Poopy Diapers sensor counts the last 7 days, so it cannot tell "today" on its own:
 
 ```yaml
 automation:
@@ -1302,15 +1318,17 @@ automation:
       - platform: time
         at: "18:00:00"  # Check at 6 PM daily
     condition:
-      - condition: numeric_state
-        entity_id: sensor.everly_poopy_diapers
-        below: 1
+      - condition: template
+        value_template: >
+          {% set hours = state_attr('sensor.everly_poopy_diapers', 'hours_since_last_poopy') %}
+          {{ hours is number and hours > now().hour + now().minute / 60 }}
     action:
       - service: notify.mobile_app
         data:
           title: "No Dirty Diaper Today"
           message: >
-            Everly hasn't had a dirty diaper yet today ({{ states('sensor.everly_poopy_diapers') }} so far).
+            Everly hasn't had a dirty diaper yet today. The last one was
+            {{ state_attr('sensor.everly_poopy_diapers', 'hours_since_last_poopy') }} hours ago.
             Last diaper: {{ states('sensor.everly_last_diaper') }} at {{ state_attr('sensor.everly_last_diaper', 'time') }}
           data:
             tag: "daily_dirty_diaper_check"
@@ -1329,15 +1347,8 @@ automation:
     condition:
       - condition: template
         value_template: >
-          {% set last_time_str = state_attr('sensor.everly_last_diaper', 'time') %}
-          {% if last_time_str %}
-            {% set last_time = strptime(last_time_str, '%Y-%m-%d %H:%M:%S') %}
-            {% set hours_ago = (as_timestamp(now()) - as_timestamp(last_time)) / 3600 %}
-            {% set last_status = state_attr('sensor.everly_last_diaper', 'status') %}
-            {{ (last_status in ['Wet', 'Clean']) and hours_ago > 48 }}
-          {% else %}
-            false
-          {% endif %}
+          {% set hours = state_attr('sensor.everly_poopy_diapers', 'hours_since_last_poopy') %}
+          {{ hours is number and hours > 48 }}
     action:
       - service: notify.mobile_app
         data:
@@ -1345,7 +1356,7 @@ automation:
           message: >
             URGENT: Everly hasn't had a dirty diaper in over 48 hours.
 
-            Last dirty diaper: {{ state_attr('sensor.everly_last_diaper', 'time') }}
+            Last dirty diaper: {{ state_attr('sensor.everly_poopy_diapers', 'last_poopy_time') }}
 
             Consider contacting your pediatrician if this continues.
           data:
@@ -1402,4 +1413,10 @@ For issues and feature requests, please submit them through the GitHub repositor
 
 ## Credits
 
-This integration provides a local interface to the Baby Tracker app (https://www.baby-tracker.com/). All trademarks belong to their respective owners.
+This integration provides a local interface to the Baby Tracker app (https://www.baby-tracker.com/). All trademarks belong to their respective owners. It is an independent project and is not affiliated with or endorsed by the makers of Baby Tracker.
+
+The growth percentiles use the [WHO Child Growth Standards](https://www.who.int/tools/child-growth-standards/standards) (2006) for 0 to 24 months, as published by the US CDC. The tables are bundled unmodified in [`custom_components/baby_tracker/client/data`](custom_components/baby_tracker/client/data), which lists their sources.
+
+## License
+
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Isaiah Nicolai. The bundled WHO growth data is not covered by this license: the CDC publishes its copy as US government work (public domain), and the underlying standards are the WHO's.
