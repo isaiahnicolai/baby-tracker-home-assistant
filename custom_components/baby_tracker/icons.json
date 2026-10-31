@@ -12,7 +12,21 @@
       "length_percentile": {"default": "mdi:human-male-height"},
       "head_percentile": {"default": "mdi:head"},
       "weight_gain": {"default": "mdi:trending-up"},
-      "corrected_age": {"default": "mdi:calendar-clock"}
+      "corrected_age": {"default": "mdi:calendar-clock"},
+      "next_breast": {
+        "default": "mdi:human-female",
+        "state": {"left": "mdi:arrow-left-bold-circle-outline", "right": "mdi:arrow-right-bold-circle-outline"}
+      },
+      "next_medicine_dose": {"default": "mdi:pill-clock"},
+      "upcoming_milestones": {"default": "mdi:star-circle-outline"},
+      "upcoming_vaccines": {"default": "mdi:needle"},
+      "next_feed_due": {"default": "mdi:baby-bottle"},
+      "next_feed_baby": {"default": "mdi:account-child"},
+      "last_fed_baby": {"default": "mdi:baby-bottle-outline"},
+      "babies_asleep": {"default": "mdi:sleep"},
+      "feeds_today": {"default": "mdi:counter"},
+      "pending_uploads": {"default": "mdi:cloud-upload-outline"},
+      "pumped_milk_inventory": {"default": "mdi:fridge-outline"}
     },
     "binary_sensor": {
       "feeding_overdue": {"default": "mdi:baby-bottle"},
@@ -37,6 +51,12 @@
       "give_medicine": {"default": "mdi:medical-bag"},
       "sync_now": {"default": "mdi:sync"},
       "force_resync": {"default": "mdi:database-sync"}
+    },
+    "calendar": {
+      "activity_calendar": {"default": "mdi:calendar-heart"}
+    },
+    "event": {
+      "activity": {"default": "mdi:baby-face-outline"}
     }
   },
   "services": {

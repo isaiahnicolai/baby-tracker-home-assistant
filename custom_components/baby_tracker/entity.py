@@ -1,11 +1,48 @@
 """Shared entity identity for Baby Tracker: unique IDs and devices keyed by baby ID."""
 import logging
+from datetime import timedelta
 
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, VERSION
+from .const import CLOCK_TICK_SECONDS, DOMAIN, VERSION
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class ClockTickMixin:
+    """
+    For entities whose state depends on the time of day, not only on the
+    coordinator's data (a prediction coming due, night falling, hours since a
+    feed). Re-evaluates every minute instead of waiting for the next refresh.
+    Put it first in the base classes.
+    """
+
+    async def async_added_to_hass(self):
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_time_interval(self.hass, self._async_clock_tick, timedelta(seconds=CLOCK_TICK_SECONDS)))
+
+    @callback
+    def _async_clock_tick(self, now):
+        self.async_write_ha_state()
+
+
+def hours_since_feeding(coordinator, time_data):
+    """
+    Hours since the last feeding as of now. The client works the figure out
+    when the data is fetched, so the time since then is added to keep it
+    current between refreshes. None when there is no feeding.
+    """
+    hours = (time_data or {}).get("hours_since_last_feeding")
+    if hours is None:
+        return None
+    fetched_at = getattr(coordinator, "fetched_at", None)
+    if fetched_at is not None:
+        hours += max(0.0, (dt_util.utcnow() - fetched_at).total_seconds() / 3600)
+    return hours
 
 
 def baby_unique_id(coordinator, baby_name, suffix):

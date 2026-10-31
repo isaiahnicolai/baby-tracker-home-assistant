@@ -1,6 +1,6 @@
 """The integration inside Home Assistant: setup, entity migration, services, and config flows."""
 import os
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -11,7 +11,7 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_capture_events, async_fire_time_changed
 from pytest_homeassistant_custom_component.components.diagnostics import get_diagnostics_for_config_entry
 
 from custom_components.baby_tracker.client import AuthenticationError
@@ -100,13 +100,33 @@ EVERLY_DATA = {
     "diaper_summary": {"total_diapers": 30, "poopy_count": 5, "mixed_count": 2, "wet_count": 20},
     "daily_summary": {"total_feedings": 6, "diaper_count": 5},
     "sleep_analysis": {"avg_bedtime": "N/A", "avg_wake_time": "N/A", "days_analyzed": 0, "per_day": []},
+    "next_breast": {"next_side": "right", "last_side": "left", "last_type": "nursing",
+                    "last_time": "2026-03-01 08:00:00 +0000"},
+    "next_medicine_dose": {"medicine_name": "Tylenol", "med_id": "MED", "amount": 2.5, "unit": "ml",
+                           "last_given": "2026-03-01 06:00:00 +0000", "interval_minutes": 240,
+                           "next_dose_at": "2026-03-01T10:00:00+00:00"},
+    "upcoming_milestones": [{"id": "MS1", "name": "First smile", "description": "", "for_age": 2},
+                            {"id": "MS2", "name": "Rolls over", "description": "", "for_age": 5}],
+    "upcoming_vaccines": [{"id": "V1", "name": "HepB", "description": "", "for_age": 0}],
 }
+
+# What the coordinator keeps for the account as a whole
+ACCOUNT = {"pumped_milk_inventory": {"ml": 479.1, "pumped_ml": 588.3, "fed_ml": 109.2}, "pending_uploads": 2}
 
 
 def fake_fetch(self, photo_dir):
     babies = [TWIN, EVERLY]
     data = {b.name: {"baby_info": b, **(EVERLY_DATA if b is EVERLY else {"insights": {}})} for b in babies}
-    return babies, EVERLY, {}, data
+    return babies, EVERLY, {}, data, ACCOUNT
+
+
+def fetch_with(**changes):
+    """A fetch like fake_fetch, but with Everly's data changed (as after something new is logged)."""
+    def fetch(self, photo_dir):
+        babies, info, pictures, data, account = fake_fetch(self, photo_dir)
+        data["Everly"] = {**data["Everly"], **changes}
+        return babies, info, pictures, data, account
+    return fetch
 
 
 @pytest.fixture
@@ -473,3 +493,227 @@ async def test_baby_without_a_photo_still_has_an_image_entity(hass, backend):
     await setup(hass, make_entry())
     assert hass.states.get("image.everly_photo").state == "unknown"
     assert hass.states.get("image.ann_marie_photo") is not None
+
+
+def household_fetch(self, photo_dir):
+    """Two babies with data: Ann Marie is due to feed first, Everly was fed last, both are asleep."""
+    twin = {
+        "baby_info": TWIN,
+        "insights": {"next_feed": {"predicted_at": "2026-03-01T11:15:00+00:00"}},
+        "last_feeding": {"time": "2026-03-01 08:00:00 +0000", "type": "Nursing"},
+        "last_sleep": {"time": "2026-03-01 10:45:00 +0000", "is_sleeping": True, "duration": 0},
+        "daily_summary": {"total_feedings": 4},
+    }
+    return [TWIN, EVERLY], EVERLY, {}, {"Ann Marie": twin, "Everly": {"baby_info": EVERLY, **EVERLY_DATA}}, ACCOUNT
+
+
+async def test_household_sensors_look_across_the_babies(hass, backend):
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", household_fetch):
+        await setup(hass, make_entry(unit_system="metric"))
+
+    due = hass.states.get("sensor.baby_tracker_next_feed_due")
+    assert due.state == "2026-03-01T11:15:00+00:00"  # the earlier of 11:15 and Everly's 12:30
+    assert due.attributes["device_class"] == "timestamp"
+    assert due.attributes["baby"] == "Ann Marie"
+    assert due.attributes["predictions"] == {
+        "Ann Marie": "2026-03-01T11:15:00+00:00", "Everly": "2026-03-01T12:30:00+00:00"}
+    assert hass.states.get("sensor.baby_tracker_next_feed_baby").state == "Ann Marie"
+
+    last_fed = hass.states.get("sensor.baby_tracker_last_fed_baby")
+    assert last_fed.state == "Everly"  # fed at 09:30, after Ann Marie's 08:00
+    assert last_fed.attributes["time"] == "2026-03-01T09:30:00+00:00"
+
+    asleep = hass.states.get("sensor.baby_tracker_babies_asleep")
+    assert asleep.state == "2" and sorted(asleep.attributes["babies"]) == ["Ann Marie", "Everly"]
+
+    feeds = hass.states.get("sensor.baby_tracker_feeds_today")
+    assert feeds.state == "10"  # 4 + 6
+    assert feeds.attributes["per_baby"] == {"Ann Marie": 4, "Everly": 6}
+
+    pending = hass.states.get("sensor.baby_tracker_pending_uploads")
+    assert pending.state == "2"
+    ent_reg = er.async_get(hass)
+    assert ent_reg.async_get("sensor.baby_tracker_pending_uploads").entity_category is EntityCategory.DIAGNOSTIC
+
+    # They live on the account's own device, not a baby's
+    device = dr.async_get(hass).async_get(ent_reg.async_get("sensor.baby_tracker_next_feed_due").device_id)
+    assert device.identifiers == {(DOMAIN, f"{EMAIL}_system")}
+
+
+async def test_household_sensors_skip_a_baby_with_no_data(hass, backend):
+    await setup(hass, make_entry())  # fake_fetch: Ann Marie has nothing, Everly's feed is the only prediction
+    assert hass.states.get("sensor.baby_tracker_next_feed_baby").state == "Everly"
+    assert hass.states.get("sensor.baby_tracker_babies_asleep").state == "1"
+    assert hass.states.get("sensor.baby_tracker_feeds_today").state == "6"
+
+
+async def test_pumped_milk_inventory_follows_the_unit_setting(hass, backend):
+    await setup(hass, make_entry(unit_system="metric"))
+    inventory = hass.states.get("sensor.baby_tracker_pumped_milk_inventory")
+    assert inventory.state == "479.1"
+    assert inventory.attributes["unit_of_measurement"] == UnitOfVolume.MILLILITERS
+    assert inventory.attributes["device_class"] == "volume"
+    assert inventory.attributes["pumped_ml"] == 588.3 and inventory.attributes["fed_ml"] == 109.2
+
+
+async def test_pumped_milk_inventory_is_shown_in_ounces_for_imperial(hass, backend):
+    await setup(hass, make_entry(unit_system="imperial"))
+    inventory = hass.states.get("sensor.baby_tracker_pumped_milk_inventory")
+    assert inventory.attributes["unit_of_measurement"] == UnitOfVolume.FLUID_OUNCES
+    assert float(inventory.state) == pytest.approx(16.2, abs=0.05)
+
+
+async def test_derived_sensors(hass, backend):
+    await setup(hass, make_entry())
+
+    breast = hass.states.get("sensor.everly_which_breast_next")
+    assert breast.state == "right" and breast.attributes["device_class"] == "enum"
+    assert breast.attributes["last_side"] == "left" and breast.attributes["last_type"] == "nursing"
+    assert breast.attributes["last_time"] == "2026-03-01T08:00:00+00:00"
+
+    dose = hass.states.get("sensor.everly_next_medicine_dose")
+    assert dose.state == "2026-03-01T10:00:00+00:00" and dose.attributes["device_class"] == "timestamp"
+    assert dose.attributes["medicine_name"] == "Tylenol" and dose.attributes["amount"] == 2.5
+    assert dose.attributes["unit"] == "ml" and dose.attributes["last_given"] == "2026-03-01T06:00:00+00:00"
+
+    milestones = hass.states.get("sensor.everly_upcoming_milestones")
+    assert milestones.state == "First smile"
+    assert milestones.attributes["count"] == 2
+    assert milestones.attributes["upcoming"] == [
+        {"name": "First smile", "for_age_months": 2}, {"name": "Rolls over", "for_age_months": 5}]
+    assert hass.states.get("sensor.everly_upcoming_vaccines").state == "HepB"
+
+    # Nothing known for Ann Marie
+    for entity_id in ("which_breast_next", "next_medicine_dose", "upcoming_milestones", "upcoming_vaccines"):
+        assert hass.states.get(f"sensor.ann_marie_{entity_id}").state == "unknown", entity_id
+
+
+async def test_medicine_without_an_interval_has_no_next_dose(hass, backend):
+    dose = {"medicine_name": "Vitamin D", "amount": 1.0, "unit": "ml", "last_given": "2026-03-01 06:00:00 +0000",
+            "interval_minutes": 0, "next_dose_at": None}
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch_with(next_medicine_dose=dose)):
+        await setup(hass, make_entry())
+    state = hass.states.get("sensor.everly_next_medicine_dose")
+    assert state.state == "unknown" and state.attributes["medicine_name"] == "Vitamin D"
+
+
+async def test_time_based_alerts_follow_the_clock_between_refreshes(hass, backend, freezer):
+    fetches = []
+    last_fed_3h24m_ago = {"hours_since_last_feeding": 3.4, "last_feeding_time": "2026-03-01T09:00:00+00:00",
+                          "time_difference": "3:24:00"}
+    fetch = fetch_with(time_since_last_feeding=last_fed_3h24m_ago)
+
+    def counting_fetch(self, photo_dir):
+        fetches.append(photo_dir)
+        return fetch(self, photo_dir)
+
+    freezer.move_to("2026-03-01 12:20:00+00:00")
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", counting_fetch):
+        await setup(hass, make_entry())
+        assert hass.states.get("binary_sensor.everly_feed_due").state == "off"  # predicted for 12:30
+        assert hass.states.get("binary_sensor.everly_wake_to_feed").state == "off"  # wake by 14:30
+        assert hass.states.get("binary_sensor.everly_feeding_overdue").state == "off"  # 3.4 h, over at 3.5
+        assert hass.states.get("sensor.everly_time_since_last_feeding").state == "204"
+
+        # 11 minutes pass; the 15-minute refresh is not due yet
+        freezer.tick(timedelta(minutes=11))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+
+        assert len(fetches) == 1  # no refresh, yet the alerts and the sensor moved on
+        assert hass.states.get("binary_sensor.everly_feed_due").state == "on"
+        assert hass.states.get("binary_sensor.everly_feeding_overdue").state == "on"
+        assert hass.states.get("binary_sensor.everly_wake_to_feed").state == "off"
+        assert hass.states.get("sensor.everly_time_since_last_feeding").state == "215"
+
+
+async def test_night_mode_turns_on_when_night_falls(hass, backend, freezer):
+    local = dt_util.get_default_time_zone()
+    freezer.move_to(dt_util.as_utc(datetime(2026, 3, 1, 18, 59, tzinfo=local)))
+    await setup(hass, make_entry())
+    assert hass.states.get("binary_sensor.everly_night_mode").state == "off"  # asleep, but it is still day
+
+    freezer.tick(timedelta(minutes=2))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.everly_night_mode").state == "on"
+
+
+@pytest.mark.parametrize(("changes", "event_type"), [
+    ({"last_feeding": {"time": "2026-03-01 12:00:00 +0000", "type": "Pumped"}}, "feeding"),
+    ({"last_diaper": {"time": "2026-03-01 12:00:00 +0000", "status": "Poopy"}}, "diaper"),
+    ({"last_sleep": {"time": "2026-03-01 11:00:00 +0000", "is_sleeping": False, "duration": 50}}, "sleep_end"),
+    ({"last_sleep": {"time": "2026-03-01 12:00:00 +0000", "is_sleeping": True, "duration": 0}}, "sleep_start"),
+    ({"last_bath": {"time": "2026-03-01 12:00:00 +0000", "bath_type": "Bath"}}, "bath"),
+    ({"last_medicine": {"time": "2026-03-01 12:00:00 +0000", "medicine_name": "Tylenol", "amount": 2.5}}, "medicine"),
+])
+async def test_activity_event_fires_when_something_new_is_found(hass, backend, changes, event_type):
+    entry = make_entry()
+    await setup(hass, entry)
+    assert hass.states.get("event.everly_activity").state == "unknown"  # nothing has happened yet
+    bus_events = async_capture_events(hass, f"baby_tracker_{event_type.split('_')[0]}")
+
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch_with(**changes)):
+        await hass.data[DOMAIN][entry.entry_id].async_refresh()
+        await hass.async_block_till_done()
+
+    state = hass.states.get("event.everly_activity")
+    assert state.attributes["event_type"] == event_type
+    assert state.attributes["event_types"] == ["feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine"]
+    assert state.attributes["baby_name"] == "Everly"
+    assert state.attributes["time"] == next(iter(changes.values()))["time"]
+    assert hass.states.get("event.ann_marie_activity").state == "unknown"  # only Everly's changed
+
+    # The bus events are still fired for feedings, diapers and sleeps
+    assert len(bus_events) == (0 if event_type in ("bath", "medicine") else 1)
+
+
+async def test_unchanged_data_fires_no_activity_event(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    await hass.data[DOMAIN][entry.entry_id].async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get("event.everly_activity").state == "unknown"
+
+
+async def test_calendar_returns_a_days_feed_and_sleep(hass, backend):
+    await setup(hass, make_entry())
+    feed = datetime(2026, 3, 1, 9, 30, tzinfo=UTC)
+    nap = datetime(2026, 3, 1, 11, 0, tzinfo=UTC)
+    asked = []
+
+    def get_events(self, baby_id, start, end):
+        asked.append(baby_id)
+        return [
+            {"start": feed, "end": feed + timedelta(minutes=15), "summary": "Formula 4 oz",
+             "kind": "feeding", "description": ""},
+            {"start": nap, "end": nap + timedelta(minutes=80), "summary": "Sleep (1h 20m)",
+             "kind": "sleep", "description": "Crib"},
+        ]
+
+    with patch(f"{CORE}.get_events_between", get_events):
+        result = await hass.services.async_call(
+            "calendar", "get_events",
+            {"entity_id": "calendar.everly_calendar",
+             "start_date_time": "2026-03-01T00:00:00+00:00", "end_date_time": "2026-03-02T00:00:00+00:00"},
+            blocking=True, return_response=True)
+
+    assert asked == ["ID-EVERLY"]
+    events = result["calendar.everly_calendar"]["events"]
+    assert [e["summary"] for e in events] == ["Formula 4 oz", "Sleep (1h 20m)"]
+    assert events[1]["description"] == "Crib"
+    assert hass.states.get("calendar.ann_marie_calendar") is not None
+
+
+async def test_calendars_current_event_is_the_most_recent_one(hass, backend, freezer):
+    freezer.move_to("2026-03-01 12:00:00+00:00")
+    nap = datetime(2026, 3, 1, 11, 0, tzinfo=UTC)
+    latest = {"start": nap, "end": nap + timedelta(minutes=80), "summary": "Sleep (1h 20m)",
+              "kind": "sleep", "description": ""}
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch_with(last_event=latest)):
+        await setup(hass, make_entry())
+
+    calendar = hass.states.get("calendar.everly_calendar")
+    assert calendar.state == "on"  # the nap runs until 12:20
+    assert calendar.attributes["message"] == "Sleep (1h 20m)"
+    assert hass.states.get("calendar.ann_marie_calendar").state == "off"
