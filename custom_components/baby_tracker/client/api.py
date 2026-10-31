@@ -830,6 +830,30 @@ class BabyTrackerAPI:
         except Exception:
             return f"op={item.get('OPCode')} undecodable"
 
+    def _note_own_upload(self, sync_id):
+        """
+        Step our own device's merge progress past a transaction the server just accepted.
+
+        Our own device is downloaded like any other (see sync_transactions), and its
+        progress only moves when it downloads. So without this, every upload is fetched
+        back on the next sync and merged a second time - which would put back a record
+        another device has deleted since (the insert is older than the delete, but the
+        delete left nothing to compare it with). The SyncID is ours to choose and the POST
+        answers with just a status, so we know exactly what the server now holds for us:
+        if we had already merged everything it held before, we have merged this too.
+        """
+        own = next((d for d in self.devices or [] if d.get("DeviceUUID") == self.device_uuid), None)
+        server_last = (own or {}).get("LastSyncID", 0) or 0
+        try:
+            merged = self.get_local_device_sync_info().get(self.device_uuid, {}).get("last_sync_id") or 0
+            if merged >= server_last and sync_id > merged:
+                self.update_device_sync_info(self.device_uuid, sync_id)
+        except Exception as e:
+            # Worst case the upload is merged again by the next sync, as before
+            _LOGGER.debug(f"Could not record own upload {sync_id} as merged: {e}")
+        if own is not None:
+            own["LastSyncID"] = max(server_last, sync_id)
+
     def upload_pending(self):
         """
         Upload queued transactions in order (Android startUploadTransactionImpl).
@@ -858,6 +882,7 @@ class BabyTrackerAPI:
             if response.status_code not in [200, 201]:
                 raise Exception(f"Upload of sync ID {sync_id} failed: {response.status_code} - {response.text[:200]}")
             self.local_db.delete_pending_transaction(sync_id)
+            self._note_own_upload(sync_id)
             uploaded += 1
         if uploaded:
             _LOGGER.info(f"Uploaded {uploaded} transaction(s)")

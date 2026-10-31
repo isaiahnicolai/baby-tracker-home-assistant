@@ -205,3 +205,14 @@ def test_a_sleep_in_progress_runs_until_now(apply, tracker):
     events = tracker.get_events_between(EVERLY, start - timedelta(hours=1), start + timedelta(days=1))
     assert [e["summary"] for e in events] == ["Sleep (in progress)"]
     assert events[0]["end"] - events[0]["start"] >= timedelta(hours=2)
+
+
+def test_an_old_unended_sleep_is_not_shown_as_in_progress(apply, tracker):
+    stray = datetime.now(UTC) - timedelta(days=5)
+    apply(record("Sleep", "STRAY", stray.strftime("%Y-%m-%d %H:%M:%S"), duration=0))
+    # A range after it started: not carried forward as an ever-running event
+    assert tracker.get_events_between(EVERLY, stray + timedelta(hours=1), datetime.now(UTC) + timedelta(days=1)) == []
+    # In its own range it is just a short event
+    events = tracker.get_events_between(EVERLY, stray - timedelta(hours=1), stray + timedelta(hours=1))
+    assert [e["summary"] for e in events] == ["Sleep (never ended)"]
+    assert events[0]["end"] - events[0]["start"] == timedelta(minutes=1)

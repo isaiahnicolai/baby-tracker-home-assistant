@@ -362,6 +362,9 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
             key: value.isoformat() if isinstance(value, datetime) else value for key, value in sync_result.items()
         }
         self.pending_uploads = tracker.pending_upload_count()
+        if not tracker.is_authenticated:
+            # The tracker lost its session (a failed force resync): authenticate again next refresh
+            self.authenticated = False
         if sync_result.get("status") != "success":
             raise UpdateFailed(f"Sync failed: {sync_result.get('message')}")
 

@@ -9,7 +9,7 @@ import zipfile
 
 import pytest
 
-from babytracker_client import AccountResetError, BabyTrackerAPI, BabyTrackerLocalDatabase
+from babytracker_client import AccountResetError, AuthenticationError, BabyTrackerAPI, BabyTrackerLocalDatabase
 from helpers import EMAIL, EVERLY, IPHONE, MILESTONE, OURS, TWIN, b64, unb64
 from test_sync import baby, diaper, merge
 
@@ -209,6 +209,51 @@ def test_force_resync_rejoins_a_reset_group(tracker, server, app_db):
 
     assert result["status"] == "success"
     assert tracker.db.get_account_id() == "2"
+
+
+def test_a_failed_force_resync_is_recovered_by_the_next_sync(tracker, server, app_db, monkeypatch):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.write(app_db, "EasyLog.db")
+    server.seed = buf.getvalue()
+    real_join = tracker.api.join_group
+
+    def failing_join(*args, **kwargs):
+        raise RuntimeError("server unreachable")
+
+    monkeypatch.setattr(tracker.api, "join_group", failing_join)
+    assert tracker.force_resync(EMAIL, "pw", OURS)["status"] == "error"
+    assert not tracker.is_authenticated
+
+    # The database is gone and we're signed out, but the next sync signs in and rejoins by itself
+    monkeypatch.setattr(tracker.api, "join_group", real_join)
+    result = tracker.sync()
+
+    assert result["status"] == "success"
+    assert tracker.is_authenticated
+    assert tracker.get_all_babies()
+
+
+def test_sync_signs_in_again_and_rejected_credentials_surface(tracker, server):
+    tracker.is_authenticated = False
+    server.reject_login = True
+    with pytest.raises(AuthenticationError):
+        tracker.sync()
+
+
+def test_a_failed_upload_does_not_fail_the_sync(tracker, server, monkeypatch):
+    server.publish(IPHONE, [diaper("FROM-PHONE")])
+    tracker.add_diaper(EVERLY, None)
+
+    def refuse(*args, **kwargs):
+        raise Exception("Upload of sync ID 44 failed: 500")
+
+    monkeypatch.setattr(tracker.api, "upload_pending", refuse)
+    result = tracker.sync()
+
+    assert result["status"] == "success"
+    assert "500" in result["upload_error"]
+    assert result["synced_transactions"] == 1
 
 
 def test_the_first_login_records_the_account(tracker):

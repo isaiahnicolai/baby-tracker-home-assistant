@@ -10,6 +10,10 @@ from dateutil import parser
 
 _LOGGER = logging.getLogger(__name__)
 
+# A sleep with Duration 0 is "in progress" - but only for this long. An older one was never
+# ended (forgotten, or its end was lost) and must not be shown as running forever.
+IN_PROGRESS_SLEEP_SECONDS = 24 * 3600
+
 class BabyTrackerLocalDatabase:
     """
     Local SQLite database for Baby Tracker, focusing on baby info, diapers, and feedings
@@ -3156,14 +3160,21 @@ class BabyTrackerLocalDatabase:
                                "WHERE BabyID = ? AND Time >= ? AND Time < ?", window)
                 for time, value, english, note in cursor.fetchall():
                     add("feeding", time, f"{label} {amount(value, english)}" if value else label, note)
-            # A sleep that began before the range still counts while it runs into it
+            # A sleep that began before the range still counts while it runs into it. One with
+            # no duration is "in progress" only for a day; an older one was never ended, and
+            # is just shown where it started
+            recent = now - IN_PROGRESS_SLEEP_SECONDS
             cursor.execute("SELECT Time, Duration, Note FROM Sleep WHERE BabyID = ? AND Time < ? "
-                           "AND (COALESCE(Duration, 0) = 0 OR Time + Duration * 60 > ?)", (baby_id, end, start))
+                           "AND ((COALESCE(Duration, 0) = 0 AND (Time >= ? OR Time > ?)) "
+                           "OR Time + Duration * 60 > ?)", (baby_id, end, start, recent, start))
             for time, minutes, note in cursor.fetchall():
                 if minutes:
                     add("sleep", time, f"Sleep ({minutes // 60}h {minutes % 60}m)", note, minutes * 60)
-                elif now > start:  # still asleep
-                    add("sleep", time, "Sleep (in progress)", note, max(now - time, short))
+                elif time > recent:
+                    if now > start:  # still asleep
+                        add("sleep", time, "Sleep (in progress)", note, max(now - time, short))
+                else:
+                    add("sleep", time, "Sleep (never ended)", note, 60)
             cursor.execute("SELECT b.Time, d.Name, b.Note FROM Bath b LEFT JOIN BathDesc d ON b.DescID = d.ID "
                            "WHERE b.BabyID = ? AND b.Time >= ? AND b.Time < ?", window)
             for time, name, note in cursor.fetchall():
