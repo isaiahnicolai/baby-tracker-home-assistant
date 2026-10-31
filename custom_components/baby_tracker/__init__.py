@@ -4,35 +4,25 @@ import os
 import uuid
 from datetime import timedelta
 
-import voluptuous as vol
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 import homeassistant.helpers.config_validation as cv
 
 from .const import (
     DOMAIN, CONF_EMAIL, CONF_PASSWORD, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, CONF_DEVICE_UUID,
+    CONF_UNIT_SYSTEM, DEFAULT_UNIT_SYSTEM,
     EVENT_FEEDING, EVENT_DIAPER, EVENT_SLEEP,
 )
+from .api import AuthenticationError
 from .baby_tracker import BabyTracker
+from .entity import migrate_to_baby_ids
 from .services import async_register_services, async_unregister_services
 
 _LOGGER = logging.getLogger(__name__)
 
-CONFIG_SCHEMA = vol.Schema(
-    {
-        DOMAIN: vol.Schema(
-            {
-                vol.Required(CONF_EMAIL): cv.string,
-                vol.Required(CONF_PASSWORD): cv.string,
-                vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): cv.positive_int,
-            }
-        )
-    },
-    extra=vol.ALLOW_EXTRA,
-)
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 PLATFORMS = ["sensor", "button", "binary_sensor"]
 
@@ -40,16 +30,12 @@ PLATFORMS = ["sensor", "button", "binary_sensor"]
 async def async_setup(hass: HomeAssistant, config: dict):
     """Set up the Baby Tracker component."""
     hass.data.setdefault(DOMAIN, {})
-    
-    if DOMAIN not in config:
-        return True
-        
-    hass.data[DOMAIN]["config"] = config[DOMAIN]
-    
-    # Register services
-    await async_register_services(hass)
-    
     return True
+
+
+def get_option(entry: ConfigEntry, key, default):
+    """A setting from the options flow, falling back to the original setup data."""
+    return entry.options.get(key, entry.data.get(key, default))
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
@@ -77,16 +63,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         password=config[CONF_PASSWORD],
         device_uuid=device_uuid,
         db_path=db_path,
-        scan_interval=timedelta(minutes=config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)),
+        scan_interval=timedelta(minutes=get_option(entry, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)),
+        entry=entry,
     )
 
-    # Fetch initial data
-    await coordinator.async_refresh()
+    # Raises ConfigEntryNotReady (retry later) or ConfigEntryAuthFailed (re-login)
+    await coordinator.async_config_entry_first_refresh()
 
-    if not coordinator.last_update_success:
-        raise ConfigEntryNotReady
+    # Entities used to be keyed by baby name; re-key them by baby ID before
+    # the platforms create them, so existing entity IDs are kept
+    migrate_to_baby_ids(hass, entry, coordinator.email, coordinator.data.get("babies") or [])
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
+
+    # Settings changed in the options flow take effect on reload
+    entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
+    # A baby added or renamed in the app needs its entities created/renamed
+    coordinator.check_babies_changed()  # record the babies the entities are created for
+    entry.async_on_unload(coordinator.async_add_listener(coordinator.check_babies_changed))
 
     # Register services (will only register once even if multiple entries exist)
     await async_register_services(hass)
@@ -111,6 +105,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     return unload_ok
 
 
+async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry):
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Delete the local database when the integration is removed (not on reload)."""
     db_path = os.path.join(hass.config.path(), "baby_tracker.db")
@@ -129,15 +127,18 @@ def _remove_database(db_path):
 class BabyTrackerDataCoordinator(DataUpdateCoordinator):
     """Data update coordinator for Baby Tracker."""
 
-    def __init__(self, hass, email, password, device_uuid, db_path, scan_interval):
+    def __init__(self, hass, email, password, device_uuid, db_path, scan_interval, entry):
         """Initialize the coordinator."""
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=DOMAIN,
             update_interval=scan_interval,
         )
-        
+        self.unit_system = get_option(entry, CONF_UNIT_SYSTEM, DEFAULT_UNIT_SYSTEM)
+        self._baby_ids = None  # {name: id} the entities were created with
+
         # Create Baby Tracker instance
         self.baby_tracker = BabyTracker(
             db_path=db_path,
@@ -152,6 +153,23 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         self._alert_entities = []
         self._previous_data = None  # None until the first refresh, so startup fires no events
         _LOGGER.info(f"Initialized Baby Tracker coordinator with database at: {db_path}")
+
+    def baby_id_for(self, baby_name):
+        """The ID of the baby with this name (entities are created per baby name)."""
+        for baby in (self.data or {}).get("babies") or []:
+            if baby.name == baby_name:
+                return baby.object_id
+        raise ValueError(f"Unknown baby: {baby_name}")
+
+    def check_babies_changed(self):
+        """Reload when the app's babies change, so entities match them."""
+        babies = {b.name: b.object_id for b in (self.data or {}).get("babies") or []}
+        if self._baby_ids is None:
+            self._baby_ids = babies
+        elif babies and babies != self._baby_ids:
+            _LOGGER.info("Babies changed in Baby Tracker; reloading to update entities")
+            self._baby_ids = babies
+            self.hass.async_create_task(self.hass.config_entries.async_reload(self.config_entry.entry_id))
 
     def _fetch(self, www_dir):
         """
@@ -214,7 +232,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 if auth_result.get("status") != "success":
                     raise UpdateFailed(f"Authentication failed: {auth_result.get('message')}")
                 self.authenticated = True
-            
+
             all_babies, baby_info, baby_pictures, baby_data = await self.hass.async_add_executor_job(
                 self._fetch, self.hass.config.path("www", "baby_tracker")
             )
@@ -301,6 +319,10 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                     "baby_pictures": {},
                     "baby_info": baby_info
                 }
+        except AuthenticationError as err:
+            # Credentials rejected: ask the user to log in again
+            self.authenticated = False
+            raise ConfigEntryAuthFailed(str(err)) from err
         except UpdateFailed:
             raise
         except Exception as err:

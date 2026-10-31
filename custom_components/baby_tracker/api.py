@@ -50,6 +50,10 @@ PAGE_SIZE = 500  # the server returns at most this many transactions per request
 MAX_MERGE_ATTEMPTS = 3  # syncs to retry a transaction that fails to apply before skipping it
 USER_AGENT = "Dalvik/2.1.0 (Linux; U; Android 13; sdk_gphone_x86_64 Build/TE1A.220922.034)"
 
+class AuthenticationError(Exception):
+    """The server rejected the email/password (or the password was changed)."""
+
+
 class BabyTrackerAPI:
     """
     Python wrapper for the Baby Tracker API.
@@ -115,6 +119,10 @@ class BabyTrackerAPI:
             timeout=REQUEST_TIMEOUT
         )
 
+        # As SyncImple.login: 400/401 are bad credentials, 307 means the
+        # password was changed on another device
+        if response.status_code in (400, 401, 307):
+            raise AuthenticationError(f"Login rejected ({response.status_code})")
         if response.status_code not in [200, 201]:
             raise Exception(f"Login failed with status code {response.status_code}: {response.text}")
         
@@ -576,6 +584,8 @@ class BabyTrackerAPI:
                 "baby_info": baby_info
             }
             
+        except AuthenticationError:
+            raise
         except Exception as e:
             _LOGGER.error(f"Error joining group: {e}")
             return {"status": "error", "message": f"Failed to join group: {str(e)}"}

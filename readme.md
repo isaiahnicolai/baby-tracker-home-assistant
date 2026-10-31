@@ -19,7 +19,7 @@ This custom component integrates the Baby Tracker app data with Home Assistant, 
 2. Go to "Integrations"
 3. Click the three dots in the top right corner
 4. Select "Custom repositories"
-5. Add the URL: `https://github.com/yourusername/home-assistant-baby-tracker`
+5. Add the URL: `https://github.com/isaiahnicolai/baby-tracker-home-assistant`
 6. Select "Integration" as the category
 7. Click "Add"
 8. Find and install "Baby Tracker" in HACS
@@ -27,9 +27,14 @@ This custom component integrates the Baby Tracker app data with Home Assistant, 
 ### Manual Installation
 
 1. Download the latest release from this repository
-2. Create a folder called `baby_tracker` in your `/config/custom_components/` directory
-3. Copy all files from this repository into that folder
-4. Restart Home Assistant
+2. Copy the `custom_components/baby_tracker` folder into your `/config/custom_components/` directory (so you end up with `/config/custom_components/baby_tracker/manifest.json`)
+3. Restart Home Assistant
+
+Requires Home Assistant 2024.12 or newer.
+
+### Two or more babies
+
+Each baby gets its own device with its own sensors and buttons (for example "Add Wet Diaper", "Add Dirty Diaper" and "Add Mixed Diaper"). When calling a service yourself, choose the baby with the **Baby** device picker or `baby_name`; one of them is required when the account has more than one baby. Pump sessions belong to the account rather than a baby.
 
 ## Configuration
 

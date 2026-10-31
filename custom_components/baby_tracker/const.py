@@ -1,6 +1,7 @@
 """Constants for the Baby Tracker integration."""
 
 DOMAIN = "baby_tracker"
+VERSION = "0.2.0"  # keep in sync with manifest.json
 
 # Configuration
 CONF_EMAIL = "email"

@@ -1,0 +1,43 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Baby Tracker",
+        "description": "Enter your Baby Tracker sync account. Home Assistant joins it as its own device.",
+        "data": {
+          "email": "Email",
+          "password": "Password",
+          "scan_interval": "Update interval (minutes)",
+          "unit_system": "Units"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Log in to Baby Tracker again",
+        "description": "Baby Tracker rejected the saved password for {email}. It may have been changed in the app.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "invalid_auth": "Invalid email or password",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This Baby Tracker account is already configured",
+      "reauth_successful": "Logged in again"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Baby Tracker options",
+        "data": {
+          "scan_interval": "Update interval (minutes)",
+          "unit_system": "Units"
+        }
+      }
+    }
+  }
+}

@@ -6,6 +6,7 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 
 from .const import (
     DOMAIN,
@@ -24,6 +25,7 @@ _LOGGER = logging.getLogger(__name__)
 # Service schemas
 DIAPER_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
     vol.Optional("pee", default=True): cv.boolean,
     vol.Optional("poo", default=False): cv.boolean,
     # 5 = "not set", as the app uses when no color/texture is recorded
@@ -36,6 +38,7 @@ DIAPER_SCHEMA = vol.Schema({
 
 NURSING_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
     vol.Optional("left_duration", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=120)),
     vol.Optional("right_duration", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=120)),
     vol.Optional("both_duration", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=120)),
@@ -45,6 +48,7 @@ NURSING_SCHEMA = vol.Schema({
 
 FORMULA_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
     vol.Required("amount"): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional("is_english_measure"): cv.boolean,
     vol.Optional("note", default=""): cv.string,
@@ -52,6 +56,7 @@ FORMULA_SCHEMA = vol.Schema({
 
 PUMPED_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
     vol.Required("amount"): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional("is_english_measure"): cv.boolean,
     vol.Optional("note", default=""): cv.string,
@@ -59,6 +64,7 @@ PUMPED_SCHEMA = vol.Schema({
 
 TEMPERATURE_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
     vol.Required("temperature"): vol.All(vol.Coerce(float)),
     vol.Optional("is_fahrenheit", default=True): cv.boolean,
     vol.Optional("note", default=""): cv.string,
@@ -66,12 +72,14 @@ TEMPERATURE_SCHEMA = vol.Schema({
 
 BATH_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
     vol.Optional("bath_type"): vol.Any(None, vol.In(["Bubble Bath", "Sponge Bath", "Shower", "Washed Hair"])),
     vol.Optional("note", default=""): cv.string,
 })
 
 PUMP_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
     vol.Optional("left_duration", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=120)),
     vol.Optional("right_duration", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=120)),
     vol.Optional("left_amount", default=0): vol.All(vol.Coerce(float), vol.Range(min=0)),
@@ -82,6 +90,7 @@ PUMP_SCHEMA = vol.Schema({
 
 MEDICINE_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
     vol.Required("medicine_name"): cv.string,
     vol.Required("amount"): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional("note", default=""): cv.string,
@@ -89,12 +98,14 @@ MEDICINE_SCHEMA = vol.Schema({
 
 SLEEP_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
     vol.Required("is_start"): cv.boolean,
     vol.Optional("note", default=""): cv.string,
 })
 
 GROWTH_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
     vol.Optional("weight", default=0): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional("length", default=0): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional("head", default=0): vol.All(vol.Coerce(float), vol.Range(min=0)),
@@ -105,12 +116,14 @@ GROWTH_SCHEMA = vol.Schema({
 
 MILESTONE_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
     vol.Required("milestone_name"): cv.string,
     vol.Optional("note", default=""): cv.string,
 })
 
 DOCTOR_VISIT_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
     vol.Optional("is_appointment", default=True): cv.boolean,
     vol.Optional("visit_type", default=0): vol.All(vol.Coerce(int), vol.Range(min=0)),
     vol.Optional("note", default=""): cv.string,
@@ -120,6 +133,7 @@ DOCTOR_VISIT_SCHEMA = vol.Schema({
 
 VACCINE_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
     vol.Required("vaccine_name"): cv.string,
     vol.Optional("note", default=""): cv.string,
 })
@@ -156,7 +170,20 @@ async def async_register_services(hass: HomeAssistant):
         return
 
     async def _get_baby_id(coordinator, data):
-        """Resolve the target baby from baby_name, or the only baby if there is one."""
+        """
+        Resolve the target baby: a Baby Tracker device picked in the UI,
+        baby_name, or the only baby if there is just one.
+        """
+        if data.get("device_id"):
+            device = dr.async_get(hass).async_get(data["device_id"])
+            prefix = f"{coordinator.email}_"
+            for domain, identifier in (device.identifiers if device else ()):
+                if domain == DOMAIN and identifier.startswith(prefix):
+                    baby_id = identifier[len(prefix):]
+                    if any(b.object_id == baby_id for b in (coordinator.data or {}).get("babies") or []):
+                        return baby_id
+            raise ServiceValidationError("That device isn't one of your Baby Tracker babies")
+
         baby_name = data.get("baby_name")
 
         if baby_name:
@@ -184,11 +211,11 @@ async def async_register_services(hass: HomeAssistant):
             raise HomeAssistantError(f"Failed to {what}: {message or 'unknown error'}")
 
     def _get_unit_system_from_config():
-        """Get the configured unit system (imperial or metric)."""
-        for entry_id, entry_data in hass.data[DOMAIN].items():
-            if entry_id != "config" and hasattr(entry_data, "config_entry"):
-                return entry_data.config_entry.data.get(CONF_UNIT_SYSTEM, DEFAULT_UNIT_SYSTEM)
-        return DEFAULT_UNIT_SYSTEM
+        """Get the configured unit system (imperial or metric), honouring the options flow."""
+        try:
+            return _get_coordinator(hass).unit_system
+        except ValueError:
+            return DEFAULT_UNIT_SYSTEM
 
     def _is_imperial_config():
         """Check if the configured unit system is imperial (oz, lbs, F)."""
@@ -774,6 +801,7 @@ async def async_register_services(hass: HomeAssistant):
     # Register quick action services
     QUICK_BOTTLE_SCHEMA = vol.Schema({
         vol.Optional("baby_name"): cv.string,
+        vol.Optional("device_id"): cv.string,
         vol.Optional("note"): cv.string,
     })
 

@@ -10,6 +10,13 @@ add_diaper:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     pee:
       name: Pee
       description: Whether the diaper was wet
@@ -40,6 +47,13 @@ add_nursing:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     left_duration:
       name: Left Duration
       description: Duration on left side (minutes)
@@ -98,6 +112,13 @@ add_formula:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     amount:
       name: Amount
       description: Amount in ml (or oz if is_english_measure is true)
@@ -129,6 +150,13 @@ add_pumped:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     amount:
       name: Amount
       description: Amount in ml (or oz if is_english_measure is true)
@@ -160,6 +188,13 @@ add_temperature:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     temperature:
       name: Temperature
       description: Temperature value
@@ -193,6 +228,13 @@ log_bath:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     bath_type:
       name: Bath Type
       description: Type of bath (optional)
@@ -285,6 +327,13 @@ log_medicine:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     medicine_name:
       name: Medicine Name
       description: Name of the medicine (e.g., "Gas Drops", "Gripe Water", "Vitamin D")
@@ -318,6 +367,13 @@ log_growth:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     weight:
       name: Weight
       description: Weight measurement (lbs or kg depending on scale setting)
@@ -379,6 +435,13 @@ log_milestone:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     milestone_name:
       name: Milestone Name
       description: Name of the milestone (e.g., "First smile", "Raise head", "First laugh")
@@ -403,6 +466,13 @@ log_doctor_visit:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     is_appointment:
       name: Is Appointment
       description: Whether this is a scheduled appointment (vs sick visit)
@@ -448,6 +518,13 @@ log_vaccine:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     vaccine_name:
       name: Vaccine Name
       description: Name of the vaccine (e.g., "HepB", "DTaP", "MMR")
@@ -483,6 +560,13 @@ add_4oz_bottle:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     note:
       name: Note
       description: Optional note for this record
@@ -500,6 +584,13 @@ add_6oz_bottle:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     note:
       name: Note
       description: Optional note for this record
@@ -517,6 +608,13 @@ add_8oz_bottle:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     note:
       name: Note
       description: Optional note for this record
@@ -534,6 +632,13 @@ add_small_bottle:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     note:
       name: Note
       description: Optional note for this record
@@ -551,6 +656,13 @@ add_medium_bottle:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     note:
       name: Note
       description: Optional note for this record
@@ -568,6 +680,13 @@ add_large_bottle:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     note:
       name: Note
       description: Optional note for this record
@@ -585,6 +704,13 @@ add_xlarge_bottle:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     note:
       name: Note
       description: Optional note for this record
@@ -602,6 +728,13 @@ log_sleep:
       required: false
       selector:
         text:
+    device_id:
+      name: Baby
+      description: The baby's Baby Tracker device (instead of Baby Name)
+      required: false
+      selector:
+        device:
+          integration: baby_tracker
     is_start:
       name: Is Start
       description: Whether this is starting sleep (true) or ending/waking up (false)
