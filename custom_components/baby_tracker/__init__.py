@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -34,6 +35,8 @@ from .const import (
     ISSUE_ACCOUNT_RESET,
     ISSUE_OLD_WWW_FOLDER,
     ISSUE_UPLOADS_PENDING,
+    NURSING_STORE_VERSION,
+    NURSING_TIMER_MAX_AGE_HOURS,
     PHOTO_DIR_NAME,
     UPLOADS_PENDING_REFRESHES,
     activity_signal,
@@ -90,6 +93,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     else:
         ir.async_delete_issue(hass, DOMAIN, ISSUE_OLD_WWW_FOLDER)
 
+    # A nursing session timed before a restart or reload carries on
+    await coordinator.async_load_nursing()
+
     # Raises ConfigEntryNotReady (retry later) or ConfigEntryAuthFailed (re-login)
     await coordinator.async_config_entry_first_refresh()
 
@@ -140,7 +146,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        await coordinator.async_save_nursing()
 
         # If this is the last entry, unregister services
         if not any(entry_id != "config" for entry_id in hass.data[DOMAIN]):
@@ -157,6 +164,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Delete the local database when the integration is removed (not on reload)."""
     db_path = os.path.join(hass.config.path(), "baby_tracker.db")
     await hass.async_add_executor_job(_remove_database, db_path)
+    await Store(hass, NURSING_STORE_VERSION, f"{DOMAIN}.{entry.entry_id}.nursing").async_remove()
     for issue_id in (ISSUE_OLD_WWW_FOLDER, ISSUE_UPLOADS_PENDING, ISSUE_ACCOUNT_RESET):
         ir.async_delete_issue(hass, DOMAIN, issue_id)
 
@@ -210,9 +218,12 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         # What the number/select entities are set to, by baby ID: bottle_size, bottle_type,
         # medicine, medicine_amount and tummy_time_minutes. The buttons read them.
         self.controls = {}
-        # Running nursing timers by baby ID (kept here, not in the app's database)
+        # Running nursing timers by baby ID (not in the app's database; kept in HA's storage so a
+        # restart or reload doesn't lose a session in progress)
         self.nursing_timers = {}
-        self._button_presses = {}  # when each button was last pressed (monotonic seconds)
+        self._nursing_store = Store(hass, NURSING_STORE_VERSION, f"{DOMAIN}.{entry.entry_id}.nursing")
+        self._button_presses = {}  # when each button last finished successfully (monotonic seconds)
+        self._pressing = set()  # buttons being handled right now
         _LOGGER.info(f"Initialized Baby Tracker coordinator with database at: {db_path}")
 
     # ----- per-baby controls -----
@@ -239,16 +250,25 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
 
     def is_repeat_press(self, key):
         """
-        True if this button was pressed less than BUTTON_DEBOUNCE_SECONDS ago, so a
-        double tap (or an automation firing twice) doesn't log a record twice.
+        True if this button is still being handled, or was pressed successfully less than
+        BUTTON_DEBOUNCE_SECONDS ago, so a double tap (or an automation firing twice)
+        doesn't log a record twice. A press that goes ahead must be closed with finish_press.
         """
-        now = time.monotonic()
         last = self._button_presses.get(key)
-        if last is not None and now - last < BUTTON_DEBOUNCE_SECONDS:
+        if key in self._pressing or (last is not None and time.monotonic() - last < BUTTON_DEBOUNCE_SECONDS):
             _LOGGER.info("Ignoring a repeat press of %s within %s seconds", key, BUTTON_DEBOUNCE_SECONDS)
             return True
-        self._button_presses[key] = now
+        self._pressing.add(key)
         return False
+
+    def finish_press(self, key, succeeded):
+        """
+        A press that is_repeat_press let through is over. Only one that worked starts the
+        debounce window: after a failure the user can press again straight away.
+        """
+        self._pressing.discard(key)
+        if succeeded:
+            self._button_presses[key] = time.monotonic()
 
     # ----- nursing timer -----
 
@@ -270,7 +290,48 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
             timer.update(side=side, segment_started_at=now)
         else:
             return
+        self._save_nursing()
         self.async_update_listeners()
+
+    def _nursing_payload(self):
+        """The running timers as storable data (times as text)."""
+        return {
+            baby_id: {
+                "side": timer["side"],
+                "started_at": timer["started_at"].isoformat(),
+                "segment_started_at": timer["segment_started_at"].isoformat(),
+                "seconds": timer["seconds"],
+            }
+            for baby_id, timer in self.nursing_timers.items()
+        }
+
+    def _save_nursing(self):
+        """Save the timers soon (a start, switch or end is rare enough to write straight away)."""
+        self._nursing_store.async_delay_save(self._nursing_payload, 0)
+
+    async def async_save_nursing(self):
+        """Save the timers now (before an unload or reload)."""
+        await self._nursing_store.async_save(self._nursing_payload())
+
+    async def async_load_nursing(self):
+        """Pick up the timers that were running before a restart or reload."""
+        try:
+            stored = await self._nursing_store.async_load() or {}
+            cutoff = dt_util.utcnow() - timedelta(hours=NURSING_TIMER_MAX_AGE_HOURS)
+            timers = {}
+            for baby_id, timer in stored.items():
+                started_at = dt_util.parse_datetime(timer["started_at"])
+                segment_started_at = dt_util.parse_datetime(timer["segment_started_at"])
+                if started_at is None or segment_started_at is None or started_at < cutoff:
+                    continue
+                timers[baby_id] = {
+                    "side": timer["side"], "started_at": started_at, "segment_started_at": segment_started_at,
+                    "seconds": {"left": float(timer["seconds"]["left"]), "right": float(timer["seconds"]["right"])},
+                }
+        except (AttributeError, KeyError, TypeError, ValueError) as err:
+            _LOGGER.warning("Ignoring the saved nursing timers, which could not be read: %s", err)
+            return
+        self.nursing_timers = timers
 
     def nursing_totals(self, baby_id):
         """
@@ -290,6 +351,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
 
     def clear_nursing(self, baby_id):
         if self.nursing_timers.pop(baby_id, None) is not None:
+            self._save_nursing()
             self.async_update_listeners()
 
     # ----- repairs -----

@@ -89,7 +89,13 @@ class BabyTrackerButton(CoordinatorEntity, ButtonEntity):
         """Handle button press."""
         if self.coordinator.is_repeat_press(self.unique_id):
             return
-        await self._press()
+        try:
+            await self._press()
+        except BaseException:
+            # A press that failed isn't debounced: the user can try again at once
+            self.coordinator.finish_press(self.unique_id, succeeded=False)
+            raise
+        self.coordinator.finish_press(self.unique_id, succeeded=True)
 
     async def _press(self) -> None:
         raise NotImplementedError

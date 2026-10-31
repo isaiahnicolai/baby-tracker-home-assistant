@@ -147,6 +147,14 @@ BOTTLE_TYPE_PUMPED = "pumped"
 # A second press of the same button within this many seconds is ignored
 BUTTON_DEBOUNCE_SECONDS = 3
 
+# Running nursing timers are saved (helpers.storage) so they survive a restart or reload;
+# one started longer ago than this was forgotten, and is dropped when loaded
+NURSING_STORE_VERSION = 1
+NURSING_TIMER_MAX_AGE_HOURS = 24
+
+# A temperature reading older than this no longer counts towards the fever alert
+FEVER_WINDOW_HOURS = 24
+
 # Repairs (see strings.json "issues")
 ISSUE_OLD_WWW_FOLDER = "old_www_folder"
 ISSUE_UPLOADS_PENDING = "uploads_pending"

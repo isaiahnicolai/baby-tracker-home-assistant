@@ -1196,3 +1196,64 @@ async def test_a_reset_account_raises_a_repair_until_a_sync_succeeds(hass, backe
     await coordinator.async_refresh()  # a sync that works again (the fixture's fetch)
     assert coordinator.last_update_success
     assert registry.async_get_issue(DOMAIN, "account_reset") is None
+
+
+# ----- review fixes -----
+
+async def test_a_running_nursing_timer_survives_a_reload(hass, backend, freezer):
+    entry = make_entry()
+    await setup(hass, entry)
+    started = dt_util.utcnow()
+    await press(hass, "button.everly_start_nursing_left")
+    freezer.tick(timedelta(minutes=8))
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    timer = hass.states.get("binary_sensor.everly_nursing")
+    assert timer.state == "on"
+    assert timer.attributes["side"] == "left" and timer.attributes["started_at"] == started.isoformat()
+    freezer.tick(timedelta(minutes=4))
+    await press(hass, "button.everly_end_nursing")
+    assert backend[-1] == ("add_nursing", "ID-EVERLY", started.strftime("%Y-%m-%d %H:%M:%S +0000"), 12, 0, 1)
+    assert hass.states.get("binary_sensor.everly_nursing").state == "off"
+
+
+async def test_an_ended_nursing_timer_does_not_come_back_after_a_reload(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    await press(hass, "button.everly_start_nursing_left")
+    await press(hass, "button.everly_end_nursing")
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.everly_nursing").state == "off"
+
+
+async def test_a_forgotten_nursing_timer_is_dropped_when_loaded(hass, backend, hass_storage):
+    entry = make_entry()
+    entry.add_to_hass(hass)
+    long_ago = (dt_util.utcnow() - timedelta(days=3)).isoformat()
+    key = f"{DOMAIN}.{entry.entry_id}.nursing"
+    hass_storage[key] = {
+        "version": 1, "minor_version": 1, "key": key,
+        "data": {"ID-EVERLY": {"side": "left", "started_at": long_ago, "segment_started_at": long_ago,
+                               "seconds": {"left": 0.0, "right": 0.0}}},
+    }
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.everly_nursing").state == "off"
+
+
+async def test_a_failed_press_can_be_tried_again_at_once(hass, backend):
+    await setup(hass, make_entry())
+    with patch(f"{CORE}.add_diaper", return_value={"status": "error", "message": "offline"}), \
+         pytest.raises(HomeAssistantError):
+        await press(hass, "button.everly_add_wet_diaper")
+
+    await press(hass, "button.everly_add_wet_diaper")  # not swallowed by the debounce
+    assert backend[-1][:2] == ("add_diaper", "ID-EVERLY")
+
+    # A press that worked is still debounced
+    logged = len(backend)
+    await press(hass, "button.everly_add_wet_diaper")
+    assert len(backend) == logged
