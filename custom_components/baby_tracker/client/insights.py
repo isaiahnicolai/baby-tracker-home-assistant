@@ -362,7 +362,9 @@ def intake_assessment(feeds_last_24h: Sequence[Feed], weight_kg: float | None,
     """
     bottles = [f for f in feeds_last_24h if f.kind in COUNTED_KINDS and f.amount_ml]
     nursing = [f for f in feeds_last_24h if f.kind == "Nursing"]
-    actual = float(sum(f.amount_ml for f in bottles))
+    # Rounded so float summation noise (which differs between Python versions)
+    # can't push a total that is exactly on a bound over it
+    actual = round(float(sum(f.amount_ml for f in bottles)), 1)
     total_feeds = len(feeds_last_24h)
 
     def unknown(reason: str, lo=None, hi=None) -> IntakeAssessment:
