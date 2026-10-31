@@ -216,3 +216,36 @@ def test_an_old_unended_sleep_is_not_shown_as_in_progress(apply, tracker):
     events = tracker.get_events_between(EVERLY, stray - timedelta(hours=1), stray + timedelta(hours=1))
     assert [e["summary"] for e in events] == ["Sleep (never ended)"]
     assert events[0]["end"] - events[0]["start"] == timedelta(minutes=1)
+
+
+# --- Pump summary ---
+
+def hours_ago(hours):
+    return (datetime.now(UTC) - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def test_pump_summary_adds_oz_and_ml_sessions_in_millilitres(apply, tracker):
+    apply(record("Pump", "P-OZ", hours_ago(30), amount=volume(4, english=True)))
+    apply(record("Pump", "P-ML", hours_ago(10), amount=volume(100)))
+    apply(record("Pump", "P-ADJ", hours_ago(5), label="InventoryAdjustment", amount=volume(500)))
+
+    summary = tracker.get_pump_summary(7)
+
+    assert summary["unit"] == "ml"
+    assert summary["total_sessions"] == 2  # the inventory adjustment is not a session
+    assert summary["total_amount"] == pytest.approx(4 * 29.5735 + 100, abs=0.1)
+    assert summary["avg_amount_per_session"] == pytest.approx((4 * 29.5735 + 100) / 2, abs=0.1)
+
+
+def test_a_pump_session_logged_per_side_counts_both_sides(apply, tracker):
+    apply(record("Pump", "P-SIDES", hours_ago(2), leftAmount=volume(60), rightAmount=volume(50)))
+    last = tracker.get_last_pump()
+    assert last["total_amount"] == 110 and last["unit"] == "ml"
+    assert tracker.get_pump_summary(7)["total_amount"] == 110
+
+
+def test_the_last_pump_session_is_never_an_inventory_adjustment(apply, tracker):
+    apply(record("Pump", "P1", hours_ago(10), amount=volume(90)))
+    apply(record("Pump", "ADJ", hours_ago(1), label="InventoryAdjustment", amount=volume(500)))
+    assert tracker.get_last_pump()["id"] == "P1"
+    assert [r["id"] for r in tracker.get_pump_records()] == ["P1"]
