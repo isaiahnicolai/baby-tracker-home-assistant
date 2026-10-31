@@ -23,6 +23,9 @@ babytracker = "babytracker_client.cli:main"
 packages = ["babytracker_client"]
 package-dir = { "babytracker_client" = "custom_components/baby_tracker/client" }
 
+[tool.setuptools.package-data]
+babytracker_client = ["data/*.csv"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

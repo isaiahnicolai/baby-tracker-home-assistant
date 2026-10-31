@@ -2873,6 +2873,93 @@ class BabyTrackerLocalDatabase:
         finally:
             conn.close()
 
+    # ===== INSIGHT QUERIES =====
+    # Narrow queries feeding client/insights.py. Times are Unix seconds.
+
+    def get_insight_feeds(self, baby_id: str, since: float) -> List[Dict]:
+        """
+        Feeds since a time, oldest first, for one baby: nursing, formula, pumped
+        and bottle-type other feeds (solids and the like are left out).
+
+        Each dict has time, duration (nursing seconds, else 0), amount_ml
+        (None for nursing) and kind ("Nursing", "Formula", "Pumped", "OtherFeed").
+        """
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            feeds = []
+            cursor.execute(
+                "SELECT Time, LeftDuration, RightDuration, BothDuration FROM Nursing WHERE BabyID = ? AND Time >= ?",
+                (baby_id, since))
+            for time, left, right, both in cursor.fetchall():
+                feeds.append({"time": time, "duration": (left or 0) + (right or 0) or (both or 0),
+                              "amount_ml": None, "kind": "Nursing"})
+            for table, kind in (("Formula", "Formula"), ("Pumped", "Pumped")):
+                cursor.execute(
+                    f"SELECT Time, Amount, IsEnglishScale FROM {table} WHERE BabyID = ? AND Time >= ?",
+                    (baby_id, since))
+                for time, amount, english in cursor.fetchall():
+                    feeds.append({"time": time, "duration": 0, "kind": kind,
+                                  "amount_ml": (amount or 0) * (29.5735 if english else 1)})
+            cursor.execute(
+                """
+                SELECT o.Time, o.Amount, o.IsEnglishScale
+                FROM OtherFeed o JOIN OtherFeedSelection s ON o.TypeID = s.ID
+                WHERE o.BabyID = ? AND o.Time >= ? AND s.IsBottle = 1
+                """, (baby_id, since))
+            for time, amount, english in cursor.fetchall():
+                feeds.append({"time": time, "duration": 0, "kind": "OtherFeed",
+                              "amount_ml": (amount or 0) * (29.5735 if english else 1)})
+            feeds.sort(key=lambda f: f["time"])
+            return feeds
+        finally:
+            conn.close()
+
+    def get_insight_growth(self, baby_id: str) -> List[Dict]:
+        """
+        Every growth measurement for one baby, oldest first, in kg and cm.
+        A measurement that wasn't taken (0) is None.
+        """
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT Time, Weight, Length, Head, IsEnglishWeightScale, IsEnglishLengthScale
+                FROM Growth WHERE BabyID = ? ORDER BY Time
+                """, (baby_id,))
+            rows = []
+            for time, weight, length, head, english_weight, english_length in cursor.fetchall():
+                rows.append({
+                    "time": time,
+                    "weight_kg": weight * (0.45359237 if english_weight else 1) if weight else None,
+                    "length_cm": length * (2.54 if english_length else 1) if length else None,
+                    "head_cm": head * (2.54 if english_length else 1) if head else None,
+                })
+            return rows
+        finally:
+            conn.close()
+
+    def get_insight_diaper_counts(self, baby_id: str, since: float) -> Dict[str, int]:
+        """
+        Wet and dirty diapers since a time for one baby. A mixed diaper counts
+        as both; a dry one (stored as wet with amount 0) counts as neither.
+        """
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT
+                    COALESCE(SUM(Status IN (0, 2) AND NOT (Status = 0 AND Amount = 0)), 0),
+                    COALESCE(SUM(Status IN (1, 2)), 0)
+                FROM Diaper WHERE BabyID = ? AND Time >= ?
+                """, (baby_id, since))
+            wet, dirty = cursor.fetchone()
+            return {"wet": wet, "dirty": dirty}
+        finally:
+            conn.close()
+
     # Example usage
 
     # ===== SYNC SUPPORT =====
