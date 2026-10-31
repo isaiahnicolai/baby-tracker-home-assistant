@@ -1,12 +1,18 @@
 """The integration inside Home Assistant: setup, entity migration, services, and config flows."""
+import os
+from datetime import datetime
 from unittest.mock import patch
 
 import pytest
 from homeassistant import config_entries
+from homeassistant.const import EntityCategory, UnitOfLength, UnitOfMass, UnitOfTemperature, UnitOfVolume
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import ServiceValidationError
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.components.diagnostics import get_diagnostics_for_config_entry
 
 from custom_components.baby_tracker.client import AuthenticationError
 from custom_components.baby_tracker.client.models import Baby
@@ -20,7 +26,7 @@ CORE = "custom_components.baby_tracker.client.core.BabyTracker"
 
 def make_entry(unit_system="imperial"):
     return MockConfigEntry(
-        domain=DOMAIN, unique_id=EMAIL, title="Baby Tracker",
+        domain=DOMAIN, unique_id=EMAIL, title="Baby Tracker", version=2,
         data={"email": EMAIL, "password": "pw", "scan_interval": 15, "unit_system": unit_system,
               "device_uuid": "ha-uuid"},
     )
@@ -69,9 +75,38 @@ INSIGHTS = {
 }
 
 
-def fake_fetch(self, www_dir):
+# What the coordinator keeps for Everly besides the insights (client values: UTC times as text)
+EVERLY_DATA = {
+    "insights": INSIGHTS,
+    "time_since_last_feeding": {
+        "hours_since_last_feeding": 2.5, "last_feeding_time": "2026-03-01T09:30:00+00:00",
+        "time_difference": "2:30:00",
+    },
+    "last_feeding": {"time": "2026-03-01 09:30:00 +0000", "type": "Formula", "amount": 4.0,
+                     "amount_oz": 4.0, "amount_ml": 118.3},
+    "last_diaper": {"time": "2026-03-01 10:00:00 +0000", "status": "Wet"},
+    "last_sleep": {"time": "2026-03-01 11:00:00 +0000", "is_sleeping": True, "duration": 0,
+                   "current_duration": 45, "status": "sleeping"},
+    "last_nursing": {"time": "2026-03-01 08:00:00 +0000", "total_duration": 12},
+    "last_pump": {"time": "2026-03-01 07:00:00 +0000", "total_amount": 4.0, "unit": "oz"},
+    "pump_summary": {"total_sessions": 3, "total_amount": 12.0, "unit": "oz", "days": 7},
+    "last_growth": {"time": "2026-02-27 09:00:00 +0000", "weight": 10.0, "length": 20.0, "head": 14.0,
+                    "weight_unit": "lbs", "length_unit": "in", "is_english_weight": True,
+                    "is_english_length": True},
+    "last_temperature": {"time": "2026-03-01 06:00:00 +0000", "fahrenheit": 99.1, "celsius": 37.3},
+    "last_doctor_visit": {"time": "2026-02-20 15:00:00 +0000"},
+    "feeding_summary": {"total_feedings": 20, "nursing_total_minutes": 90, "bottle_amount_ml": 500.0,
+                        "bottle_amount_oz": 16.9},
+    "diaper_summary": {"total_diapers": 30, "poopy_count": 5, "mixed_count": 2, "wet_count": 20},
+    "daily_summary": {"total_feedings": 6, "diaper_count": 5},
+    "sleep_analysis": {"avg_bedtime": "N/A", "avg_wake_time": "N/A", "days_analyzed": 0, "per_day": []},
+}
+
+
+def fake_fetch(self, photo_dir):
     babies = [TWIN, EVERLY]
-    return babies, EVERLY, {}, {b.name: {"baby_info": b, "insights": INSIGHTS if b is EVERLY else {}} for b in babies}
+    data = {b.name: {"baby_info": b, **(EVERLY_DATA if b is EVERLY else {"insights": {}})} for b in babies}
+    return babies, EVERLY, {}, data
 
 
 @pytest.fixture
@@ -79,13 +114,24 @@ def backend():
     """Stand in for the Baby Tracker client; records write calls."""
     calls = []
 
-    def add_diaper(self, baby_id, *args):
-        calls.append(("add_diaper", baby_id))
+    def add_diaper(self, baby_id, time_str=None, *args):
+        calls.append(("add_diaper", baby_id, time_str))
         return {"status": "success", "objectID": "new"}
+
+    def add_temperature(self, baby_id, time_str=None, temperature=98.6, is_fahrenheit=True, note=""):
+        calls.append(("add_temperature", baby_id, temperature, is_fahrenheit))
+        return {"status": "success"}
+
+    def log_growth(self, baby_id, weight, length, head, is_english_weight_scale, is_english_length_scale,
+                   note="", time=None):
+        calls.append(("log_growth", baby_id, is_english_weight_scale, is_english_length_scale))
+        return {"status": "success"}
 
     with patch(f"{CORE}.authenticate", return_value={"status": "success"}), \
          patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fake_fetch), \
          patch(f"{CORE}.add_diaper", add_diaper), \
+         patch(f"{CORE}.add_temperature", add_temperature), \
+         patch(f"{CORE}.log_growth", log_growth), \
          patch(f"{CORE}.get_baby_by_name", lambda self, name: next((b for b in (TWIN, EVERLY) if b.name == name), None)):
         yield calls
 
@@ -126,7 +172,7 @@ async def test_each_baby_gets_its_own_diaper_buttons(hass, backend):
             entity_id = f"button.{slug}_add_{kind}_diaper"
             assert hass.states.get(entity_id), entity_id
             await hass.services.async_call("button", "press", {"entity_id": entity_id}, blocking=True)
-            assert backend[-1] == ("add_diaper", baby_id)
+            assert backend[-1][:2] == ("add_diaper", baby_id)
 
 
 async def test_services_target_a_baby_by_device(hass, backend):
@@ -135,10 +181,10 @@ async def test_services_target_a_baby_by_device(hass, backend):
     device = next(d for d in dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
                   if (DOMAIN, f"{EMAIL}_ID-TWIN") in d.identifiers)
     await hass.services.async_call(DOMAIN, "add_diaper", {"device_id": device.id, "pee": True}, blocking=True)
-    assert backend[-1] == ("add_diaper", "ID-TWIN")
+    assert backend[-1][:2] == ("add_diaper", "ID-TWIN")
 
     await hass.services.async_call(DOMAIN, "add_diaper", {"baby_name": "Everly"}, blocking=True)
-    assert backend[-1] == ("add_diaper", "ID-EVERLY")
+    assert backend[-1][:2] == ("add_diaper", "ID-EVERLY")
 
     # Two babies and none chosen: refuse rather than guess
     with pytest.raises(ServiceValidationError):
@@ -213,3 +259,217 @@ async def test_insight_entities(hass, backend):
     # A baby with no insights has unknown values rather than errors
     assert hass.states.get("sensor.ann_marie_next_feed").state == "unknown"
     assert hass.states.get("binary_sensor.ann_marie_intake_low").state == "off"
+
+
+async def test_sensors_have_numeric_states_and_device_classes(hass, backend):
+    await setup(hass, make_entry(unit_system="metric"))
+
+    def check(entity_id, state, unit=None, device_class=None, state_class=None):
+        found = hass.states.get(entity_id)
+        assert found, entity_id
+        assert found.state == state, entity_id
+        assert found.attributes.get("unit_of_measurement") == unit, entity_id
+        assert found.attributes.get("device_class") == device_class, entity_id
+        assert found.attributes.get("state_class") == state_class, entity_id
+        return found.attributes
+
+    attrs = check("sensor.everly_time_since_last_feeding", "150", "min", "duration", "measurement")
+    assert attrs["feeding_status"] == "Due for feeding soon" and attrs["needs_feeding"] is False
+    attrs = check("sensor.everly_last_sleep", "45", "min", "duration", "measurement")
+    assert attrs["sleeping"] is True
+    check("sensor.everly_last_nursing", "12", "min", "duration", "measurement")
+    check("sensor.everly_nursing_minutes", "90", "min", "duration", "measurement")
+    check("sensor.everly_last_pump", "118.3", "mL", "volume", "measurement")  # recorded as 4 oz
+    check("sensor.everly_pump_summary", "354.9", "mL", "volume", "measurement")
+    check("sensor.everly_bottle_volume", "500.0", "mL", "volume", "measurement")
+    check("sensor.everly_weight", "4.536", "kg", "weight", "measurement")  # recorded as 10 lb
+    check("sensor.everly_length", "50.8", "cm", "distance", "measurement")  # recorded as 20 in
+    check("sensor.everly_head_circumference", "35.6", "cm", "distance", "measurement")
+    check("sensor.everly_temperature", "37.3", "°C", "temperature", "measurement")
+    attrs = check("sensor.everly_feedings", "20", "feedings", None, "measurement")
+    assert attrs["window_days"] == 7
+    check("sensor.everly_diapers", "30", "diapers", None, "measurement")
+    check("sensor.everly_poopy_diapers", "7", "diapers", None, "measurement")  # mixed ones count
+    check("sensor.everly_wet_diapers", "22", "diapers", None, "measurement")
+    check("sensor.everly_daily_summary", "6", "feedings", None, "measurement")
+
+    # Times are real timestamps; the kinds of feeding and diaper are enum states
+    check("sensor.everly_last_feeding_time", "2026-03-01T09:30:00+00:00", device_class="timestamp")
+    check("sensor.everly_last_diaper_time", "2026-03-01T10:00:00+00:00", device_class="timestamp")
+    check("sensor.everly_last_sleep_time", "2026-03-01T11:00:00+00:00", device_class="timestamp")
+    check("sensor.everly_last_doctor_visit", "2026-02-20T15:00:00+00:00", device_class="timestamp")
+    check("sensor.everly_last_feeding", "formula", device_class="enum")
+    check("sensor.everly_last_diaper", "wet", device_class="enum")
+    check("sensor.everly_average_bedtime", "unknown")  # nothing to average yet
+
+    # The oz half of Bottle Volume is gone; the ml half kept its ID
+    ent_reg = er.async_get(hass)
+    assert ent_reg.async_get_entity_id("sensor", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-EVERLY_bottle_ml")
+    assert not ent_reg.async_get_entity_id("sensor", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-EVERLY_bottle_oz")
+    assert hass.states.get("sensor.everly_bottle_oz") is None
+
+    # Housekeeping entities are kept out of the way
+    assert ent_reg.async_get("sensor.everly_info").entity_category is EntityCategory.DIAGNOSTIC
+    assert ent_reg.async_get("sensor.everly_pump_summary").entity_category is EntityCategory.DIAGNOSTIC
+    for key in ("sync_now", "force_resync"):
+        entity_id = ent_reg.async_get_entity_id("button", DOMAIN, f"{DOMAIN}_{EMAIL}_{key}")
+        assert ent_reg.async_get(entity_id).entity_category is EntityCategory.CONFIG
+
+
+async def test_imperial_entry_shows_imperial_units(hass, backend):
+    await setup(hass, make_entry(unit_system="imperial"))
+
+    weight = hass.states.get("sensor.everly_weight")
+    assert weight.attributes["unit_of_measurement"] == UnitOfMass.POUNDS
+    assert float(weight.state) == pytest.approx(10, abs=0.05)
+    length = hass.states.get("sensor.everly_length")
+    assert length.attributes["unit_of_measurement"] == UnitOfLength.INCHES
+    assert float(length.state) == pytest.approx(20, abs=0.05)
+    pump = hass.states.get("sensor.everly_last_pump")
+    assert pump.attributes["unit_of_measurement"] == UnitOfVolume.FLUID_OUNCES
+    assert float(pump.state) == pytest.approx(4, abs=0.05)
+    bottles = hass.states.get("sensor.everly_bottle_volume")
+    assert bottles.attributes["unit_of_measurement"] == UnitOfVolume.FLUID_OUNCES
+    assert float(bottles.state) == pytest.approx(16.9, abs=0.05)
+    temperature = hass.states.get("sensor.everly_temperature")
+    assert temperature.attributes["unit_of_measurement"] == UnitOfTemperature.FAHRENHEIT
+    assert float(temperature.state) == 99.1
+
+
+async def test_retired_bottle_oz_sensor_is_removed(hass, backend):
+    entry = make_entry()
+    entry.add_to_hass(hass)
+    ent_reg = er.async_get(hass)
+    old = ent_reg.async_get_or_create("sensor", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-EVERLY_bottle_oz",
+                                      config_entry=entry, suggested_object_id="everly_bottle_oz")
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert ent_reg.async_get(old.entity_id) is None
+
+
+async def test_services_date_the_record_at_the_time_given(hass, backend):
+    await setup(hass, make_entry())
+
+    await hass.services.async_call(
+        DOMAIN, "add_diaper", {"baby_name": "Everly", "time": "2026-03-01T09:30:00+00:00"}, blocking=True)
+    assert backend[-1] == ("add_diaper", "ID-EVERLY", "2026-03-01 09:30:00 +0000")
+
+    # A time with no zone is in Home Assistant's time zone
+    await hass.services.async_call(
+        DOMAIN, "add_diaper", {"baby_name": "Everly", "time": "2026-03-01 09:30:00"}, blocking=True)
+    local = datetime(2026, 3, 1, 9, 30, tzinfo=dt_util.get_default_time_zone())
+    assert backend[-1][2] == dt_util.as_utc(local).strftime("%Y-%m-%d %H:%M:%S +0000")
+
+    # With no time the client dates it now
+    await hass.services.async_call(DOMAIN, "add_diaper", {"baby_name": "Everly"}, blocking=True)
+    assert backend[-1][2] is None
+
+
+@pytest.mark.parametrize(("unit_system", "imperial"), [("imperial", True), ("metric", False)])
+async def test_service_units_follow_the_entry_unless_given(hass, backend, unit_system, imperial):
+    await setup(hass, make_entry(unit_system=unit_system))
+    base = {"baby_name": "Everly"}
+
+    await hass.services.async_call(DOMAIN, "add_temperature", {**base, "temperature": 37.0}, blocking=True)
+    assert backend[-1] == ("add_temperature", "ID-EVERLY", 37.0, imperial)
+    await hass.services.async_call(DOMAIN, "log_growth", {**base, "weight": 4.0}, blocking=True)
+    assert backend[-1] == ("log_growth", "ID-EVERLY", imperial, imperial)
+
+    # What the call says wins
+    await hass.services.async_call(
+        DOMAIN, "add_temperature", {**base, "temperature": 37.0, "is_fahrenheit": not imperial}, blocking=True)
+    assert backend[-1] == ("add_temperature", "ID-EVERLY", 37.0, not imperial)
+    await hass.services.async_call(
+        DOMAIN, "log_growth", {**base, "weight": 4.0, "is_english_length_scale": not imperial}, blocking=True)
+    assert backend[-1] == ("log_growth", "ID-EVERLY", imperial, not imperial)
+
+
+async def test_dismiss_alert_takes_the_insight_alert_types(hass, backend):
+    await setup(hass, make_entry())
+    for alert_type in ("intake_low", "feed_due", "wake_to_feed"):
+        await hass.services.async_call(
+            DOMAIN, "dismiss_alert", {"baby_name": "Everly", "alert_type": alert_type}, blocking=True)
+    assert hass.states.get("binary_sensor.everly_feed_due").state == "off"  # dismissed while still true
+    assert hass.states.get("binary_sensor.everly_intake_low").state == "off"
+
+
+async def test_version_1_entry_is_migrated_to_its_own_device_id(hass, backend):
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id=EMAIL, title="Baby Tracker", version=1,
+        data={"email": EMAIL, "password": "pw", "scan_interval": 15, "unit_system": "imperial"},
+    )
+    await setup(hass, entry)
+
+    assert (entry.version, entry.minor_version) == (2, 1)
+    assert entry.data["device_uuid"]
+    assert entry.data["email"] == EMAIL  # nothing else changed
+
+
+async def test_version_1_entry_keeps_the_device_id_it_has(hass, backend):
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id=EMAIL, title="Baby Tracker", version=1,
+        data={"email": EMAIL, "password": "pw", "device_uuid": "ha-uuid"},
+    )
+    await setup(hass, entry)
+
+    assert entry.version == 2
+    assert entry.data["device_uuid"] == "ha-uuid"
+
+
+async def test_diagnostics_hide_credentials(hass, hass_client, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+
+    diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+
+    data = diagnostics["entry"]["data"]
+    assert data["password"] == "**REDACTED**"
+    assert data["email"] == "**REDACTED**"
+    assert data["device_uuid"] == "**REDACTED**"
+    assert data["unit_system"] == "imperial"
+    assert "'pw'" not in str(diagnostics) and EMAIL not in str(diagnostics)
+    assert diagnostics["babies"] == [
+        {"id": "ID-TWIN", "name": "Ann Marie", "dob": ""},
+        {"id": "ID-EVERLY", "name": "Everly", "dob": ""},
+    ]
+    assert diagnostics["insights"]["ID-EVERLY"]["intake"]["status"] == "low"
+    assert "pending_uploads" in diagnostics and "last_sync" in diagnostics
+
+
+async def test_baby_photo_is_an_image_entity_in_a_private_folder(hass, hass_client):
+    baby = Baby({"objectID": "ID-EVERLY", "name": "Everly", "dob": "", "dueDay": "", "pictureName": "everly.jpg"})
+    photo_dir = hass.config.path("baby_tracker")
+
+    def download(self, picture_name, save_dir):
+        assert save_dir == photo_dir  # not under www, which serves files without a login
+        os.makedirs(save_dir, exist_ok=True)
+        path = os.path.join(save_dir, picture_name)
+        with open(path, "wb") as photo:
+            photo.write(b"photo-bytes")
+        return path
+
+    # The real coordinator fetch, against a client with no database yet
+    with patch(f"{CORE}.authenticate", return_value={"status": "success"}), \
+         patch(f"{CORE}.sync", return_value={"status": "success"}) as sync, \
+         patch(f"{CORE}.get_all_babies", return_value=[baby]), \
+         patch(f"{CORE}.get_baby_info", return_value=baby), \
+         patch(f"{CORE}.download_baby_picture", download):
+        await setup(hass, make_entry())
+
+    assert sync.call_args.kwargs["picture_dir"] == os.path.join(photo_dir, "pictures")
+    state = hass.states.get("image.everly_photo")
+    assert state is not None
+    assert "/local/" not in str(state.attributes)
+
+    response = await (await hass_client()).get(state.attributes["entity_picture"])
+    assert response.status == 200
+    assert await response.read() == b"photo-bytes"
+    assert hass.states.get("sensor.everly_info").attributes.get("entity_picture") is None
+
+
+async def test_baby_without_a_photo_still_has_an_image_entity(hass, backend):
+    await setup(hass, make_entry())
+    assert hass.states.get("image.everly_photo").state == "unknown"
+    assert hass.states.get("image.ann_marie_photo") is not None
