@@ -289,6 +289,42 @@ async def test_setup_flow_gives_the_integration_its_own_device_id(hass):
     assert result["data"]["device_uuid"]
 
 
+async def test_migration_leaves_account_level_entities_alone(hass):
+    from custom_components.baby_tracker.const import ACCOUNT_ENTITY_KEYS
+    from custom_components.baby_tracker.entity import migrate_to_baby_ids
+    from custom_components.baby_tracker.sensor import HOUSEHOLD_SENSORS
+
+    # The list the migration trusts matches the entities the integration really creates
+    assert ACCOUNT_ENTITY_KEYS == {"sync_now", "force_resync"} | {f"system_{c._sensor_type}" for c in HOUSEHOLD_SENSORS}
+
+    entry = make_entry()
+    entry.add_to_hass(hass)
+    ent_reg = er.async_get(hass)
+    account = {}
+    for domain, key in (("sensor", "system_next_feed_due"), ("button", "sync_now"), ("button", "force_resync")):
+        unique_id = f"{DOMAIN}_{EMAIL}_{key}"
+        account[unique_id] = ent_reg.async_get_or_create(domain, DOMAIN, unique_id, config_entry=entry).entity_id
+    # A baby-level entity from before babies were keyed by ID: this one does migrate
+    ent_reg.async_get_or_create("sensor", DOMAIN, f"{DOMAIN}_{EMAIL}_system_last_feeding", config_entry=entry)
+
+    # Babies whose names look like the start of an account-level entity's ID
+    babies = [Baby({"objectID": f"ID-{name.upper()}", "name": name, "dob": "", "dueDay": ""})
+              for name in ("System", "Sync", "Force")]
+    migrate_to_baby_ids(hass, entry, EMAIL, babies)
+
+    for unique_id, entity_id in account.items():
+        assert ent_reg.async_get(entity_id).unique_id == unique_id
+    assert ent_reg.async_get_entity_id("sensor", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-SYSTEM_last_feeding")
+
+
+async def test_a_second_account_cannot_be_added(hass):
+    # Every entry shares one local database, so the manifest allows a single entry
+    make_entry().add_to_hass(hass)
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "single_instance_allowed"
+
+
 async def test_options_flow(hass):
     entry = make_entry()
     entry.add_to_hass(hass)

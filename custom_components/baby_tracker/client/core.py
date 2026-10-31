@@ -1803,8 +1803,8 @@ class BabyTracker:
 
     def get_next_medicine_dose(self, baby_id):
         """
-        When the baby's last medicine can be given again (time given plus the
-        medicine's interval).
+        When the baby's next medicine dose is due: the earliest still to come of
+        each recent medicine's last dose plus its interval.
 
         Returns:
             dict: {"medicine_name", "med_id", "amount", "unit", "last_given",

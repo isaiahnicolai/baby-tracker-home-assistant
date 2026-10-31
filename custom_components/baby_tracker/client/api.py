@@ -1148,7 +1148,7 @@ class BabyTrackerAPI:
                         "amountPerTime": sel.get("amount_per_time", amount),
                         "interval": sel.get("interval", 0),
                         "unit": sel.get("unit", "ml"),
-                        "prescription": sel.get("prescription", False),
+                        "prescription": bool(sel.get("is_prescription", False)),
                         "newFlage": False,
                         "timestamp": "1970-01-01 00:00:00 +0000"
                     }

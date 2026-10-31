@@ -156,6 +156,18 @@ def test_an_old_unended_sleep_is_not_closed_by_a_new_wake_up(tracker):
     assert "No active sleep" in result["message"]
 
 
+def test_a_medicine_is_posted_with_its_own_prescription_flag(tracker, apply, server):
+    for object_id, prescription in (("MED-RX", True), ("MED-OTC", False)):
+        apply({"BCObjectType": "MedicationSelection", "objectID": object_id, "name": object_id,
+               "timestamp": "2026-10-30 12:00:00 +0000", "prescription": prescription, "amountPerTime": 2.5,
+               "unit": "ml", "interval": 240})
+
+    for med_id, prescription in (("MED-RX", True), ("MED-OTC", False)):
+        assert tracker.add_medicine(EVERLY, None, med_id=med_id, amount=2.5)["status"] == "success"
+        selection = server.uploads[-1]["record"]["medicationSelection"]
+        assert selection["objectID"] == med_id and selection["prescription"] is prescription
+
+
 def test_pending_upload_count_is_what_has_not_been_sent(tracker, server):
     assert tracker.pending_upload_count() == 0
     server.online = False

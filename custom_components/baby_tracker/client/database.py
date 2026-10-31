@@ -3029,8 +3029,10 @@ class BabyTrackerLocalDatabase:
 
     def get_next_medicine_dose(self, baby_id: str) -> Optional[Dict]:
         """
-        When the baby's most recent medicine can be given again: the time it was
-        given plus the medicine's interval (MedicineSelection.Interval, in minutes).
+        When the baby's next medicine dose is due: each medicine given in the 48 hours up to
+        the latest dose has its last dose plus its interval (MedicineSelection.Interval,
+        in minutes), and the earliest of those still to come is reported. When none is
+        still to come (all can be given again), it is the most recently given one.
 
         :return: None when no medicine has been given, else {"medicine_name", "med_id", "amount", "unit",
             "last_given" (text), "interval_minutes", "next_dose_at" (ISO UTC text, None without an interval)}
@@ -3042,14 +3044,24 @@ class BabyTrackerLocalDatabase:
                 """
                 SELECT m.Time, m.MedID, m.Amount, ms.Name, ms.Unit, ms.Interval
                 FROM Medicine m LEFT JOIN MedicineSelection ms ON m.MedID = ms.ID
-                WHERE m.BabyID = ? ORDER BY m.Time DESC LIMIT 1
+                WHERE m.BabyID = ? ORDER BY m.Time DESC
                 """, (baby_id,))
-            row = cursor.fetchone()
+            rows = []
+            for row in cursor.fetchall():
+                if rows and row[0] < rows[0][0] - 48 * 3600:
+                    break
+                if all(row[1] != seen[1] for seen in rows):  # the latest dose of each medicine
+                    rows.append(row)
         finally:
             conn.close()
-        if not row:
+        if not rows:
             return None
-        given, med_id, amount, name, unit, interval = row
+        now = self._now().timestamp()
+        due = [(row[0] + row[5] * 60, row) for row in rows if row[5] and row[5] > 0]
+        coming = [item for item in due if item[0] >= now]
+        # Soonest dose still to come, else the most recent medicine
+        chosen = min(coming, key=lambda item: item[0])[1] if coming else rows[0]
+        given, med_id, amount, name, unit, interval = chosen
         next_dose = None
         if interval and interval > 0:
             next_dose = datetime.fromtimestamp(given + interval * 60, timezone.utc).isoformat()

@@ -144,6 +144,19 @@ DEFAULT_TUMMY_TIME_MINUTES = 15
 BOTTLE_TYPE_FORMULA = "formula"
 BOTTLE_TYPE_PUMPED = "pumped"
 
+# Entities of the account as a whole (not of one baby), as the part of their unique ID after
+# "baby_tracker_<email>_": the household sensors are keyed "system_<type>" (see sensor.py's
+# HOUSEHOLD_SENSORS), the two account buttons by their name. Migrating entities from baby
+# names to baby IDs must leave these alone, whatever a baby is called.
+ACCOUNT_ENTITY_KEYS = frozenset({
+    "sync_now",
+    "force_resync",
+    *(f"system_{key}" for key in (
+        "next_feed_due", "next_feed_baby", "last_fed_baby", "babies_asleep", "feeds_today",
+        "pending_uploads", "pumped_milk_inventory",
+    )),
+})
+
 # A second press of the same button within this many seconds is ignored
 BUTTON_DEBOUNCE_SECONDS = 3
 

@@ -87,6 +87,33 @@ def test_next_dose_follows_the_most_recent_medicine(apply, tracker):
     assert (dose["medicine_name"], dose["next_dose_at"]) == ("Motrin", "2026-10-01T15:00:00+00:00")
 
 
+def test_next_dose_is_the_soonest_across_the_medicines_given_recently(apply, tracker):
+    now = datetime.now(UTC).replace(microsecond=0)
+
+    def ago(hours):
+        return (now - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+
+    apply(medicine("M1", ago(5), "TYLENOL", "Tylenol", 360))      # next dose in 1 hour
+    apply(medicine("M2", ago(1), "MOTRIN", "Motrin", 480))        # next dose in 7 hours (the latest given)
+    apply(medicine("M3", ago(60), "OLD", "Old one", 240))         # outside the 48 hours before the latest dose
+
+    dose = tracker.get_next_medicine_dose(EVERLY)
+
+    assert dose["medicine_name"] == "Tylenol"
+    assert dose["next_dose_at"] == (now + timedelta(hours=1)).isoformat()
+
+
+def test_next_dose_skips_medicines_that_can_already_be_given(apply, tracker):
+    now = datetime.now(UTC).replace(microsecond=0)
+
+    def ago(hours):
+        return (now - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+
+    apply(medicine("M1", ago(10), "TYLENOL", "Tylenol", 240))     # could be given again 6 hours ago
+    apply(medicine("M2", ago(1), "MOTRIN", "Motrin", 480))        # next dose in 7 hours
+    assert tracker.get_next_medicine_dose(EVERLY)["medicine_name"] == "Motrin"
+
+
 def test_medicine_without_an_interval_has_no_next_dose(apply, tracker):
     apply(medicine("M1", "2026-10-01 08:00:00", "VITD", "Vitamin D", 0))
     dose = tracker.get_next_medicine_dose(EVERLY)
