@@ -26,7 +26,8 @@
       "babies_asleep": {"default": "mdi:sleep"},
       "feeds_today": {"default": "mdi:counter"},
       "pending_uploads": {"default": "mdi:cloud-upload-outline"},
-      "pumped_milk_inventory": {"default": "mdi:fridge-outline"}
+      "pumped_milk_inventory": {"default": "mdi:fridge-outline"},
+      "last_activity": {"default": "mdi:baby-face-outline"}
     },
     "binary_sensor": {
       "feeding_overdue": {"default": "mdi:baby-bottle"},
@@ -40,7 +41,8 @@
       "night_mode": {
         "default": "mdi:white-balance-sunny",
         "state": {"on": "mdi:moon-waning-crescent"}
-      }
+      },
+      "nursing": {"default": "mdi:mother-nurse"}
     },
     "button": {
       "add_bottle": {"default": "mdi:bottle-tonic-plus"},
@@ -50,7 +52,22 @@
       "end_sleep": {"default": "mdi:sleep-off"},
       "give_medicine": {"default": "mdi:medical-bag"},
       "sync_now": {"default": "mdi:sync"},
-      "force_resync": {"default": "mdi:database-sync"}
+      "force_resync": {"default": "mdi:database-sync"},
+      "add_selected_bottle": {"default": "mdi:baby-bottle"},
+      "give_selected_medicine": {"default": "mdi:pill"},
+      "start_nursing_left": {"default": "mdi:arrow-left-bold-circle"},
+      "start_nursing_right": {"default": "mdi:arrow-right-bold-circle"},
+      "end_nursing": {"default": "mdi:stop-circle"},
+      "log_tummy_time": {"default": "mdi:human-baby-changing-table"}
+    },
+    "number": {
+      "bottle_size": {"default": "mdi:cup-water"},
+      "medicine_amount": {"default": "mdi:eyedropper"},
+      "tummy_time_minutes": {"default": "mdi:timer-outline"}
+    },
+    "select": {
+      "bottle_type": {"default": "mdi:baby-bottle-outline"},
+      "medicine": {"default": "mdi:pill"}
     },
     "calendar": {
       "activity_calendar": {"default": "mdi:calendar-heart"}
@@ -73,6 +90,8 @@
     "log_doctor_visit": {"service": "mdi:doctor"},
     "log_vaccine": {"service": "mdi:needle"},
     "log_sleep": {"service": "mdi:sleep"},
+    "log_activity": {"service": "mdi:human-baby-changing-table"},
+    "add_solids": {"service": "mdi:food-apple"},
     "list_babies": {"service": "mdi:account-child"},
     "sync": {"service": "mdi:sync"},
     "force_resync": {"service": "mdi:database-sync"},

@@ -464,6 +464,82 @@ log_sleep:
       selector:
         datetime:
 
+log_activity:
+  fields:
+    baby_name:
+      required: false
+      selector:
+        text:
+    device_id:
+      required: false
+      selector:
+        device:
+          filter:
+            - integration: baby_tracker
+    activity_name:
+      required: false
+      default: "Tummy Time"
+      example: "Tummy Time"
+      selector:
+        text:
+    duration:
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 720
+          unit_of_measurement: min
+    note:
+      required: false
+      selector:
+        text:
+    time:
+      required: false
+      selector:
+        datetime:
+
+add_solids:
+  fields:
+    baby_name:
+      required: false
+      selector:
+        text:
+    device_id:
+      required: false
+      selector:
+        device:
+          filter:
+            - integration: baby_tracker
+    food_name:
+      required: true
+      example: "Banana"
+      selector:
+        text:
+    amount:
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 1000
+          step: 0.5
+    unit:
+      required: false
+      example: "tbsp"
+      selector:
+        text:
+    is_english_measure:
+      required: false
+      selector:
+        boolean:
+    note:
+      required: false
+      selector:
+        text:
+    time:
+      required: false
+      selector:
+        datetime:
+
 list_babies:
   fields: {}
 

@@ -34,6 +34,7 @@ from .const import (
     SENSOR_TYPE_FEEDING_COUNT,
     SENSOR_TYPE_FEEDING_TIMER,
     SENSOR_TYPE_HEAD,
+    SENSOR_TYPE_LAST_ACTIVITY,
     SENSOR_TYPE_LAST_BATH,
     SENSOR_TYPE_LAST_DIAPER,
     SENSOR_TYPE_LAST_DIAPER_TIME,
@@ -701,6 +702,22 @@ class BabyTrackerLastMedicineSensor(BabyTrackerSensor):
         } | _note(record)
 
 
+class BabyTrackerLastActivitySensor(BabyTrackerSensor):
+    """Sensor that displays the last other activity (tummy time and the like)."""
+
+    _sensor_type = SENSOR_TYPE_LAST_ACTIVITY
+    _data_key = "last_activity"
+
+    def _value(self, record):
+        return record.get("activity_name") or "Activity"
+
+    def _attributes(self, record):
+        return {
+            ATTR_TIME: record.get("time"),
+            ATTR_DURATION: record.get("duration"),
+        } | _note(record)
+
+
 class BabyTrackerLastMilestoneSensor(BabyTrackerSensor):
     """Sensor that displays info about the last milestone."""
 
@@ -1355,6 +1372,7 @@ PER_BABY_SENSORS = (
     BabyTrackerLastPumpSensor,
     BabyTrackerPumpSummarySensor,
     BabyTrackerLastMedicineSensor,
+    BabyTrackerLastActivitySensor,
     BabyTrackerLastMilestoneSensor,
     BabyTrackerLastDoctorVisitSensor,
     BabyTrackerLastVaccineSensor,

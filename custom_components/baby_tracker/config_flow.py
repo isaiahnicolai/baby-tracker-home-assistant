@@ -10,18 +10,30 @@ from homeassistant.core import callback
 from .const import (
     CONF_DEVICE_UUID,
     CONF_EMAIL,
+    CONF_FEEDING_OVERDUE_HOURS,
+    CONF_FEVER_THRESHOLD,
+    CONF_LOW_WET_MINIMUM,
+    CONF_NIGHT_END_HOUR,
+    CONF_NIGHT_START_HOUR,
     CONF_PASSWORD,
     CONF_SCAN_INTERVAL,
     CONF_UNIT_SYSTEM,
     CONFIG_ENTRY_VERSION,
+    DEFAULT_FEEDING_OVERDUE_HOURS,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_UNIT_SYSTEM,
     DOMAIN,
+    LOW_WET_THRESHOLD,
+    NIGHT_END_HOUR,
+    NIGHT_START_HOUR,
     UNIT_SYSTEM_IMPERIAL,
     UNIT_SYSTEM_METRIC,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Fever thresholds outside these are mistakes (e.g. 38 typed while the entry is in Fahrenheit)
+FEVER_THRESHOLD_RANGE = {UNIT_SYSTEM_IMPERIAL: (95.0, 110.0), UNIT_SYSTEM_METRIC: (35.0, 43.0)}
 
 DATA_SCHEMA = vol.Schema(
     {
@@ -140,21 +152,49 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class OptionsFlow(config_entries.OptionsFlow):
-    """Change the update interval and unit system without re-adding the integration."""
+    """Change the update interval, unit system and alert thresholds without re-adding the integration."""
 
     async def async_step_init(self, user_input=None):
-        if user_input is not None:
-            return self.async_create_entry(data=user_input)
-
         entry = self.config_entry
-        current = lambda key, default: entry.options.get(key, entry.data.get(key, default))  # noqa: E731
+        errors = {}
+
+        if user_input is not None:
+            low, high = FEVER_THRESHOLD_RANGE[user_input.get(CONF_UNIT_SYSTEM, DEFAULT_UNIT_SYSTEM)]
+            fever = user_input.get(CONF_FEVER_THRESHOLD)
+            if fever is not None and not low <= fever <= high:
+                errors[CONF_FEVER_THRESHOLD] = "invalid_fever_threshold"
+            else:
+                return self.async_create_entry(data=user_input)
+
+        def current(key, default):
+            """What the form shows: what was just submitted (after an error), else what is saved."""
+            if user_input is not None:
+                return user_input.get(key, default)
+            return entry.options.get(key, entry.data.get(key, default))
+
+        fever = current(CONF_FEVER_THRESHOLD, None)
         return self.async_show_form(
             step_id="init",
+            errors=errors,
             data_schema=vol.Schema({
                 vol.Optional(CONF_SCAN_INTERVAL, default=current(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)):
                     vol.All(int, vol.Range(min=1)),
                 vol.Optional(CONF_UNIT_SYSTEM, default=current(CONF_UNIT_SYSTEM, DEFAULT_UNIT_SYSTEM)):
                     vol.In([UNIT_SYSTEM_IMPERIAL, UNIT_SYSTEM_METRIC]),
+                # 0 uses the baby's age (3.5 hours for a newborn, up to 6 for older babies)
+                vol.Optional(CONF_FEEDING_OVERDUE_HOURS,
+                             default=current(CONF_FEEDING_OVERDUE_HOURS, DEFAULT_FEEDING_OVERDUE_HOURS)):
+                    vol.All(vol.Coerce(float), vol.Range(min=0, max=24)),
+                vol.Optional(CONF_LOW_WET_MINIMUM, default=current(CONF_LOW_WET_MINIMUM, LOW_WET_THRESHOLD)):
+                    vol.All(int, vol.Range(min=1, max=20)),
+                vol.Optional(CONF_NIGHT_START_HOUR, default=current(CONF_NIGHT_START_HOUR, NIGHT_START_HOUR)):
+                    vol.All(int, vol.Range(min=0, max=23)),
+                vol.Optional(CONF_NIGHT_END_HOUR, default=current(CONF_NIGHT_END_HOUR, NIGHT_END_HOUR)):
+                    vol.All(int, vol.Range(min=0, max=23)),
+                # Blank uses 100.4 F (38.0 C)
+                vol.Optional(CONF_FEVER_THRESHOLD,
+                             description={"suggested_value": fever} if fever is not None else None):
+                    vol.Coerce(float),
             }),
         )
 

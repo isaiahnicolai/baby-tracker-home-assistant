@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
+from . import get_option
 from .const import (
     ALERT_TYPE_FEED_DUE,
     ALERT_TYPE_FEEDING_OVERDUE,
@@ -27,8 +28,15 @@ from .const import (
     ATTR_CURRENT_VALUE,
     ATTR_DISMISSED,
     ATTR_THRESHOLD,
+    CONF_FEEDING_OVERDUE_HOURS,
+    CONF_FEVER_THRESHOLD,
+    CONF_LOW_WET_MINIMUM,
+    CONF_NIGHT_END_HOUR,
+    CONF_NIGHT_START_HOUR,
+    DEFAULT_FEEDING_OVERDUE_HOURS,
     DOMAIN,
     FEEDING_THRESHOLDS,
+    FEVER_THRESHOLD_C,
     FEVER_THRESHOLD_F,
     LONG_SLEEP_THRESHOLDS,
     LOW_WET_CHECK_HOUR,
@@ -37,6 +45,7 @@ from .const import (
     NIGHT_END_HOUR,
     NIGHT_START_HOUR,
     NO_POOP_THRESHOLDS,
+    UNIT_SYSTEM_METRIC,
 )
 from .entity import ClockTickMixin, baby_device_info, baby_unique_id, hours_since_feeding
 
@@ -102,6 +111,7 @@ async def async_setup_entry(
         ]
         entities.extend(alert_entities)
         entities.append(BabyTrackerNightModeSensor(coordinator, baby_name))
+        entities.append(BabyTrackerNursingSensor(coordinator, baby_name))
 
     coordinator._alert_entities.extend(entities)
     async_add_entities(entities)
@@ -143,6 +153,10 @@ class BabyTrackerAlert(CoordinatorEntity, BinarySensorEntity):
             if baby and hasattr(baby, "name") and baby.name == self._baby_name:
                 return baby
         return self.coordinator.data.get("baby_info")
+
+    def _option(self, key, default):
+        """A threshold set in the options flow, else its default."""
+        return get_option(self.coordinator.config_entry, key, default)
 
     def _evaluate_condition(self):
         """Evaluate the alert condition. Returns True if condition is met (alert should fire)."""
@@ -219,6 +233,10 @@ class FeedingOverdueAlert(ClockTickMixin, BabyTrackerAlert):
         return hours_since_feeding(self.coordinator, baby_data.get("time_since_last_feeding"))
 
     def _get_threshold_info(self):
+        # An hours setting in the options flow replaces the age-based default
+        custom_hours = self._option(CONF_FEEDING_OVERDUE_HOURS, DEFAULT_FEEDING_OVERDUE_HOURS)
+        if custom_hours and custom_hours > 0:
+            return custom_hours, "custom"
         age_days = _get_baby_age_days(self._get_baby_info())
         return _get_age_threshold(age_days, FEEDING_THRESHOLDS)
 
@@ -275,8 +293,11 @@ class LowWetDiapersAlert(BabyTrackerAlert):
             return None
         return baby_data.get("today_wet_count")
 
+    def _minimum(self):
+        return self._option(CONF_LOW_WET_MINIMUM, LOW_WET_THRESHOLD)
+
     def _get_threshold_info(self):
-        return LOW_WET_THRESHOLD, f">{LOW_WET_MIN_AGE_DAYS}d, after {LOW_WET_CHECK_HOUR}:00"
+        return self._minimum(), f">{LOW_WET_MIN_AGE_DAYS}d, after {LOW_WET_CHECK_HOUR}:00"
 
     def _get_current_value(self):
         return self._get_today_wet_count()
@@ -296,13 +317,16 @@ class LowWetDiapersAlert(BabyTrackerAlert):
         if wet_count is None:
             return False
 
-        return wet_count < LOW_WET_THRESHOLD
+        return wet_count < self._minimum()
 
 
 class FeverAlert(BabyTrackerAlert):
-    """Alert when baby's temperature is >= 100.4F."""
+    """Alert when baby's temperature reaches the fever threshold (100.4 F / 38.0 C unless changed)."""
 
     _alert_type = ALERT_TYPE_FEVER
+
+    def _is_metric(self):
+        return self.coordinator.unit_system == UNIT_SYSTEM_METRIC
 
     def _get_temp(self):
         baby_data = self._get_baby_data()
@@ -311,11 +335,14 @@ class FeverAlert(BabyTrackerAlert):
         temp_data = baby_data.get("last_temperature")
         if not temp_data:
             return None
-        # Compared in Fahrenheit whatever scale the reading was recorded in
-        return temp_data.get("fahrenheit")
+        # In the entry's temperature unit, whatever scale the reading was recorded in
+        return temp_data.get("celsius" if self._is_metric() else "fahrenheit")
+
+    def _threshold(self):
+        return self._option(CONF_FEVER_THRESHOLD, FEVER_THRESHOLD_C if self._is_metric() else FEVER_THRESHOLD_F)
 
     def _get_threshold_info(self):
-        return FEVER_THRESHOLD_F, "all ages"
+        return self._threshold(), "all ages"
 
     def _get_current_value(self):
         return self._get_temp()
@@ -324,7 +351,7 @@ class FeverAlert(BabyTrackerAlert):
         temp = self._get_temp()
         if temp is None:
             return False
-        return temp >= FEVER_THRESHOLD_F
+        return temp >= self._threshold()
 
 
 class LongSleepAlert(BabyTrackerAlert):
@@ -459,11 +486,17 @@ class BabyTrackerNightModeSensor(ClockTickMixin, CoordinatorEntity, BinarySensor
         if not is_sleeping:
             return False
 
-        now = dt_util.now()
-        current_hour = now.hour
-        # Night hours: 7pm (19) to 7am (7) — wraps around midnight
-        is_night = current_hour >= NIGHT_START_HOUR or current_hour < NIGHT_END_HOUR
-        return is_night
+        current_hour = dt_util.now().hour
+        start, end = self._night_hours()
+        # Night hours (7pm to 7am unless changed) — can wrap around midnight
+        if start <= end:
+            return start <= current_hour < end
+        return current_hour >= start or current_hour < end
+
+    def _night_hours(self):
+        entry = self.coordinator.config_entry
+        return (get_option(entry, CONF_NIGHT_START_HOUR, NIGHT_START_HOUR),
+                get_option(entry, CONF_NIGHT_END_HOUR, NIGHT_END_HOUR))
 
     @property
     def extra_state_attributes(self):
@@ -473,14 +506,44 @@ class BabyTrackerNightModeSensor(ClockTickMixin, CoordinatorEntity, BinarySensor
             return {}
 
         last_sleep = baby_data.get("last_sleep") or {}
+        start, end = self._night_hours()
         return {
             "sleep_start": last_sleep.get("time"),
             "current_duration": last_sleep.get("current_duration", 0),
-            "night_start_hour": NIGHT_START_HOUR,
-            "night_end_hour": NIGHT_END_HOUR,
+            "night_start_hour": start,
+            "night_end_hour": end,
         }
 
     @property
     def available(self) -> bool:
         """Return if entity is available."""
         return self.coordinator.last_update_success and self.coordinator.data is not None
+
+
+class BabyTrackerNursingSensor(CoordinatorEntity, BinarySensorEntity):
+    """On while a nursing timer is running (see the Start Nursing Left/Right and End Nursing buttons)."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "nursing"
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the nursing sensor."""
+        super().__init__(coordinator)
+        self._baby_id = coordinator.baby_id_for(baby_name)
+        self._attr_unique_id = baby_unique_id(coordinator, baby_name, "nursing")
+        self._attr_device_info = baby_device_info(coordinator, baby_name)
+
+    @property
+    def _timer(self):
+        return self.coordinator.nursing_timers.get(self._baby_id)
+
+    @property
+    def is_on(self):
+        return self._timer is not None
+
+    @property
+    def extra_state_attributes(self):
+        timer = self._timer
+        if timer is None:
+            return {}
+        return {"side": timer["side"], "started_at": timer["started_at"].isoformat()}

@@ -136,6 +136,22 @@ VACCINE_SCHEMA = vol.Schema({
     vol.Optional("note", default=""): cv.string,
 })
 
+ACTIVITY_SCHEMA = vol.Schema({
+    **RECORD_FIELDS,
+    vol.Optional("activity_name", default="Tummy Time"): cv.string,
+    vol.Required("duration"): vol.All(vol.Coerce(int), vol.Range(min=0, max=720)),  # minutes
+    vol.Optional("note", default=""): cv.string,
+})
+
+SOLIDS_SCHEMA = vol.Schema({
+    **RECORD_FIELDS,
+    vol.Required("food_name"): cv.string,  # a food in the app's solids list, e.g. "Banana"
+    vol.Required("amount"): vol.All(vol.Coerce(float), vol.Range(min=0)),
+    vol.Optional("unit", default=""): cv.string,  # e.g. "tbsp"
+    vol.Optional("is_english_measure"): cv.boolean,  # defaults to the integration's unit setting
+    vol.Optional("note", default=""): cv.string,
+})
+
 LIST_BABIES_SCHEMA = vol.Schema({})
 
 SYNC_SCHEMA = vol.Schema({})
@@ -266,7 +282,7 @@ async def async_register_services(hass: HomeAssistant):
         )
 
         _check(result, "add diaper")
-        await coordinator.async_refresh()
+        await coordinator.async_request_refresh()
 
     async def add_nursing(call: ServiceCall):
         """Add a nursing session record."""
@@ -290,7 +306,7 @@ async def async_register_services(hass: HomeAssistant):
         )
 
         _check(result, "add nursing")
-        await coordinator.async_refresh()
+        await coordinator.async_request_refresh()
 
     async def add_formula(call: ServiceCall):
         """Add a formula feeding record."""
@@ -315,7 +331,7 @@ async def async_register_services(hass: HomeAssistant):
         )
 
         _check(result, "add formula")
-        await coordinator.async_refresh()
+        await coordinator.async_request_refresh()
 
     async def add_pumped(call: ServiceCall):
         """Add a pumped milk record."""
@@ -338,7 +354,7 @@ async def async_register_services(hass: HomeAssistant):
         )
 
         _check(result, "add pumped milk")
-        await coordinator.async_refresh()
+        await coordinator.async_request_refresh()
 
     async def add_temperature(call: ServiceCall):
         """Add a temperature record."""
@@ -356,7 +372,7 @@ async def async_register_services(hass: HomeAssistant):
         )
 
         _check(result, "add temperature")
-        await coordinator.async_refresh()
+        await coordinator.async_request_refresh()
 
     async def log_bath(call: ServiceCall):
         """Log a bath record."""
@@ -375,7 +391,7 @@ async def async_register_services(hass: HomeAssistant):
         _check(result, "log bath")
 
         _LOGGER.info(f"Logged bath: type={data.get('bath_type')}, note={data.get('note')}")
-        await coordinator.async_refresh()
+        await coordinator.async_request_refresh()
 
     async def log_pump(call: ServiceCall):
         """Log a pump session record."""
@@ -398,7 +414,7 @@ async def async_register_services(hass: HomeAssistant):
         _check(result, "log pump session")
 
         _LOGGER.info(f"Logged pump session: left={data.get('left_duration')}min/{data.get('left_amount')}, right={data.get('right_duration')}min/{data.get('right_amount')}")
-        await coordinator.async_refresh()
+        await coordinator.async_request_refresh()
 
     async def log_medicine(call: ServiceCall):
         """Log a medicine administration record."""
@@ -439,7 +455,7 @@ async def async_register_services(hass: HomeAssistant):
         _check(result, "log medicine")
 
         _LOGGER.info(f"Logged medicine: {medicine_name}, amount={data.get('amount')}")
-        await coordinator.async_refresh()
+        await coordinator.async_request_refresh()
 
     async def log_sleep(call: ServiceCall):
         """Log a sleep start or end event."""
@@ -459,7 +475,7 @@ async def async_register_services(hass: HomeAssistant):
         _check(result, "start sleep" if is_start else "end sleep")
 
         _LOGGER.info(f"Logged sleep {'start' if is_start else 'end'}")
-        await coordinator.async_refresh()
+        await coordinator.async_request_refresh()
 
     async def log_growth(call: ServiceCall):
         """Log a growth measurement record."""
@@ -483,7 +499,7 @@ async def async_register_services(hass: HomeAssistant):
         _check(result, "log growth measurement")
 
         _LOGGER.info(f"Logged growth: weight={data.get('weight')}, length={data.get('length')}, head={data.get('head')}")
-        await coordinator.async_refresh()
+        await coordinator.async_request_refresh()
 
     async def log_milestone(call: ServiceCall):
         """Log a milestone achievement record."""
@@ -524,7 +540,7 @@ async def async_register_services(hass: HomeAssistant):
         _check(result, "log milestone")
 
         _LOGGER.info(f"Logged milestone: {milestone_name}")
-        await coordinator.async_refresh()
+        await coordinator.async_request_refresh()
 
     async def log_doctor_visit(call: ServiceCall):
         """Log a doctor visit record."""
@@ -547,7 +563,7 @@ async def async_register_services(hass: HomeAssistant):
         _check(result, "log doctor visit")
 
         _LOGGER.info(f"Logged doctor visit: type={data.get('visit_type')}, appointment={data.get('is_appointment')}")
-        await coordinator.async_refresh()
+        await coordinator.async_request_refresh()
 
     async def log_vaccine(call: ServiceCall):
         """Log a vaccine administration record."""
@@ -589,7 +605,61 @@ async def async_register_services(hass: HomeAssistant):
         _check(result, "log vaccine")
 
         _LOGGER.info(f"Logged vaccine: {vaccine_name}")
-        await coordinator.async_refresh()
+        await coordinator.async_request_refresh()
+
+    async def log_activity(call: ServiceCall):
+        """Log an other activity (tummy time and the like)."""
+        data = call.data
+        coordinator = _get_coordinator(hass)
+        baby_id = await _get_baby_id(coordinator, data)
+
+        result = await hass.async_add_executor_job(
+            coordinator.baby_tracker.add_activity,
+            baby_id,
+            _time_str(data),
+            data.get("activity_name", "Tummy Time"),
+            data.get("duration"),
+            None,  # location
+            data.get("note", ""),
+        )
+        _check(result, "log activity")
+
+        _LOGGER.info(f"Logged activity: {data.get('activity_name', 'Tummy Time')}, {data.get('duration')} min")
+        await coordinator.async_request_refresh()
+
+    async def add_solids(call: ServiceCall):
+        """Log a solids (or supplement) feed of one of the account's foods."""
+        data = call.data
+        coordinator = _get_coordinator(hass)
+        baby_id = await _get_baby_id(coordinator, data)
+
+        food_name = data.get("food_name")
+        foods = await hass.async_add_executor_job(coordinator.baby_tracker.get_other_feed_selections)
+        feed_type_id = next((food["id"] for food in foods if food["name"].lower() == food_name.lower()), None)
+        if not feed_type_id:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="food_not_found",
+                translation_placeholders={"name": food_name},
+            )
+
+        is_english = data.get("is_english_measure")
+        if is_english is None:
+            is_english = _is_imperial_config()
+
+        result = await hass.async_add_executor_job(
+            coordinator.baby_tracker.add_other_feed,
+            baby_id,
+            _time_str(data),
+            feed_type_id,
+            data.get("amount"),
+            data.get("unit", ""),
+            is_english,
+            data.get("note", ""),
+        )
+        _check(result, "add solids")
+
+        _LOGGER.info(f"Logged solids: {food_name}, {data.get('amount')} {data.get('unit', '')}")
+        await coordinator.async_request_refresh()
 
     async def list_babies(call: ServiceCall):
         """List all babies in the database."""
@@ -630,7 +700,7 @@ async def async_register_services(hass: HomeAssistant):
         )
 
         _check(result, "sync")
-        await coordinator.async_refresh()
+        await coordinator.async_request_refresh()
 
     async def force_resync(call: ServiceCall):
         """Force a complete resync by deleting local database and re-downloading all data.
@@ -652,7 +722,7 @@ async def async_register_services(hass: HomeAssistant):
 
         _LOGGER.info("Force resync completed successfully")
 
-        # Refresh coordinator data first
+        # Refresh coordinator data first (not the debounced request: the reload below needs the new babies)
         await coordinator.async_refresh()
 
         # Reload the config entry to trigger platform re-setup with new baby entities
@@ -713,6 +783,12 @@ async def async_register_services(hass: HomeAssistant):
     )
     hass.services.async_register(
         DOMAIN, "log_vaccine", log_vaccine, schema=VACCINE_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "log_activity", log_activity, schema=ACTIVITY_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "add_solids", add_solids, schema=SOLIDS_SCHEMA
     )
     hass.services.async_register(
         DOMAIN, "list_babies", list_babies, schema=LIST_BABIES_SCHEMA, supports_response="only"
@@ -864,6 +940,8 @@ async def async_unregister_services(hass: HomeAssistant):
         "log_milestone",
         "log_doctor_visit",
         "log_vaccine",
+        "log_activity",
+        "add_solids",
         "list_babies",
         "sync",
         "force_resync",
