@@ -11,6 +11,13 @@ from .models import Baby
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _time_str(time):
+    """API date string for a datetime/string time, or None for now."""
+    if isinstance(time, datetime):
+        return time.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
+    return time or None
+
 class BabyTracker:
     """
     Unified wrapper for Baby Tracker functionality.
@@ -119,6 +126,16 @@ class BabyTracker:
                 "message": f"Authentication failed: {str(e)}"
             }
 
+    def _post(self, what, post, **kwargs):
+        """Run an api.post_* call, reporting failure as an error result."""
+        if not self.is_authenticated:
+            return {"status": "error", "message": "Not authenticated"}
+        try:
+            return post(**kwargs)
+        except Exception as e:
+            _LOGGER.error(f"Failed to add {what}: {e}")
+            return {"status": "error", "message": f"Failed to add {what}: {e}"}
+
     def sync(self):
         """
         Synchronize data with the server.
@@ -136,9 +153,10 @@ class BabyTracker:
         }
 
         try:
-            # Sync transactions from server
+            # Same order as the app: merge other devices' changes, then upload ours
             transactions = self.api.sync_transactions()
             result["synced_transactions"] = len(transactions)
+            result["uploaded_transactions"] = self.api.upload_pending()
             result["status"] = "success"
         except Exception as e:
             _LOGGER.error(f"Sync failed: {str(e)}")
@@ -164,6 +182,18 @@ class BabyTracker:
         _LOGGER.info("Starting force resync - deleting local database and re-syncing")
 
         try:
+            # Records logged here but not yet uploaded live only in this database
+            if self.db:
+                try:
+                    self.api.upload_pending()
+                except Exception as e:
+                    pending = len(self.db.get_pending_transactions())
+                    return {
+                        "status": "error",
+                        "message": f"{pending} record(s) haven't been uploaded yet ({e}); "
+                                   "try again once the server is reachable",
+                    }
+
             # Step 1: Delete the local database
             if os.path.exists(self.db_path):
                 try:
@@ -177,7 +207,7 @@ class BabyTracker:
             self.db = None
             self.api.local_db = None
             self.api.transaction_handler = None
-            self.api.device_sync_info = {}
+            self.api._merge_failures = {}
             self.api.baby_info = None
             self.api.devices = None
             self.api.is_authenticated = False
@@ -707,7 +737,7 @@ class BabyTracker:
                 bath_type=bath_type,
                 note=note
             )
-            return {"status": "success", "message": "Bath record added"}
+            return {**response, "message": "Bath record added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add bath record: {str(e)}")
             return {"status": "error", "message": f"Failed to add bath record: {str(e)}"}
@@ -792,15 +822,16 @@ class BabyTracker:
             else:
                 return False
 
-        return self.db.log_pump(
-            baby_id=baby_id,
+        # Pumps belong to the account, not a baby (Android Pump has no BabyID),
+        # so baby_id is accepted for compatibility but not sent
+        return self._post("pump session", self.api.post_pump,
+            time_str=_time_str(time),
             left_duration=left_duration,
             right_duration=right_duration,
             left_amount=left_amount,
             right_amount=right_amount,
             is_english_scale=is_english_scale,
-            note=note,
-            time=time
+            note=note
         )
 
     def get_pump_summary(self, days=7, baby_id=None):
@@ -906,15 +937,15 @@ class BabyTracker:
             else:
                 return False
 
-        return self.db.log_growth(
+        return self._post("growth measurement", self.api.post_growth,
             baby_id=baby_id,
+            time_str=_time_str(time),
             weight=weight,
             length=length,
             head=head,
             is_english_weight_scale=is_english_weight_scale,
             is_english_length_scale=is_english_length_scale,
-            note=note,
-            time=time
+            note=note
         )
 
     # ===== MILESTONE TRACKING =====
@@ -994,11 +1025,11 @@ class BabyTracker:
             else:
                 return False
 
-        return self.db.log_milestone(
+        return self._post("milestone", self.api.post_milestone,
             baby_id=baby_id,
             milestone_selection_id=milestone_selection_id,
-            note=note,
-            time=time
+            time_str=_time_str(time),
+            note=note
         )
 
     # ===== DOCTOR VISIT TRACKING =====
@@ -1154,12 +1185,12 @@ class BabyTracker:
             else:
                 return False
 
-        return self.db.log_vaccine(
+        # The app has no doctor-visit link on vaccines (DocVisitID is "NotUsed")
+        return self._post("vaccine", self.api.post_vaccine,
             baby_id=baby_id,
             vacc_id=vacc_id,
-            note=note,
-            doc_visit_id=doc_visit_id,
-            time=time
+            time_str=_time_str(time),
+            note=note
         )
 
     def get_medicine_selections(self):
@@ -1235,8 +1266,8 @@ class BabyTracker:
     # === Data Entry Methods ===
     # These methods always go through the API
     
-    def add_diaper(self, baby_id, time_str=None, pee=True, poo=False, pee_color=0, poo_color=0, 
-                  texture=0, amount=2, note=""):
+    def add_diaper(self, baby_id, time_str=None, pee=True, poo=False, pee_color=5, poo_color=5,
+                  texture=5, amount=2, note=""):
         """
         Add a diaper change record through the API.
         
@@ -1256,8 +1287,11 @@ class BabyTracker:
         if not self.is_authenticated:
             return {"status": "error", "message": "Not authenticated"}
         
-        # Determine status (0=wet, 1=poopy, 2=mixed, 3=dry)
-        status = 2 if pee and poo else 1 if poo else 0 if pee else 3
+        # DiaperStatus: 0=wet, 1=poopy, 2=mixed. The app stores dry as wet with
+        # DiaperAmount None (0), never as status 3.
+        status = 2 if pee and poo else 1 if poo else 0
+        if not pee and not poo:
+            amount = 0
         
         # Use current time if not provided
         if not time_str:
@@ -1274,7 +1308,7 @@ class BabyTracker:
                 status=status,
                 note=note
             )
-            return {"status": "success", "message": "Diaper record added"}
+            return {**response, "message": "Diaper record added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add diaper record: {str(e)}")
             return {"status": "error", "message": f"Failed to add diaper record: {str(e)}"}
@@ -1312,7 +1346,7 @@ class BabyTracker:
                 finish_side=finish_side,
                 note=note
             )
-            return {"status": "success", "message": "Nursing record added"}
+            return {**response, "message": "Nursing record added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add nursing record: {str(e)}")
             return {"status": "error", "message": f"Failed to add nursing record: {str(e)}"}
@@ -1345,7 +1379,7 @@ class BabyTracker:
                 is_english_measure=is_english_measure,
                 note=note
             )
-            return {"status": "success", "message": "Pumped milk record added"}
+            return {**response, "message": "Pumped milk record added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add pumped milk record: {str(e)}")
             return {"status": "error", "message": f"Failed to add pumped milk record: {str(e)}"}
@@ -1378,7 +1412,7 @@ class BabyTracker:
                 is_english_measure=is_english_measure,
                 note=note
             )
-            return {"status": "success", "message": "Formula feeding record added"}
+            return {**response, "message": "Formula feeding record added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add formula feeding record: {str(e)}")
             return {"status": "error", "message": f"Failed to add formula feeding record: {str(e)}"}
@@ -1411,7 +1445,7 @@ class BabyTracker:
                 is_fahrenheit=is_fahrenheit,
                 note=note
             )
-            return {"status": "success", "message": "Temperature record added"}
+            return {**response, "message": "Temperature record added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add temperature record: {str(e)}")
             return {"status": "error", "message": f"Failed to add temperature record: {str(e)}"}
@@ -1444,7 +1478,7 @@ class BabyTracker:
                 amount=amount,
                 note=note
             )
-            return {"status": "success", "message": "Medicine record added"}
+            return {**response, "message": "Medicine record added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add medicine record: {str(e)}")
             return {"status": "error", "message": f"Failed to add medicine record: {str(e)}"}
@@ -1567,7 +1601,7 @@ class BabyTracker:
                 location_id=location_id,
                 note=note
             )
-            return {"status": "success", "message": "Activity record added"}
+            return {**response, "message": "Activity record added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add activity record: {str(e)}")
             return {"status": "error", "message": f"Failed to add activity record: {str(e)}"}

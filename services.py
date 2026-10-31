@@ -26,9 +26,10 @@ DIAPER_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
     vol.Optional("pee", default=True): cv.boolean,
     vol.Optional("poo", default=False): cv.boolean,
-    vol.Optional("pee_color", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=5)),
-    vol.Optional("poo_color", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=5)),
-    vol.Optional("texture", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=5)),
+    # 5 = "not set", as the app uses when no color/texture is recorded
+    vol.Optional("pee_color", default=5): vol.All(vol.Coerce(int), vol.Range(min=0, max=5)),
+    vol.Optional("poo_color", default=5): vol.All(vol.Coerce(int), vol.Range(min=0, max=5)),
+    vol.Optional("texture", default=5): vol.All(vol.Coerce(int), vol.Range(min=0, max=5)),
     vol.Optional("amount", default=2): vol.All(vol.Coerce(int), vol.Range(min=0, max=5)),
     vol.Optional("note", default=""): cv.string,
 })
@@ -205,9 +206,9 @@ async def async_register_services(hass: HomeAssistant):
             None,  # time_str
             data.get("pee"),
             data.get("poo"),
-            data.get("pee_color", 0),
-            data.get("poo_color", 0),
-            data.get("texture", 0),
+            data.get("pee_color", 5),
+            data.get("poo_color", 5),
+            data.get("texture", 5),
             data.get("amount", 2),
             data.get("note", "")
         )
@@ -329,11 +330,10 @@ async def async_register_services(hass: HomeAssistant):
         data = call.data
         coordinator = _get_coordinator(hass)
 
-        baby_id = await _get_baby_id(coordinator, data)
-
+        # Pump sessions belong to the account, not a baby, in the app
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.log_pump,
-            baby_id,
+            None,
             data.get("left_duration", 0),
             data.get("right_duration", 0),
             data.get("left_amount", 0),

@@ -46,6 +46,8 @@ def _now_str():
 # API endpoints
 BASE_URL = "https://prodapp.babytrackers.com"
 REQUEST_TIMEOUT = 30  # seconds
+PAGE_SIZE = 500  # the server returns at most this many transactions per request
+MAX_MERGE_ATTEMPTS = 3  # syncs to retry a transaction that fails to apply before skipping it
 USER_AGENT = "Dalvik/2.1.0 (Linux; U; Android 13; sdk_gphone_x86_64 Build/TE1A.220922.034)"
 
 class BabyTrackerAPI:
@@ -77,7 +79,7 @@ class BabyTrackerAPI:
         
         # API state
         self.transaction_handler = None
-        self.device_sync_info = {}  # Store sync info for each device
+        self._merge_failures = {}  # (device, SyncID) -> failed apply attempts
     
     def login(self, email, password, device_uuid=None):
         """Authenticate with the API and get a session cookie"""
@@ -161,7 +163,7 @@ class BabyTrackerAPI:
         return response
 
     def get_devices(self):
-        """Get information about registered devices"""
+        """Get the server's device list: [{DeviceUUID, LastSyncID, ...}]"""
         if not self.session_id:
             raise Exception("Not logged in")
 
@@ -170,71 +172,9 @@ class BabyTrackerAPI:
         if response.status_code not in [200, 201]:
             raise Exception(f"Failed to get devices: {response.status_code}")
 
-        server_devices = response.json()
-
-        # Build a map of our locally tracked SyncIDs (the highest we know about)
-        local_sync_ids = {}
-        if self.devices:
-            for device in self.devices:
-                local_sync_ids[device["DeviceUUID"]] = device["LastSyncID"]
-
-        # Update devices from server, but NEVER regress to a lower LastSyncID
-        # This handles race conditions where we've posted a transaction but the
-        # server returns stale data due to caching/replication lag
-        for device in server_devices:
-            device_uuid = device["DeviceUUID"]
-            server_sync_id = device["LastSyncID"]
-            local_sync_id = local_sync_ids.get(device_uuid, 0)
-
-            # Keep the higher of local vs server SyncID
-            if local_sync_id > server_sync_id:
-                _LOGGER.debug(f"Preserving local SyncID {local_sync_id} for device {device_uuid} (server returned {server_sync_id})")
-                device["LastSyncID"] = local_sync_id
-
-        self.devices = server_devices
-
-        # Update device_sync_info with latest device information
-        # Again, never regress to a lower SyncID
-        for device in self.devices:
-            device_uuid = device["DeviceUUID"]
-            new_sync_id = device["LastSyncID"]
-            device_name = device.get("DeviceName", "")
-            device_os_info = device.get("DeviceOSInfo", "")
-
-            # Check if we have an existing higher SyncID in device_sync_info
-            existing_sync_id = 0
-            if device_uuid in self.device_sync_info:
-                existing_sync_id = self.device_sync_info[device_uuid].get("last_sync_id", 0)
-
-            # Use the higher of existing vs new
-            final_sync_id = max(existing_sync_id, new_sync_id)
-
-            self.device_sync_info[device_uuid] = {
-                "device_uuid": device_uuid,
-                "last_sync_id": final_sync_id,
-                "device_name": device_name,
-                "device_os_info": device_os_info
-            }
-
-            # Also update the device entry to stay consistent
-            if final_sync_id > device["LastSyncID"]:
-                device["LastSyncID"] = final_sync_id
-
+        self.devices = response.json()
         return self.devices
     
-    def get_next_sync_id(self, device_uuid=None):
-        """Get the next sync ID for the device"""
-        if not self.devices:
-            self.get_devices()
-            
-        if device_uuid:
-            for device in self.devices:
-                if device["DeviceUUID"] == device_uuid:
-                    return device["LastSyncID"] + 1
-            raise Exception(f"Device UUID {device_uuid} not found")
-        else:
-            # Use the highest sync ID + 1
-            return max(device["LastSyncID"] for device in self.devices) + 1
     
     def download_seed_data(self):
         """
@@ -456,51 +396,26 @@ class BabyTrackerAPI:
         return self.baby_info
     
     def update_device_sync_info(self, device_uuid, last_sync_id):
-        """Update the local record of the last sync ID for a device"""
-        import sqlite3
-        
+        """Record how far we have merged another device's transactions"""
         conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Make sure the table exists
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS DeviceSyncInfo (
-                device_uuid TEXT PRIMARY KEY,
-                last_sync_id INTEGER,
-                device_name TEXT,
-                device_os_info TEXT
-            )
-        ''')
-        
-        # Update or insert the device sync info
-        cursor.execute('''
-            INSERT OR REPLACE INTO DeviceSyncInfo 
-            (device_uuid, last_sync_id) VALUES (?, ?)
-        ''', (device_uuid, last_sync_id))
-        
-        conn.commit()
-        conn.close()
-        
-        # Also update in-memory cache
-        if device_uuid in self.device_sync_info:
-            self.device_sync_info[device_uuid]["last_sync_id"] = last_sync_id
-        else:
-            self.device_sync_info[device_uuid] = {
-                "device_uuid": device_uuid,
-                "last_sync_id": last_sync_id,
-                "device_name": "",
-                "device_os_info": ""
-            }
-
-        # CRITICAL: Also update self.devices cache so get_next_sync_id() returns correct value
-        # Without this, subsequent transactions would get the same SyncID and fail silently
-        if self.devices:
-            for device in self.devices:
-                if device["DeviceUUID"] == device_uuid:
-                    device["LastSyncID"] = last_sync_id
-                    break
-
-        _LOGGER.info(f"Updated last sync ID for device {device_uuid} to {last_sync_id}")
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS DeviceSyncInfo (
+                    device_uuid TEXT PRIMARY KEY,
+                    last_sync_id INTEGER,
+                    device_name TEXT,
+                    device_os_info TEXT
+                )
+            ''')
+            cursor.execute('''
+                INSERT OR REPLACE INTO DeviceSyncInfo
+                (device_uuid, last_sync_id) VALUES (?, ?)
+            ''', (device_uuid, last_sync_id))
+            conn.commit()
+        finally:
+            conn.close()
+        _LOGGER.debug(f"Merged device {device_uuid} up to sync ID {last_sync_id}")
 
     def initialize_database(self, db_path=None):
         """Initialize or open the local database for transaction storage"""
@@ -629,6 +544,10 @@ class BabyTrackerAPI:
                 from .database import BabyTrackerLocalDatabase
                 self.local_db = BabyTrackerLocalDatabase(db_file_path or self.db_path)
                 _LOGGER.info(f"Initialized database: {self.local_db}")
+
+            # The seed is another device's database: drop its upload queue so
+            # its pending work is never sent as ours
+            self.local_db.clear_sync_state()
                 
             baby_info = seed_result.get("baby_info")
             if not baby_info:
@@ -663,169 +582,117 @@ class BabyTrackerAPI:
     
     def sync_transactions(self):
         """
-        Synchronize transactions with the server
-        
+        Download and merge other devices' transactions, as the Android app's
+        checkNewTransaction does:
+
+        - unlike the app, our own device is included: the app gets a new device
+          ID whenever its database is rebuilt, but ours outlives the database
+          (force resync, upgrades), so our own records may need re-downloading.
+          Ones already present merge as IGNORED (same timestamp);
+        - each device is fetched from the last merged SyncID, page by page,
+          while a page holds PAGE_SIZE or more items;
+        - items at or below the last merged SyncID are skipped;
+        - progress only advances past items that were applied (or deliberately
+          ignored/rejected). A failing item stops that device so it is retried
+          next sync; after MAX_MERGE_ATTEMPTS it is skipped and logged.
+
         Returns:
-            List of downloaded transactions
+            List of applied transactions
         """
         if not self.session_id:
             raise Exception("Not logged in")
-        
-        # Get all devices
+
         devices = self.get_devices()
-        _LOGGER.info(f"Found {len(devices)} devices")
-        
-        # Get local device sync info
         local_sync_info = self.get_local_device_sync_info()
-        
-        all_transactions = []
-        
-        # For each device, get new transactions
+        applied = []
+
         for device in devices:
             device_uuid = device["DeviceUUID"]
-            server_last_sync_id = device.get("LastSyncID", 0)
-            
-            # Determine the last sync ID we have locally
-            local_last_sync_id = 0
-            if device_uuid in local_sync_info:
-                local_last_sync_id = local_sync_info[device_uuid]["last_sync_id"]
-            
-            # If we're already up to date with this device, skip it
-            if local_last_sync_id >= server_last_sync_id:
-                _LOGGER.info(f"Device {device_uuid} is already up to date (Last Sync ID: {local_last_sync_id})")
+            server_last = device.get("LastSyncID", 0)
+            merged = local_sync_info.get(device_uuid, {}).get("last_sync_id", 0) or 0
+            if merged >= server_last:
                 continue
-                
-            try:
-                # Get transactions since the last known sync ID for this device
-                response = self._request("GET", f"/account/transaction/{device_uuid}/{local_last_sync_id}")
-                
-                if response.status_code in [200, 201]:
-                    device_transactions = response.json()
-                    num_transactions = len(device_transactions)
-                    
-                    if num_transactions > 0:
-                        # Process the transactions
-                        processed_until = local_last_sync_id
-                        
-                        for transaction in device_transactions:
-                            # Keep track of the highest sync ID we've successfully processed
-                            if "SyncID" in transaction:
-                                current_sync_id = int(transaction["SyncID"])
-                                
-                                if self.transaction_handler and self.transaction_handler.process_transaction(transaction):
-                                    all_transactions.append(transaction)
-                                    processed_until = current_sync_id
-                                else:
-                                    # Log with decoded detail so we can diagnose
-                                    try:
-                                        import base64, json as _json
-                                        raw = base64.b64decode(transaction.get("Transaction", ""))
-                                        decoded = _json.loads(raw.decode("utf-8"))
-                                        obj_type = decoded.get("BCObjectType", "unknown")
-                                        obj_id = decoded.get("objectID", "unknown")
-                                        _LOGGER.warning(
-                                            f"Failed to process transaction {current_sync_id} "
-                                            f"(type={obj_type}, id={obj_id}) for device {device_uuid}"
-                                        )
-                                    except Exception:
-                                        _LOGGER.warning(f"Failed to process transaction {current_sync_id} for device {device_uuid}")
-                        
-                        # Update the local sync info with the highest successfully processed sync ID
-                        if processed_until > local_last_sync_id:
-                            self.update_device_sync_info(device_uuid, processed_until)
-                else:
-                    _LOGGER.error(f"Failed to get transactions from {device_uuid}: {response.status_code}")
-            except Exception as e:
-                _LOGGER.error(f"Error getting transactions from device {device_uuid}: {e}")
-        
-        if all_transactions:
-            _LOGGER.info(f"Synchronized {len(all_transactions)} transactions successfully")
+
+            page_size = PAGE_SIZE
+            while page_size >= PAGE_SIZE:
+                response = self._request("GET", f"/account/transaction/{device_uuid}/{merged}")
+                if response.status_code not in [200, 201]:
+                    raise Exception(f"Failed to get transactions from {device_uuid}: {response.status_code}")
+
+                page = response.json() or []
+                page_size = len(page)
+                start = merged
+                blocked = False
+                for item in page:
+                    sync_id = int(item.get("SyncID", 0))
+                    if sync_id <= merged:
+                        continue
+                    if self.transaction_handler.process_transaction(item):
+                        applied.append(item)
+                        merged = sync_id
+                        self._merge_failures.pop((device_uuid, sync_id), None)
+                        continue
+
+                    key = (device_uuid, sync_id)
+                    self._merge_failures[key] = self._merge_failures.get(key, 0) + 1
+                    detail = self._describe(item)
+                    if self._merge_failures[key] < MAX_MERGE_ATTEMPTS:
+                        _LOGGER.warning(
+                            f"Could not apply transaction {sync_id} ({detail}) from device {device_uuid}; "
+                            f"will retry (attempt {self._merge_failures[key]}/{MAX_MERGE_ATTEMPTS})"
+                        )
+                        blocked = True
+                        break
+                    _LOGGER.error(
+                        f"Skipping transaction {sync_id} ({detail}) from device {device_uuid} "
+                        f"after {MAX_MERGE_ATTEMPTS} failed attempts"
+                    )
+                    self._merge_failures.pop(key, None)
+                    merged = sync_id
+
+                if merged > start:
+                    self.update_device_sync_info(device_uuid, merged)
+                if blocked:
+                    break
+
+        if applied:
+            _LOGGER.info(f"Synchronized {len(applied)} transactions")
             self.last_sync_time = datetime.now()
-        else:
-            _LOGGER.info("No new transactions synchronized")
-        
-        return all_transactions
+        return applied
     
-    def post_transaction(self, transaction_data, op_code=0):  # 0 = INSERT
-        """
-        Post a transaction to the server
-
-        Args:
-            transaction_data: JSON data for the transaction
-            op_code: Operation code (default is INSERT = 0)
-
-        Returns:
-            int: The SyncID the transaction was posted under
-        """
-        if not self.session_id:
-            raise Exception("Not logged in")
-
-        # Get the next sync ID
-        next_sync_id = self.get_next_sync_id(self.device_uuid)
-
-        # Ensure the transaction data is a string
-        if isinstance(transaction_data, dict):
-            transaction_data = json.dumps(transaction_data)
-
-        # Encode the transaction data as base64
-        transaction_b64 = base64.b64encode(transaction_data.encode('utf-8')).decode('utf-8')
-
-        # Prepare the payload
-        # Note: OPCode must be a string (e.g., "0" or "1"), not an integer
-        payload = {
-            "OPCode": str(op_code),
-            "SyncID": next_sync_id,
-            "Transaction": transaction_b64
-        }
-
-        # Post the transaction
-        _LOGGER.debug(f"post_transaction payload: OPCode={payload['OPCode']}, SyncID={payload['SyncID']}")
-        response = self._request(
-            "POST",
-            "/account/transaction",
-            headers={'Content-Type': 'application/json'},
-            json=payload
-        )
-
-        _LOGGER.debug(f"post_transaction response: status={response.status_code}, body={response.text[:200] if response.text else 'empty'}")
-        if response.status_code not in [200, 201]:
-            raise Exception(f"Failed to post transaction: {response.status_code} - {response.text}")
-
-        _LOGGER.info(f"Successfully posted transaction with sync ID {next_sync_id}")
-
-        # Update local sync ID
-        self.update_device_sync_info(self.device_uuid, next_sync_id)
-
-        return next_sync_id
 
     def _post_record(self, record, op_code=0):
         """
-        Post a record and apply it to the local database straight away, so
-        sensors update without waiting for the next sync.
+        Save a record locally, queue it for upload, then try to upload.
 
-        Raises on failure so callers can surface the error.
+        As in the Android app, the local save is what makes the record "logged":
+        if the server can't be reached it stays queued and is sent on the next sync.
 
         Returns:
-            dict: {"status": "success", "objectID": <id>}
+            dict: {"status": "success", "objectID": <id>, "queued": <still waiting to upload>}
         """
         if not self.is_authenticated:
             raise Exception("Not authenticated")
+        if not self.local_db or not self.transaction_handler:
+            raise Exception("Local database not available")
 
-        sync_id = self.post_transaction(record, op_code=op_code)
+        transaction_b64 = base64.b64encode(json.dumps(record).encode('utf-8')).decode('utf-8')
+        if not self.transaction_handler.process_transaction(
+                {"SyncID": 0, "OPCode": op_code, "Transaction": transaction_b64}):
+            raise Exception(f"Could not save {record.get('BCObjectType')} locally")
 
-        if self.transaction_handler:
-            local = {
-                "SyncID": sync_id,
-                "OPCode": op_code,
-                "Transaction": base64.b64encode(json.dumps(record).encode('utf-8')).decode('utf-8'),
-            }
-            if not self.transaction_handler.process_transaction(local):
-                _LOGGER.warning(
-                    f"Posted {record.get('BCObjectType')} {record.get('objectID')} "
-                    "but could not apply it locally; it will appear after the next resync"
-                )
+        server_last = next((d.get("LastSyncID", 0) for d in self.devices or []
+                            if d["DeviceUUID"] == self.device_uuid), 0)
+        self.local_db.enqueue_transaction(op_code, transaction_b64, min_sync_id=server_last)
 
-        return {"status": "success", "objectID": record["objectID"]}
+        queued = False
+        try:
+            self.upload_pending()
+        except Exception as e:
+            queued = True
+            _LOGGER.warning(f"Saved {record.get('BCObjectType')} locally; upload will be retried: {e}")
+
+        return {"status": "success", "objectID": record["objectID"], "queued": queued}
 
     def _baby_ref(self, baby_id):
         """
@@ -854,18 +721,18 @@ class BabyTrackerAPI:
     def _tz_offset(self):
         return _get_local_timezone_offset_seconds(self.time_zone)
 
-    def post_diaper(self, baby_id, time_str=None, pee_color=0, poo_color=0, texture=0, amount=2, status=0, note=""):
+    def post_diaper(self, baby_id, time_str=None, status=0, amount=2, pee_color=5, poo_color=5, texture=5, note=""):
         """
         Post a diaper change record
 
         Args:
             baby_id: ID of the baby the record belongs to
             time_str: Time of the diaper change in format 'YYYY-MM-DD HH:MM:SS +0000'
-            pee_color: Color code for pee (0-5)
-            poo_color: Color code for poo (0-5)
-            texture: Texture code (0-5)
-            amount: Amount (usually 2)
-            status: Status code (0=wet, 1=poopy, 2=mixed, 3=dry)
+            status: DiaperStatus (0=wet, 1=poopy, 2=mixed). Dry is wet with amount 0.
+            amount: DiaperAmount (0=none, 1=light, 2=normal, 3=heavy, 4=overflow, 5=not set)
+            pee_color: Color code for pee (5=not set)
+            poo_color: Color code for poo (5=not set)
+            texture: Texture code (5=not set)
             note: Optional note text
         """
         diaper_data = {
@@ -887,6 +754,154 @@ class BabyTrackerAPI:
             "timestamp": _now_str()
         }
         return self._post_record(diaper_data)
+
+    def _describe(self, item):
+        """Short description of a raw transaction for logs."""
+        try:
+            decoded = json.loads(base64.b64decode(item.get("Transaction", "")).decode("utf-8"))
+            return f"op={item.get('OPCode')} type={decoded.get('BCObjectType', '?')} id={decoded.get('objectID', '?')}"
+        except Exception:
+            return f"op={item.get('OPCode')} undecodable"
+
+    def upload_pending(self):
+        """
+        Upload queued transactions in order (Android startUploadTransactionImpl).
+        A row is removed only once the server accepts it; the first failure
+        stops the run so later rows keep their order.
+
+        Returns:
+            int: number of transactions uploaded
+        """
+        if not self.local_db:
+            return 0
+        uploaded = 0
+        for sync_id, op_code, transaction_b64 in self.local_db.get_pending_transactions():
+            payload = {
+                # The server has always been sent OPCode as a string here
+                "OPCode": str(op_code),
+                "SyncID": sync_id,
+                "Transaction": transaction_b64
+            }
+            response = self._request(
+                "POST",
+                "/account/transaction",
+                headers={'Content-Type': 'application/json'},
+                json=payload
+            )
+            if response.status_code not in [200, 201]:
+                raise Exception(f"Upload of sync ID {sync_id} failed: {response.status_code} - {response.text[:200]}")
+            self.local_db.delete_pending_transaction(sync_id)
+            uploaded += 1
+        if uploaded:
+            _LOGGER.info(f"Uploaded {uploaded} transaction(s)")
+        return uploaded
+
+    def post_pump(self, time_str=None, left_duration=0, right_duration=0, left_amount=0.0, right_amount=0.0,
+                  is_english_scale=False, finish_side=0, note=""):
+        """
+        Post a pumping session (Android Pump: account-level, no baby).
+
+        Args:
+            left_duration / right_duration: minutes per side
+            left_amount / right_amount: amount per side (oz if is_english_scale, else ml)
+            finish_side: PumpFinishSide (0=none, 1=left, 2=right)
+        """
+        def measure(value):
+            return {"englishMeasure": bool(is_english_scale), "value": float(value)}
+
+        pump_data = {
+            "BCObjectType": "Pump",
+            "amount": measure(left_amount + right_amount),
+            "leftAmount": measure(left_amount),
+            "rightAmount": measure(right_amount),
+            "leftDuration": int(left_duration),
+            "rightDuration": int(right_duration),
+            "finishSide": finish_side,
+            "sides": 0,  # PumpSidesBoth; the app never changes it
+            "note": note,
+            "pictureLoaded": True,
+            "pictureNote": [],
+            "time": time_str or _now_str(),
+            "timezone": self._tz_offset(),
+            "newFlage": True,
+            "objectID": str(uuid.uuid4()),
+            "timestamp": _now_str()
+        }
+        return self._post_record(pump_data)
+
+    def post_growth(self, baby_id, time_str=None, weight=0, length=0, head=0,
+                    is_english_weight_scale=True, is_english_length_scale=True, note=""):
+        """Post a growth measurement. Zero values are left out, as the app treats 0 as unset."""
+        growth_data = {
+            "BCObjectType": "Growth",
+            "deleted": False,
+            "queryIndex": 0,
+            "baby": self._baby_ref(baby_id),
+            "note": note,
+            "pictureLoaded": True,
+            "pictureNote": [],
+            "time": time_str or _now_str(),
+            "timezone": self._tz_offset(),
+            "newFlage": True,
+            "objectID": str(uuid.uuid4()),
+            "timestamp": _now_str()
+        }
+        for key, value, english in (("weight", weight, is_english_weight_scale),
+                                    ("length", length, is_english_length_scale),
+                                    ("head", head, is_english_length_scale)):
+            if value:
+                growth_data[key] = {"englishMeasure": bool(english), "value": float(value)}
+        return self._post_record(growth_data)
+
+    def _selection(self, rows, selection_id, kind):
+        for row in rows:
+            if row.get("id") == selection_id:
+                return {
+                    "objectID": row["id"],
+                    "name": row.get("name", ""),
+                    "desc": row.get("description", ""),
+                    "forAge": row.get("for_age", 0),
+                    "newFlage": False,
+                    "timestamp": "1970-01-01 00:00:00 +0000"
+                }
+        raise ValueError(f"{kind} {selection_id} not found in local database")
+
+    def post_milestone(self, baby_id, milestone_selection_id, time_str=None, note=""):
+        """Post a milestone for an existing MilestoneSelection."""
+        milestone_type = self._selection(self.local_db.get_milestone_selections(), milestone_selection_id, "Milestone")
+        milestone_type["used"] = False
+        milestone_data = {
+            "BCObjectType": "Milestone",
+            "hasNewType": False,
+            "milestoneType": milestone_type,
+            "baby": self._baby_ref(baby_id),
+            "note": note,
+            "pictureLoaded": True,
+            "pictureNote": [],
+            "time": time_str or _now_str(),
+            "timezone": self._tz_offset(),
+            "newFlage": True,
+            "objectID": str(uuid.uuid4()),
+            "timestamp": _now_str()
+        }
+        return self._post_record(milestone_data)
+
+    def post_vaccine(self, baby_id, vacc_id, time_str=None, note=""):
+        """Post a vaccine for an existing VaccineSelection (no doctor-visit link, as in the app)."""
+        vaccine_data = {
+            "BCObjectType": "Vaccine",
+            "vaccineType": self._selection(self.local_db.get_vaccine_selections(), vacc_id, "Vaccine"),
+            "baby": self._baby_ref(baby_id),
+            "note": note,
+            "pictureLoaded": True,
+            "pictureNote": [],
+            "time": time_str or _now_str(),
+            "timezone": self._tz_offset(),
+            "newFlage": True,
+            "objectID": str(uuid.uuid4()),
+            "timestamp": _now_str()
+        }
+        return self._post_record(vaccine_data)
 
     def post_temperature(self, baby_id, time_str=None, temperature=98.6, is_fahrenheit=True, note=""):
         """
