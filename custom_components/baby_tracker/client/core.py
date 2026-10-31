@@ -1664,15 +1664,8 @@ class BabyTracker:
     _BIRTH_WEIGHT_DAYS = 14
 
     def _local_tz(self):
-        """The configured time zone, else the host's."""
-        name = self.api.time_zone
-        if name:
-            try:
-                from zoneinfo import ZoneInfo
-                return ZoneInfo(name)
-            except Exception as e:
-                _LOGGER.warning(f"Unknown time zone {name!r}, using host zone: {e}")
-        return datetime.now().astimezone().tzinfo
+        """The configured time zone, else the host's (read each time so DST is followed)."""
+        return self.tz or datetime.now().astimezone().tzinfo
 
     def get_insights(self, baby_id=None, now=None):
         """
