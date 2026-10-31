@@ -551,7 +551,7 @@ def test_get_insights_keeps_babies_apart(tracker, app_db):
     twin = tracker.get_insights(TWIN, now=NOW)
     assert twin["name"] == "Ann Marie"
     assert twin["age"]["chronological_days"] == 200
-    assert twin["intake"]["actual_ml"] == pytest.approx(4 * 29.5735)   # 4 oz in ml
+    assert twin["intake"]["actual_ml"] == pytest.approx(4 * 29.5735, abs=0.05)   # 4 oz in ml, total kept to 0.1 ml
     assert twin["growth"]["weight"]["value"] == 14.0
     assert twin["diapers"]["wet_count"] == 1
     assert twin["weight_velocity"]["status"] == "unknown"
