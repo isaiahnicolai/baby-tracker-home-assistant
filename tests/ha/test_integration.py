@@ -541,6 +541,23 @@ async def test_diagnostics_hide_credentials(hass, hass_client, backend):
     assert "pending_uploads" in diagnostics and "last_sync" in diagnostics
 
 
+async def test_diagnostics_include_controls_and_nursing_timers(hass, hass_client, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    await set_number(hass, "number.everly_bottle_size", 6.5)
+    await select_option(hass, "select.everly_bottle_type", "pumped")
+    await press(hass, "button.everly_start_nursing_left")
+
+    diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+
+    controls = diagnostics["controls"]["ID-EVERLY"]
+    assert controls["bottle_size"] == 6.5 and controls["bottle_type"] == "pumped"
+    timer = diagnostics["nursing_timers"]["ID-EVERLY"]
+    assert timer["side"] == "left" and timer["seconds"] == {"left": 0.0, "right": 0.0}
+    assert timer["started_at"] and timer["segment_started_at"]
+    assert "ID-TWIN" not in diagnostics["nursing_timers"]
+
+
 async def test_baby_photo_is_an_image_entity_in_a_private_folder(hass, hass_client):
     baby = Baby({"objectID": "ID-EVERLY", "name": "Everly", "dob": "", "dueDay": "", "pictureName": "everly.jpg"})
     photo_dir = hass.config.path("baby_tracker")
