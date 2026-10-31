@@ -14,7 +14,10 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
-    MockConfigEntry, async_capture_events, async_fire_time_changed, mock_restore_cache_with_extra_data,
+    MockConfigEntry,
+    async_capture_events,
+    async_fire_time_changed,
+    mock_restore_cache_with_extra_data,
 )
 from pytest_homeassistant_custom_component.components.diagnostics import get_diagnostics_for_config_entry
 

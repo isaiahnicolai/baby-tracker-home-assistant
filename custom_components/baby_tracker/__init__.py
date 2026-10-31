@@ -9,16 +9,16 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .client import AccountResetError, AuthenticationError, BabyTracker
 from .client.dbconn import remove_sidecar_files
 from .const import (
-    CALENDAR_LOOKBACK_DAYS,
     BUTTON_DEBOUNCE_SECONDS,
+    CALENDAR_LOOKBACK_DAYS,
     CONF_DEVICE_UUID,
     CONF_EMAIL,
     CONF_PASSWORD,
@@ -35,8 +35,8 @@ from .const import (
     ISSUE_OLD_WWW_FOLDER,
     ISSUE_UPLOADS_PENDING,
     PHOTO_DIR_NAME,
-    activity_signal,
     UPLOADS_PENDING_REFRESHES,
+    activity_signal,
 )
 from .entity import migrate_to_baby_ids, remove_retired_entities
 from .services import async_register_services, async_unregister_services
