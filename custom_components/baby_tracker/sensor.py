@@ -162,7 +162,8 @@ class BabyTrackerSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         self._sensor_type = sensor_type
         self._baby_name = baby_name
-        self._attr_name = f"{baby_name} {sensor_name}"
+        self._attr_has_entity_name = True
+        self._attr_name = sensor_name
         self._attr_native_unit_of_measurement = unit
         self._attr_extra_state_attributes = {}
         # Make unique_id baby-specific to support multiple babies
@@ -203,7 +204,8 @@ class BabyTrackerInfoSensor(CoordinatorEntity, SensorEntity):
         """Initialize the sensor."""
         super().__init__(coordinator)
         self._baby_name = baby_name
-        self._attr_name = f"{baby_name} Info"
+        self._attr_has_entity_name = True
+        self._attr_name = "Info"
         self._attr_unique_id = baby_unique_id(coordinator, baby_name, "baby_info")
         self._attr_icon = "mdi:baby-face"
         self._attr_device_info = baby_device_info(coordinator, baby_name)

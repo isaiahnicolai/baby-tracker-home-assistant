@@ -15,8 +15,8 @@ from .const import (
     CONF_UNIT_SYSTEM, DEFAULT_UNIT_SYSTEM,
     EVENT_FEEDING, EVENT_DIAPER, EVENT_SLEEP,
 )
-from .api import AuthenticationError
-from .baby_tracker import BabyTracker
+from .client import AuthenticationError
+from .client import BabyTracker
 from .entity import migrate_to_baby_ids
 from .services import async_register_services, async_unregister_services
 

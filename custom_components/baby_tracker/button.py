@@ -76,7 +76,8 @@ class BabyTrackerBottleButton(CoordinatorEntity, ButtonEntity):
         self._size_label = size_label
         self._amount_oz = amount_oz
 
-        self._attr_name = f"{baby_name} Add {size_label} Bottle"
+        self._attr_has_entity_name = True
+        self._attr_name = f"Add {size_label} Bottle"
         self._attr_unique_id = baby_unique_id(coordinator, baby_name, f"add_{size_label.lower()}_bottle")
         self._attr_icon = "mdi:bottle-tonic-plus"
 
@@ -112,7 +113,8 @@ class BabyTrackerDiaperButton(CoordinatorEntity, ButtonEntity):
         self._poo = poo
 
         safe_type = diaper_type.lower()
-        self._attr_name = f"{baby_name} Add {diaper_type} Diaper"
+        self._attr_has_entity_name = True
+        self._attr_name = f"Add {diaper_type} Diaper"
         self._attr_unique_id = baby_unique_id(coordinator, baby_name, f"add_{safe_type}_diaper")
         self._attr_icon = "mdi:baby-carriage"
 
@@ -145,7 +147,8 @@ class BabyTrackerBathButton(CoordinatorEntity, ButtonEntity):
         self._baby_name = baby_name
         self._label = label
 
-        self._attr_name = f"{baby_name} Log {label}"
+        self._attr_has_entity_name = True
+        self._attr_name = f"Log {label}"
         self._attr_unique_id = baby_unique_id(coordinator, baby_name, "log_bath")
         self._attr_icon = "mdi:shower"
 
@@ -178,7 +181,8 @@ class BabyTrackerSleepButton(CoordinatorEntity, ButtonEntity):
         self._is_start = is_start
 
         action = "start" if is_start else "end"
-        self._attr_name = f"{baby_name} {label}"
+        self._attr_has_entity_name = True
+        self._attr_name = label
         self._attr_unique_id = baby_unique_id(coordinator, baby_name, f"{action}_sleep")
         self._attr_icon = "mdi:sleep" if is_start else "mdi:sleep-off"
 
@@ -211,7 +215,8 @@ class BabyTrackerMedicineButton(CoordinatorEntity, ButtonEntity):
         self._amount = amount
 
         safe_medicine = medicine_name.lower().replace(" ", "_")
-        self._attr_name = f"{baby_name} Give {medicine_name}"
+        self._attr_has_entity_name = True
+        self._attr_name = f"Give {medicine_name}"
         self._attr_unique_id = baby_unique_id(coordinator, baby_name, f"give_{safe_medicine}")
         self._attr_icon = "mdi:medical-bag"
 
@@ -241,7 +246,8 @@ class BabyTrackerSyncButton(CoordinatorEntity, ButtonEntity):
         """Initialize the button."""
         super().__init__(coordinator)
 
-        self._attr_name = "Baby Tracker Sync Now"
+        self._attr_has_entity_name = True
+        self._attr_name = "Sync Now"
         self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_sync_now"
         self._attr_icon = "mdi:sync"
 
@@ -272,7 +278,8 @@ class BabyTrackerForceResyncButton(CoordinatorEntity, ButtonEntity):
         """Initialize the button."""
         super().__init__(coordinator)
 
-        self._attr_name = "Baby Tracker Force Resync"
+        self._attr_has_entity_name = True
+        self._attr_name = "Force Resync"
         self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_force_resync"
         self._attr_icon = "mdi:database-sync"
 

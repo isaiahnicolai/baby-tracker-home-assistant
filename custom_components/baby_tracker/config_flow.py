@@ -36,8 +36,8 @@ DATA_SCHEMA = vol.Schema(
 
 async def validate_input(hass: core.HomeAssistant, data):
     """Validate the user input allows us to connect, and download the account's data."""
-    from .api import AuthenticationError
-    from .baby_tracker import BabyTracker
+    from .client import AuthenticationError
+    from .client import BabyTracker
 
     db_path = os.path.join(hass.config.path(), "baby_tracker.db")
     baby_tracker = BabyTracker(db_path=db_path, time_zone=hass.config.time_zone)
@@ -59,7 +59,7 @@ async def validate_input(hass: core.HomeAssistant, data):
 
 async def validate_login(hass: core.HomeAssistant, email, password, device_uuid):
     """Check credentials only (used when re-authenticating an existing entry)."""
-    from .api import AuthenticationError, BabyTrackerAPI
+    from .client import AuthenticationError, BabyTrackerAPI
 
     api = BabyTrackerAPI(time_zone=hass.config.time_zone)
     try:

@@ -1,0 +1,4 @@
+# Run inside the Linux dev container / CI, so keep Unix line endings
+scripts/* text eol=lf
+*.sh text eol=lf
+.devcontainer.json text eol=lf

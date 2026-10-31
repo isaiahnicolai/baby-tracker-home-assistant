@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Run the test suite (pass extra pytest arguments, e.g. scripts/test -k diaper)
+set -e
+cd "$(dirname "$0")/.."
+python3 -m pytest tests "$@"

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Install Home Assistant, the test harness and this repo's client package
+set -e
+cd "$(dirname "$0")/.."
+python3 -m pip install --upgrade pip
+python3 -m pip install --requirement requirements.txt

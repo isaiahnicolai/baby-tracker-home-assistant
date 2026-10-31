@@ -1,0 +1,6 @@
+# Client tests need only pytest; the Home Assistant tests in tests/ha also need the HA test harness.
+# Each harness release matches one Home Assistant release (0.13.375 = Home Assistant 2026.10.4);
+# bump it together with requirements.txt.
+pytest
+tzdata
+pytest-homeassistant-custom-component==0.13.375

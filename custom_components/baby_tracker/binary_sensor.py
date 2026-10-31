@@ -110,7 +110,8 @@ class BabyTrackerAlert(CoordinatorEntity, BinarySensorEntity):
         self._dismissed = False
         self._was_clear = True
 
-        self._attr_name = f"{baby_name} {alert_name}"
+        self._attr_has_entity_name = True
+        self._attr_name = alert_name
         self._attr_unique_id = (
             baby_unique_id(coordinator, baby_name, alert_type)
         )
@@ -381,7 +382,8 @@ class BabyTrackerNightModeSensor(CoordinatorEntity, BinarySensorEntity):
         """Initialize the night mode sensor."""
         super().__init__(coordinator)
         self._baby_name = baby_name
-        self._attr_name = f"{baby_name} Night Mode"
+        self._attr_has_entity_name = True
+        self._attr_name = "Night Mode"
         self._attr_unique_id = (
             baby_unique_id(coordinator, baby_name, "night_mode")
         )

@@ -19,7 +19,7 @@ def baby_unique_id(coordinator, baby_name, suffix):
 def baby_device_info(coordinator, baby_name):
     return DeviceInfo(
         identifiers={(DOMAIN, f"{coordinator.email}_{coordinator.baby_id_for(baby_name)}")},
-        name=f"Baby Tracker ({baby_name})",
+        name=baby_name,
         manufacturer="Baby Tracker",
         model="API Integration",
         sw_version=VERSION,
@@ -29,11 +29,18 @@ def baby_device_info(coordinator, baby_name):
 def system_device_info(coordinator):
     return DeviceInfo(
         identifiers={(DOMAIN, f"{coordinator.email}_system")},
-        name="Baby Tracker (System)",
+        name="Baby Tracker",
         manufacturer="Baby Tracker",
         model="API Integration",
         sw_version=VERSION,
     )
+
+
+def _find_device(dev_reg, entry_id, identifier):
+    """Look up this entry's device by identifier on any supported Home Assistant version."""
+    if hasattr(dev_reg, "async_get_device_by_identifier"):  # 2026.x: identifiers are unique per entry
+        return dev_reg.async_get_device_by_identifier(identifier, entry_id)
+    return dev_reg.async_get_device(identifiers={identifier})
 
 
 def _legacy_key(name):
@@ -73,7 +80,7 @@ def migrate_to_baby_ids(hass, entry, email, babies):
             old = (DOMAIN, f"{email}_{legacy}")
             if old in device.identifiers:
                 new = (DOMAIN, f"{email}_{baby_id}")
-                if dev_reg.async_get_device(identifiers={new}):
+                if _find_device(dev_reg, entry.entry_id, new):
                     _LOGGER.warning(f"Not migrating device {device.name}: {new[1]} already exists")
                 else:
                     dev_reg.async_update_device(device.id, new_identifiers=(device.identifiers - {old}) | {new})

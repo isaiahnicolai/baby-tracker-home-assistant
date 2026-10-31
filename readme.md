@@ -36,6 +36,52 @@ Requires Home Assistant 2024.12 or newer.
 
 Each baby gets its own device with its own sensors and buttons (for example "Add Wet Diaper", "Add Dirty Diaper" and "Add Mixed Diaper"). When calling a service yourself, choose the baby with the **Baby** device picker or `baby_name`; one of them is required when the account has more than one baby. Pump sessions belong to the account rather than a baby.
 
+### Using it from Python or the command line
+
+The sync client in `custom_components/baby_tracker/client/` has no Home Assistant dependency. Install it from a checkout of this repo:
+
+```bash
+pip install -e .
+```
+
+That makes it importable as `babytracker_client` and adds a `babytracker` command:
+
+```python
+from babytracker_client import BabyTracker
+
+tracker = BabyTracker(db_path="babytracker.db", time_zone="America/Chicago")
+tracker.authenticate("you@example.com", "password", device_uuid="<a UUID you keep for this script>")
+tracker.sync()
+for baby in tracker.get_all_babies():
+    print(baby.name, tracker.get_last_diaper(baby.object_id))
+```
+
+```bash
+export BABYTRACKER_EMAIL=you@example.com   # the password is asked for, or read from BABYTRACKER_PASSWORD
+babytracker babies
+babytracker last diaper --baby Everly
+babytracker add-diaper wet --baby Everly
+babytracker devices
+babytracker raw <device-uuid> --since 100   # decoded records exactly as the server sends them
+```
+
+Each client registers as its own device in the app. The CLI keeps its device ID and local database in `~/.babytracker`, separate from Home Assistant's.
+
+### Development
+
+The repo follows Home Assistant's [integration blueprint](https://github.com/ludeeus/integration_blueprint) setup:
+
+1. Open the repo in VS Code and choose **Reopen in Container** (needs Docker). The dev container installs Home Assistant, the test harness and the client package (`scripts/setup`).
+2. `scripts/develop` starts Home Assistant on http://localhost:8123 with this integration loaded from the repo and debug logging on. Its data lives in `config/`, which is git-ignored apart from `configuration.yaml`.
+3. `scripts/test` runs the test suite; `scripts/lint` formats and lints with ruff.
+
+Tests:
+
+- `tests/` covers the sync client against the app's real database schema (`tests/fixtures/app_schema.sql`, no data) with the sync server faked. These need only pytest: `pip install -e . pytest tzdata && pytest tests --ignore=tests/ha` works anywhere, including Windows.
+- `tests/ha` starts an in-memory Home Assistant with `pytest-homeassistant-custom-component`. It only runs on Linux/macOS (the dev container or CI), and each harness version matches one Home Assistant release: bump `requirements_test.txt` and `requirements.txt` together.
+
+GitHub Actions runs both, plus hassfest and HACS validation.
+
 ## Configuration
 
 ### Through the UI

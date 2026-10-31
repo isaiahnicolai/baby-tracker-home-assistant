@@ -1,0 +1,7 @@
+# Development environment (dev container / scripts/setup).
+# Keep homeassistant in step with the pytest-homeassistant-custom-component pin in requirements_test.txt.
+homeassistant==2026.10.4
+colorlog
+ruff
+-r requirements_test.txt
+-e .
