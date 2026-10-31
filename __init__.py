@@ -153,6 +153,56 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         self._previous_data = None  # None until the first refresh, so startup fires no events
         _LOGGER.info(f"Initialized Baby Tracker coordinator with database at: {db_path}")
 
+    def _fetch(self, www_dir):
+        """
+        Sync and read everything for one refresh. Runs in a single executor
+        job rather than one per query.
+        """
+        tracker = self.baby_tracker
+        sync_result = tracker.sync()
+        if sync_result.get("status") != "success":
+            raise UpdateFailed(f"Sync failed: {sync_result.get('message')}")
+
+        all_babies = tracker.get_all_babies()
+        # For backwards compatibility, also get the first baby as "baby_info"
+        baby_info = tracker.get_baby_info()
+
+        # Baby pictures are saved to www/baby_tracker/ and served via /local/
+        baby_pictures = {}
+        for baby in all_babies:
+            if baby.picture_name and tracker.download_baby_picture(baby.picture_name, www_dir):
+                baby_pictures[baby.name] = f"/local/baby_tracker/{baby.picture_name}"
+
+        baby_data = {}
+        for baby in all_babies:
+            baby_id = baby.object_id
+            baby_data[baby.name] = {
+                "baby_info": baby,
+                "feeding_summary": tracker.get_feeding_summary(7, baby_id),
+                "diaper_summary": tracker.get_diaper_summary(7, baby_id),
+                "last_feeding": tracker.get_last_feeding(baby_id),
+                "last_temperature": tracker.get_last_temperature(baby_id),
+                "time_since_last_feeding": tracker.time_since_last_feeding(baby_id),
+                "last_diaper": tracker.get_last_diaper(baby_id),
+                "last_sleep": tracker.get_last_sleep(baby_id),
+                "last_nursing": tracker.get_last_nursing(baby_id),
+                "last_feed_time": tracker.get_last_feed_time(baby_id),
+                "is_currently_sleeping": tracker.is_currently_sleeping(baby_id),
+                "last_bath": tracker.get_last_bath(baby_id),
+                "last_pump": tracker.get_last_pump(baby_id),
+                "pump_summary": tracker.get_pump_summary(7, baby_id),
+                "last_medicine": tracker.get_last_medicine(baby_id),
+                "last_growth": tracker.get_last_growth(baby_id),
+                "last_milestone": tracker.get_last_milestone(baby_id),
+                "last_doctor_visit": tracker.get_last_doctor_visit(baby_id),
+                "last_vaccine": tracker.get_last_vaccine(baby_id),
+                "today_wet_count": tracker.get_today_wet_diaper_count(baby_id),
+                "daily_summary": tracker.get_daily_summary(baby_id),
+                "sleep_analysis": tracker.get_sleep_analysis(baby_id, 14),
+            }
+
+        return all_babies, baby_info, baby_pictures, baby_data
+
     async def _async_update_data(self):
         """Fetch data from Baby Tracker."""
         try:
@@ -165,157 +215,9 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                     raise UpdateFailed(f"Authentication failed: {auth_result.get('message')}")
                 self.authenticated = True
             
-            # Sync data from the server
-            sync_result = await self.hass.async_add_executor_job(
-                self.baby_tracker.sync
+            all_babies, baby_info, baby_pictures, baby_data = await self.hass.async_add_executor_job(
+                self._fetch, self.hass.config.path("www", "baby_tracker")
             )
-            
-            if sync_result.get("status") != "success":
-                raise UpdateFailed(f"Sync failed: {sync_result.get('message')}")
-
-            # Fetch all babies
-            all_babies = await self.hass.async_add_executor_job(
-                self.baby_tracker.get_all_babies
-            )
-
-            # For backwards compatibility, also get the first baby as "baby_info"
-            baby_info = await self.hass.async_add_executor_job(
-                self.baby_tracker.get_baby_info
-            )
-
-            # Download baby pictures to www/baby_tracker/ folder
-            www_dir = self.hass.config.path("www", "baby_tracker")
-            baby_pictures = {}
-            for baby in all_babies:
-                if hasattr(baby, 'picture_name') and baby.picture_name:
-                    local_path = await self.hass.async_add_executor_job(
-                        self.baby_tracker.download_baby_picture,
-                        baby.picture_name,
-                        www_dir
-                    )
-                    if local_path:
-                        # Store the URL path for serving via /local/
-                        baby_pictures[baby.name] = f"/local/baby_tracker/{baby.picture_name}"
-                        _LOGGER.debug(f"Baby picture available at: {baby_pictures[baby.name]}")
-
-            # Create baby-specific data structure
-            baby_data = {}
-
-            # Fetch data for each baby
-            for baby in all_babies:
-                baby_id = baby.object_id
-                baby_name = baby.name
-
-                # Fetch all activity data for this baby (pass baby_id where supported)
-                feeding_summary = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_feeding_summary, 7, baby_id  # days, baby_id
-                )
-
-                diaper_summary = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_diaper_summary, 7, baby_id  # days, baby_id
-                )
-
-                last_feeding = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_feeding, baby_id
-                )
-
-                time_since_last_feeding = await self.hass.async_add_executor_job(
-                    self.baby_tracker.time_since_last_feeding, baby_id
-                )
-
-                last_temperature = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_temperature, baby_id
-                )
-
-                last_diaper = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_diaper, baby_id
-                )
-
-                last_sleep = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_sleep, baby_id
-                )
-
-                last_nursing = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_nursing, baby_id
-                )
-
-                last_feed_time = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_feed_time, baby_id
-                )
-
-                is_sleeping = await self.hass.async_add_executor_job(
-                    self.baby_tracker.is_currently_sleeping, baby_id
-                )
-
-                last_bath = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_bath, baby_id
-                )
-
-                last_pump = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_pump, baby_id
-                )
-
-                pump_summary = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_pump_summary, 7, baby_id  # days, baby_id
-                )
-
-                last_medicine = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_medicine, baby_id
-                )
-
-                last_growth = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_growth, baby_id
-                )
-
-                last_milestone = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_milestone, baby_id
-                )
-
-                last_doctor_visit = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_doctor_visit, baby_id
-                )
-
-                last_vaccine = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_last_vaccine, baby_id
-                )
-
-                today_wet_count = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_today_wet_diaper_count, baby_id
-                )
-
-                daily_summary = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_daily_summary, baby_id
-                )
-
-                sleep_analysis = await self.hass.async_add_executor_job(
-                    self.baby_tracker.get_sleep_analysis, baby_id, 14
-                )
-
-                # Store all data for this baby
-                baby_data[baby_name] = {
-                    "baby_info": baby,
-                    "feeding_summary": feeding_summary,
-                    "diaper_summary": diaper_summary,
-                    "last_feeding": last_feeding,
-                    "last_temperature": last_temperature,
-                    "time_since_last_feeding": time_since_last_feeding,
-                    "last_diaper": last_diaper,
-                    "last_sleep": last_sleep,
-                    "last_nursing": last_nursing,
-                    "last_feed_time": last_feed_time,
-                    "is_currently_sleeping": is_sleeping,
-                    "last_bath": last_bath,
-                    "last_pump": last_pump,
-                    "pump_summary": pump_summary,
-                    "last_medicine": last_medicine,
-                    "last_growth": last_growth,
-                    "last_milestone": last_milestone,
-                    "last_doctor_visit": last_doctor_visit,
-                    "last_vaccine": last_vaccine,
-                    "today_wet_count": today_wet_count,
-                    "daily_summary": daily_summary,
-                    "sleep_analysis": sleep_analysis,
-                }
 
             # Fire events for detected changes (skipped on the first refresh,
             # when everything would look new)
@@ -399,6 +301,8 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                     "baby_pictures": {},
                     "baby_info": baby_info
                 }
+        except UpdateFailed:
+            raise
         except Exception as err:
             _LOGGER.error("Error updating Baby Tracker data: %s", err)
             raise UpdateFailed(f"Error communicating with Baby Tracker: {err}")
