@@ -6,15 +6,19 @@ from unittest.mock import patch
 import pytest
 from homeassistant import config_entries
 from homeassistant.const import EntityCategory, UnitOfLength, UnitOfMass, UnitOfTemperature, UnitOfVolume
+from homeassistant.core import State
 from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_capture_events, async_fire_time_changed
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry, async_capture_events, async_fire_time_changed, mock_restore_cache_with_extra_data,
+)
 from pytest_homeassistant_custom_component.components.diagnostics import get_diagnostics_for_config_entry
 
-from custom_components.baby_tracker.client import AuthenticationError
+from custom_components.baby_tracker.client import AccountResetError, AuthenticationError
 from custom_components.baby_tracker.client.models import Baby
 from custom_components.baby_tracker.const import DOMAIN
 
@@ -24,12 +28,21 @@ TWIN = Baby({"objectID": "ID-TWIN", "name": "Ann Marie", "dob": "", "dueDay": ""
 CORE = "custom_components.baby_tracker.client.core.BabyTracker"
 
 
-def make_entry(unit_system="imperial"):
+def make_entry(unit_system="imperial", options=None):
     return MockConfigEntry(
         domain=DOMAIN, unique_id=EMAIL, title="Baby Tracker", version=2,
         data={"email": EMAIL, "password": "pw", "scan_interval": 15, "unit_system": unit_system,
               "device_uuid": "ha-uuid"},
+        options=options or {},
     )
+
+
+# The account's medicines and solids foods, as the client returns them
+MEDICINES = [
+    {"id": "MED-TYLENOL", "name": "Tylenol", "amount_per_time": 3.75, "unit": "ml"},
+    {"id": "MED-VITD", "name": "Vitamin D", "amount_per_time": 1.0, "unit": "ml"},
+]
+FOODS = [{"id": "FOOD-BANANA", "name": "Banana", "description": "", "is_bottle": False}]
 
 
 # What BabyTracker.get_insights returns (datetimes as ISO strings)
@@ -95,6 +108,7 @@ EVERLY_DATA = {
                     "is_english_length": True},
     "last_temperature": {"time": "2026-03-01 06:00:00 +0000", "fahrenheit": 99.1, "celsius": 37.3},
     "last_doctor_visit": {"time": "2026-02-20 15:00:00 +0000"},
+    "last_activity": {"time": "2026-03-01 10:30:00 +0000", "duration": 15, "activity_name": "Tummy Time"},
     "feeding_summary": {"total_feedings": 20, "nursing_total_minutes": 90, "bottle_amount_ml": 500.0,
                         "bottle_amount_oz": 16.9},
     "diaper_summary": {"total_diapers": 30, "poopy_count": 5, "mixed_count": 2, "wet_count": 20},
@@ -117,15 +131,15 @@ ACCOUNT = {"pumped_milk_inventory": {"ml": 479.1, "pumped_ml": 588.3, "fed_ml": 
 def fake_fetch(self, photo_dir):
     babies = [TWIN, EVERLY]
     data = {b.name: {"baby_info": b, **(EVERLY_DATA if b is EVERLY else {"insights": {}})} for b in babies}
-    return babies, EVERLY, {}, data, ACCOUNT
+    return babies, EVERLY, {}, data, ACCOUNT, MEDICINES
 
 
 def fetch_with(**changes):
     """A fetch like fake_fetch, but with Everly's data changed (as after something new is logged)."""
     def fetch(self, photo_dir):
-        babies, info, pictures, data, account = fake_fetch(self, photo_dir)
+        babies, info, pictures, data, account, medicines = fake_fetch(self, photo_dir)
         data["Everly"] = {**data["Everly"], **changes}
-        return babies, info, pictures, data, account
+        return babies, info, pictures, data, account, medicines
     return fetch
 
 
@@ -147,11 +161,44 @@ def backend():
         calls.append(("log_growth", baby_id, is_english_weight_scale, is_english_length_scale))
         return {"status": "success"}
 
+    def volume_feed(kind):
+        def add(self, baby_id, time_str=None, amount=0, is_english_measure=False, note=""):
+            calls.append((kind, baby_id, amount, is_english_measure))
+            return {"status": "success"}
+        return add
+
+    def add_nursing(self, baby_id, time_str=None, left_duration=0, right_duration=0, both_duration=0,
+                    finish_side=1, note=""):
+        calls.append(("add_nursing", baby_id, time_str, left_duration, right_duration, finish_side))
+        return {"status": "success"}
+
+    def add_medicine(self, baby_id, time_str=None, med_id=None, amount=0, note=""):
+        calls.append(("add_medicine", baby_id, med_id, amount))
+        return {"status": "success"}
+
+    def add_activity(self, baby_id, time_str=None, activity_name="Tummy Time", duration=0, location_id=None,
+                     note=""):
+        calls.append(("add_activity", baby_id, activity_name, duration, time_str))
+        return {"status": "success"}
+
+    def add_other_feed(self, baby_id, time_str=None, feed_type_id=None, amount=0, unit="",
+                       is_english_measure=True, note=""):
+        calls.append(("add_other_feed", baby_id, feed_type_id, amount, unit, is_english_measure))
+        return {"status": "success"}
+
     with patch(f"{CORE}.authenticate", return_value={"status": "success"}), \
          patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fake_fetch), \
          patch(f"{CORE}.add_diaper", add_diaper), \
          patch(f"{CORE}.add_temperature", add_temperature), \
          patch(f"{CORE}.log_growth", log_growth), \
+         patch(f"{CORE}.add_formula", volume_feed("add_formula")), \
+         patch(f"{CORE}.add_pumped", volume_feed("add_pumped")), \
+         patch(f"{CORE}.add_nursing", add_nursing), \
+         patch(f"{CORE}.add_medicine", add_medicine), \
+         patch(f"{CORE}.add_activity", add_activity), \
+         patch(f"{CORE}.add_other_feed", add_other_feed), \
+         patch(f"{CORE}.get_medicine_selections", lambda self: MEDICINES), \
+         patch(f"{CORE}.get_other_feed_selections", lambda self: FOODS), \
          patch(f"{CORE}.get_baby_by_name", lambda self, name: next((b for b in (TWIN, EVERLY) if b.name == name), None)):
         yield calls
 
@@ -247,7 +294,40 @@ async def test_options_flow(hass):
         result = await hass.config_entries.options.async_configure(
             result["flow_id"], {"scan_interval": 5, "unit_system": "metric"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options == {"scan_interval": 5, "unit_system": "metric"}
+    # What was left alone keeps its default; the fever temperature stays unset (blank = 100.4 F / 38.0 C)
+    assert entry.options == {
+        "scan_interval": 5, "unit_system": "metric", "feeding_overdue_hours": 0, "low_wet_minimum": 4,
+        "night_start_hour": 19, "night_end_hour": 7,
+    }
+
+
+async def test_options_flow_sets_the_alert_thresholds(hass):
+    entry = make_entry()
+    entry.add_to_hass(hass)
+    settings = {"scan_interval": 5, "unit_system": "imperial", "feeding_overdue_hours": 2.5, "low_wet_minimum": 6,
+                "night_start_hour": 20, "night_end_hour": 6, "fever_threshold": 100.0}
+    with patch("custom_components.baby_tracker.async_setup_entry", return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(result["flow_id"], settings)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options == settings
+
+
+async def test_options_flow_refuses_a_fever_temperature_in_the_wrong_unit(hass):
+    entry = make_entry()
+    entry.add_to_hass(hass)
+    with patch("custom_components.baby_tracker.async_setup_entry", return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        # 38 is a Celsius fever; the entry is in Fahrenheit
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"scan_interval": 15, "unit_system": "imperial", "fever_threshold": 38.0})
+        assert result["type"] is FlowResultType.FORM
+        assert result["errors"] == {"fever_threshold": "invalid_fever_threshold"}
+
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"scan_interval": 15, "unit_system": "metric", "fever_threshold": 38.0})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["fever_threshold"] == 38.0
 
 
 async def test_insight_entities(hass, backend):
@@ -504,7 +584,7 @@ def household_fetch(self, photo_dir):
         "last_sleep": {"time": "2026-03-01 10:45:00 +0000", "is_sleeping": True, "duration": 0},
         "daily_summary": {"total_feedings": 4},
     }
-    return [TWIN, EVERLY], EVERLY, {}, {"Ann Marie": twin, "Everly": {"baby_info": EVERLY, **EVERLY_DATA}}, ACCOUNT
+    return [TWIN, EVERLY], EVERLY, {}, {"Ann Marie": twin, "Everly": {"baby_info": EVERLY, **EVERLY_DATA}}, ACCOUNT, MEDICINES
 
 
 async def test_household_sensors_look_across_the_babies(hass, backend):
@@ -717,3 +797,399 @@ async def test_calendars_current_event_is_the_most_recent_one(hass, backend, fre
     assert calendar.state == "on"  # the nap runs until 12:20
     assert calendar.attributes["message"] == "Sleep (1h 20m)"
     assert hass.states.get("calendar.ann_marie_calendar").state == "off"
+# ----- controls, nursing timer, activities, thresholds, robustness and repairs -----
+
+async def press(hass, entity_id):
+    await hass.services.async_call("button", "press", {"entity_id": entity_id}, blocking=True)
+
+
+async def set_number(hass, entity_id, value):
+    await hass.services.async_call("number", "set_value", {"entity_id": entity_id, "value": value}, blocking=True)
+
+
+async def select_option(hass, entity_id, option):
+    await hass.services.async_call("select", "select_option", {"entity_id": entity_id, "option": option},
+                                   blocking=True)
+
+
+def coordinator_for(hass, entry):
+    return hass.data[DOMAIN][entry.entry_id]
+
+
+def allow_another_press(hass, entry):
+    """Forget when buttons were pressed, so a test can press one again within the debounce window."""
+    coordinator_for(hass, entry)._button_presses.clear()
+
+
+async def test_controls_follow_the_unit_setting(hass, backend):
+    await setup(hass, make_entry(unit_system="imperial"))
+
+    size = hass.states.get("number.everly_bottle_size")
+    assert float(size.state) == 4
+    assert size.attributes["unit_of_measurement"] == "oz"
+    assert (size.attributes["min"], size.attributes["max"], size.attributes["step"]) == (1, 12, 0.5)
+    assert size.attributes["mode"] == "box"
+    assert hass.states.get("number.ann_marie_bottle_size") is not None  # every baby has the controls
+
+    assert float(hass.states.get("number.everly_medicine_amount").state) == 1
+    assert hass.states.get("number.everly_medicine_amount").attributes["step"] == 0.1
+    assert float(hass.states.get("number.everly_tummy_time_minutes").state) == 15
+
+    bottle_type = hass.states.get("select.everly_bottle_type")
+    assert bottle_type.state == "formula"
+    assert bottle_type.attributes["options"] == ["formula", "pumped"]
+    medicine = hass.states.get("select.everly_medicine")
+    assert medicine.attributes["options"] == ["Tylenol", "Vitamin D"]
+    assert medicine.state == "Tylenol"
+
+
+async def test_metric_bottle_size_is_in_ml(hass, backend):
+    await setup(hass, make_entry(unit_system="metric"))
+    size = hass.states.get("number.everly_bottle_size")
+    assert float(size.state) == 120
+    assert size.attributes["unit_of_measurement"] == "mL"
+    assert (size.attributes["min"], size.attributes["max"], size.attributes["step"]) == (30, 360, 10)
+
+
+async def test_add_bottle_logs_the_amount_and_kind_chosen(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+
+    await set_number(hass, "number.everly_bottle_size", 6.5)
+    await press(hass, "button.everly_add_bottle")
+    assert backend[-1] == ("add_formula", "ID-EVERLY", 6.5, True)
+
+    await select_option(hass, "select.everly_bottle_type", "pumped")
+    await set_number(hass, "number.everly_bottle_size", 3)
+    allow_another_press(hass, entry)
+    await press(hass, "button.everly_add_bottle")
+    assert backend[-1] == ("add_pumped", "ID-EVERLY", 3.0, True)
+
+    # Each baby has its own settings
+    await press(hass, "button.ann_marie_add_bottle")
+    assert backend[-1] == ("add_formula", "ID-TWIN", 4.0, True)
+
+
+async def test_add_bottle_in_a_metric_entry_logs_ml(hass, backend):
+    await setup(hass, make_entry(unit_system="metric"))
+    await set_number(hass, "number.everly_bottle_size", 150)
+    await press(hass, "button.everly_add_bottle")
+    assert backend[-1] == ("add_formula", "ID-EVERLY", 150.0, False)
+
+
+async def test_give_medicine_logs_the_selected_medicine_and_amount(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+
+    # Until one is chosen, the first medicine
+    await press(hass, "button.everly_give_medicine")
+    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-TYLENOL", 1.0)
+
+    await select_option(hass, "select.everly_medicine", "Vitamin D")
+    await set_number(hass, "number.everly_medicine_amount", 2.5)
+    allow_another_press(hass, entry)
+    await press(hass, "button.everly_give_medicine")
+    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-VITD", 2.5)
+    assert hass.states.get("select.everly_medicine").state == "Vitamin D"
+
+
+async def test_controls_are_restored_after_a_restart(hass, backend):
+    mock_restore_cache_with_extra_data(hass, [
+        (State("number.everly_bottle_size", "7.5"),
+         {"native_max_value": 12, "native_min_value": 1, "native_step": 0.5,
+          "native_unit_of_measurement": "oz", "native_value": 7.5}),
+        # Saved in another unit, so meaningless here: the default stands
+        (State("number.everly_medicine_amount", "9"),
+         {"native_max_value": 100, "native_min_value": 0.1, "native_step": 0.1,
+          "native_unit_of_measurement": "mL", "native_value": 9}),
+        (State("select.everly_bottle_type", "pumped"), {}),
+        (State("select.everly_medicine", "Vitamin D"), {}),
+    ])
+    await setup(hass, make_entry())
+
+    assert float(hass.states.get("number.everly_bottle_size").state) == 7.5
+    assert float(hass.states.get("number.everly_medicine_amount").state) == 1
+    assert hass.states.get("select.everly_bottle_type").state == "pumped"
+    assert hass.states.get("select.everly_medicine").state == "Vitamin D"
+    await press(hass, "button.everly_add_bottle")
+    assert backend[-1] == ("add_pumped", "ID-EVERLY", 7.5, True)
+
+
+async def test_a_bottle_size_saved_in_another_unit_is_not_restored(hass, backend):
+    mock_restore_cache_with_extra_data(hass, [
+        (State("number.everly_bottle_size", "150"),
+         {"native_max_value": 360, "native_min_value": 30, "native_step": 10,
+          "native_unit_of_measurement": "mL", "native_value": 150}),
+    ])
+    await setup(hass, make_entry(unit_system="imperial"))
+    assert float(hass.states.get("number.everly_bottle_size").state) == 4
+
+
+async def test_pressing_a_button_twice_quickly_logs_once(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+
+    for _ in range(3):
+        await press(hass, "button.everly_add_wet_diaper")
+    assert [call[0] for call in backend].count("add_diaper") == 1
+
+    # Another button isn't affected, and the same one works again after the window
+    await press(hass, "button.everly_add_dirty_diaper")
+    assert [call[0] for call in backend].count("add_diaper") == 2
+    allow_another_press(hass, entry)
+    await press(hass, "button.everly_add_wet_diaper")
+    assert [call[0] for call in backend].count("add_diaper") == 3
+
+
+async def test_the_fixed_size_buttons_are_off_for_new_installs(hass, backend):
+    await setup(hass, make_entry())
+    ent_reg = er.async_get(hass)
+    for unique_id in ("add_4oz_bottle", "give_tylenol"):
+        entity_id = ent_reg.async_get_entity_id("button", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-EVERLY_{unique_id}")
+        assert ent_reg.async_get(entity_id).disabled_by is er.RegistryEntryDisabler.INTEGRATION
+    assert hass.states.get("button.everly_add_bottle") is not None
+
+
+async def test_nursing_timer_logs_the_minutes_on_each_side(hass, backend, freezer):
+    await setup(hass, make_entry())
+    timer = "binary_sensor.everly_nursing"
+    assert hass.states.get(timer).state == "off"
+
+    started = dt_util.utcnow()
+    await press(hass, "button.everly_start_nursing_left")
+    assert hass.states.get(timer).state == "on"
+    assert hass.states.get(timer).attributes["side"] == "left"
+    assert hass.states.get(timer).attributes["started_at"] == started.isoformat()
+
+    freezer.tick(timedelta(minutes=10))
+    await press(hass, "button.everly_start_nursing_right")  # switch sides
+    assert hass.states.get(timer).attributes["side"] == "right"
+
+    freezer.tick(timedelta(minutes=6))
+    await press(hass, "button.everly_end_nursing")
+
+    # Dated when it started: 10 minutes left, 6 right, finished on the right (2)
+    assert backend[-1] == ("add_nursing", "ID-EVERLY", started.strftime("%Y-%m-%d %H:%M:%S +0000"), 10, 6, 2)
+    assert hass.states.get(timer).state == "off"
+    assert hass.states.get(timer).attributes.get("side") is None
+
+
+async def test_a_very_short_nursing_session_counts_a_minute(hass, backend, freezer):
+    await setup(hass, make_entry())
+    await press(hass, "button.everly_start_nursing_right")
+    freezer.tick(timedelta(seconds=10))
+    await press(hass, "button.everly_end_nursing")
+    assert backend[-1][3:] == (0, 1, 2)
+
+
+async def test_ending_nursing_with_no_timer_is_refused(hass, backend):
+    await setup(hass, make_entry())
+    with pytest.raises(ServiceValidationError):
+        await press(hass, "button.everly_end_nursing")
+    assert not [call for call in backend if call[0] == "add_nursing"]
+
+
+async def test_a_failed_nursing_log_keeps_the_timer_running(hass, backend):
+    await setup(hass, make_entry())
+    await press(hass, "button.everly_start_nursing_left")
+    with patch(f"{CORE}.add_nursing", return_value={"status": "error", "message": "offline"}), \
+         pytest.raises(HomeAssistantError):
+        await press(hass, "button.everly_end_nursing")
+    assert hass.states.get("binary_sensor.everly_nursing").state == "on"
+
+
+async def test_nursing_timers_are_per_baby(hass, backend):
+    await setup(hass, make_entry())
+    await press(hass, "button.everly_start_nursing_left")
+    assert hass.states.get("binary_sensor.everly_nursing").state == "on"
+    assert hass.states.get("binary_sensor.ann_marie_nursing").state == "off"
+
+
+async def test_log_activity_service_and_tummy_time_button(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+
+    await hass.services.async_call(
+        DOMAIN, "log_activity",
+        {"baby_name": "Everly", "activity_name": "Reading", "duration": 20, "time": "2026-03-01T09:30:00+00:00"},
+        blocking=True)
+    assert backend[-1] == ("add_activity", "ID-EVERLY", "Reading", 20, "2026-03-01 09:30:00 +0000")
+
+    # Tummy time is the default activity
+    await hass.services.async_call(DOMAIN, "log_activity", {"baby_name": "Everly", "duration": 5}, blocking=True)
+    assert backend[-1][:4] == ("add_activity", "ID-EVERLY", "Tummy Time", 5)
+
+    # The button logs the Tummy Time Minutes number (15 until changed)
+    await press(hass, "button.everly_log_tummy_time")
+    assert backend[-1][:4] == ("add_activity", "ID-EVERLY", "Tummy Time", 15)
+    await set_number(hass, "number.everly_tummy_time_minutes", 25)
+    allow_another_press(hass, entry)
+    await press(hass, "button.everly_log_tummy_time")
+    assert backend[-1][:4] == ("add_activity", "ID-EVERLY", "Tummy Time", 25)
+
+    with pytest.raises(ServiceValidationError):  # two babies and none chosen
+        await hass.services.async_call(DOMAIN, "log_activity", {"duration": 5}, blocking=True)
+
+
+async def test_last_activity_sensor(hass, backend):
+    await setup(hass, make_entry())
+    last = hass.states.get("sensor.everly_last_activity")
+    assert last.state == "Tummy Time"
+    assert last.attributes["duration"] == 15
+    assert last.attributes["time"] == "2026-03-01 10:30:00 +0000"
+    assert hass.states.get("sensor.ann_marie_last_activity").state == "unknown"
+
+
+async def test_add_solids_service(hass, backend):
+    await setup(hass, make_entry())
+
+    await hass.services.async_call(
+        DOMAIN, "add_solids", {"baby_name": "Everly", "food_name": "banana", "amount": 2, "unit": "tbsp"},
+        blocking=True)
+    assert backend[-1] == ("add_other_feed", "ID-EVERLY", "FOOD-BANANA", 2.0, "tbsp", True)
+
+    await hass.services.async_call(
+        DOMAIN, "add_solids",
+        {"baby_name": "Everly", "food_name": "Banana", "amount": 30, "unit": "g", "is_english_measure": False},
+        blocking=True)
+    assert backend[-1] == ("add_other_feed", "ID-EVERLY", "FOOD-BANANA", 30.0, "g", False)
+
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN, "add_solids", {"baby_name": "Everly", "food_name": "Dragonfruit", "amount": 1}, blocking=True)
+
+
+async def test_writes_ask_for_a_debounced_refresh(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    with patch.object(coordinator, "async_request_refresh") as request, \
+         patch.object(coordinator, "async_refresh") as refresh:
+        await hass.services.async_call(DOMAIN, "add_diaper", {"baby_name": "Everly"}, blocking=True)
+        await hass.services.async_call(DOMAIN, "log_activity", {"baby_name": "Everly", "duration": 5}, blocking=True)
+    assert request.call_count == 2
+    refresh.assert_not_called()
+
+
+async def test_feeding_overdue_uses_the_age_based_hours_by_default(hass, backend):
+    # Everly last fed 2.5 hours ago; the default for a baby of unknown age is 3.5 hours
+    await setup(hass, make_entry())
+    overdue = hass.states.get("binary_sensor.everly_feeding_overdue")
+    assert overdue.state == "off"
+    assert overdue.attributes["threshold"] == 3.5
+
+
+async def test_feeding_overdue_turns_on_after_two_hours_when_set_to_two(hass, backend):
+    entry = make_entry(options={"feeding_overdue_hours": 2})
+    await setup(hass, entry)
+    overdue = hass.states.get("binary_sensor.everly_feeding_overdue")
+    assert overdue.state == "on"
+    assert overdue.attributes["threshold"] == 2
+    assert overdue.attributes["age_bracket"] == "custom"
+
+    # 0 means by age again
+    hass.config_entries.async_update_entry(entry, options={"feeding_overdue_hours": 0})
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.everly_feeding_overdue").state == "off"
+
+
+async def test_fever_threshold_is_in_the_entrys_unit(hass, backend):
+    # Everly's last reading was 99.1 F (37.3 C)
+    await setup(hass, make_entry(options={"fever_threshold": 99.0}))
+    fever = hass.states.get("binary_sensor.everly_fever")
+    assert fever.state == "on" and fever.attributes["threshold"] == 99.0
+
+
+async def test_fever_threshold_in_celsius(hass, backend):
+    await setup(hass, make_entry(unit_system="metric", options={"fever_threshold": 37.0}))
+    fever = hass.states.get("binary_sensor.everly_fever")
+    assert fever.state == "on" and fever.attributes["current_value"] == 37.3
+
+
+async def test_the_default_fever_threshold_is_100_4_f_or_38_c(hass, backend):
+    await setup(hass, make_entry())
+    fever = hass.states.get("binary_sensor.everly_fever")
+    assert fever.state == "off" and fever.attributes["threshold"] == 100.4
+
+
+async def test_default_night_hours_are_7_pm_to_7_am(hass, backend, freezer):
+    # Everly is asleep; it is noon
+    freezer.move_to(datetime(2026, 3, 1, 12, 0, tzinfo=dt_util.get_default_time_zone()))
+    await setup(hass, make_entry())
+    night = hass.states.get("binary_sensor.everly_night_mode")
+    assert night.state == "off"
+    assert (night.attributes["night_start_hour"], night.attributes["night_end_hour"]) == (19, 7)
+
+
+async def test_night_hours_set_in_the_options_apply(hass, backend, freezer):
+    freezer.move_to(datetime(2026, 3, 1, 12, 0, tzinfo=dt_util.get_default_time_zone()))
+    await setup(hass, make_entry(options={"night_start_hour": 10, "night_end_hour": 14}))
+    night = hass.states.get("binary_sensor.everly_night_mode")
+    assert night.state == "on"
+    assert (night.attributes["night_start_hour"], night.attributes["night_end_hour"]) == (10, 14)
+
+
+async def test_night_hours_can_wrap_midnight(hass, backend, freezer):
+    freezer.move_to(datetime(2026, 3, 1, 12, 0, tzinfo=dt_util.get_default_time_zone()))
+    await setup(hass, make_entry(options={"night_start_hour": 22, "night_end_hour": 13}))
+    assert hass.states.get("binary_sensor.everly_night_mode").state == "on"
+
+
+async def test_old_www_folder_raises_a_repair(hass, backend, tmp_path):
+    hass.config.config_dir = str(tmp_path)
+    old_folder = tmp_path / "www" / "baby_tracker"
+    old_folder.mkdir(parents=True)
+    await setup(hass, make_entry())
+
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, "old_www_folder")
+    assert issue is not None
+    assert issue.severity is ir.IssueSeverity.WARNING
+    assert issue.is_fixable is False
+    assert issue.translation_key == "old_www_folder"
+    assert issue.translation_placeholders == {"folder": str(old_folder)}
+
+
+async def test_no_repair_without_the_old_www_folder(hass, backend, tmp_path):
+    hass.config.config_dir = str(tmp_path)
+    await setup(hass, make_entry())
+    assert ir.async_get(hass).async_get_issue(DOMAIN, "old_www_folder") is None
+
+
+async def test_unsent_records_raise_a_repair_after_several_refreshes_and_clear_when_sent(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    registry = ir.async_get(hass)
+
+    coordinator.pending_uploads = 2
+    for _ in range(3):
+        await coordinator.async_refresh()
+    assert registry.async_get_issue(DOMAIN, "uploads_pending") is None  # it takes more than 3
+
+    await coordinator.async_refresh()
+    issue = registry.async_get_issue(DOMAIN, "uploads_pending")
+    assert issue is not None and issue.severity is ir.IssueSeverity.WARNING and issue.is_fixable is False
+    assert issue.translation_placeholders == {"count": "2"}
+
+    coordinator.pending_uploads = 0
+    await coordinator.async_refresh()
+    assert registry.async_get_issue(DOMAIN, "uploads_pending") is None
+
+
+async def test_a_reset_account_raises_a_repair_until_a_sync_succeeds(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, "account_reset") is None
+
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               side_effect=AccountResetError("account 1 is now 2")):
+        await coordinator.async_refresh()
+    issue = registry.async_get_issue(DOMAIN, "account_reset")
+    assert issue is not None and issue.severity is ir.IssueSeverity.ERROR and issue.is_fixable is False
+    assert not coordinator.last_update_success
+
+    await coordinator.async_refresh()  # a sync that works again (the fixture's fetch)
+    assert coordinator.last_update_success
+    assert registry.async_get_issue(DOMAIN, "account_reset") is None
