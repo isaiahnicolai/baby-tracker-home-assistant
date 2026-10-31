@@ -20,7 +20,7 @@ the device UUID passed to ``authenticate``. Reuse the same UUID and database
 path between runs.
 """
 
-from .api import AuthenticationError, BabyTrackerAPI
+from .api import AccountResetError, AuthenticationError, BabyTrackerAPI
 from .core import BabyTracker
 from .database import BabyTrackerLocalDatabase
 from .models import Baby
@@ -28,6 +28,7 @@ from .models import Baby
 __version__ = "0.2.0"
 
 __all__ = [
+    "AccountResetError",
     "AuthenticationError",
     "Baby",
     "BabyTracker",

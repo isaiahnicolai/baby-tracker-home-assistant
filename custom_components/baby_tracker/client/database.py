@@ -24,6 +24,9 @@ class BabyTrackerLocalDatabase:
             (defaults to the system's local zone)
         """
         self.tz = tz  # None: the system's local zone, looked up at use so DST changes are followed
+        # Where activity pictures are kept, once a sync has been told (see BabyTracker.sync).
+        # Merging an activity delete removes its files from here, as the app does.
+        self.picture_dir = None
         # Determine the database path
         if db_path:
             self.db_path = db_path
@@ -2963,21 +2966,147 @@ class BabyTrackerLocalDatabase:
                                      records.record_type(selection_type).row(nested, self.convert_timestamp),
                                      "INSERT OR IGNORE")
             self._insert_row(cursor, record_type.table, row, "INSERT OR REPLACE")
+            if record_type.activity:
+                self._save_pictures(cursor, row["ID"], records.picture_entries(record))
             conn.commit()
             return True
         finally:
             conn.close()
 
     def delete_record(self, object_type: str, object_id: str) -> bool:
-        """Delete a synced record by ID. Raises on failure."""
+        """Delete a synced record by ID (and an activity's pictures). Raises on failure."""
         record_type = records.record_type(object_type)
         if record_type is None:
             raise ValueError(f"Unsupported record type: {object_type}")
         conn = self._connect()
         try:
-            conn.execute(f'DELETE FROM "{record_type.table}" WHERE ID = ?', (object_id,))
+            cursor = conn.cursor()
+            cursor.execute(f'DELETE FROM "{record_type.table}" WHERE ID = ?', (object_id,))
+            if record_type.activity:
+                self._delete_activity_pictures(cursor, object_id)
             conn.commit()
             return True
+        finally:
+            conn.close()
+
+    # ----- activity pictures (BTDatabaseImple Picture / PhotoDownloadList) -----
+
+    def _remove_picture_files(self, file_name: str, media_type: int) -> None:
+        """Delete a picture's files from picture_dir, if it is known."""
+        if not self.picture_dir:
+            return
+        for name in records.media_files(file_name, media_type):
+            path = os.path.join(self.picture_dir, os.path.basename(name))
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                _LOGGER.warning(f"Could not delete picture file {path}: {e}")
+
+    def _save_pictures(self, cursor, activity_id: str, entries: List[Dict]) -> None:
+        """
+        Store an activity's pictureNote: entries flagged deleted are removed, the
+        rest are saved and their files (and thumbnails) queued for download unless
+        already on disk (BTDatabaseImple.saveActivityPictureNoteImple, mergeInsertActivity).
+        """
+        if not entries:
+            return
+        self._ensure_sync_tables(cursor)
+        for entry in entries:
+            if entry["deleted"]:
+                cursor.execute('DELETE FROM Picture WHERE ID = ?', (entry["ID"],))
+                self._remove_picture_files(entry["FileName"], entry["Type"])
+                continue
+            cursor.execute(
+                'INSERT OR REPLACE INTO Picture (ID, Timestamp, ActivityID, Type, FileName) VALUES (?, ?, ?, ?, ?)',
+                (entry["ID"], self.convert_timestamp(entry["Timestamp"]), activity_id, entry["Type"], entry["FileName"]))
+            for name in records.media_files(entry["FileName"], entry["Type"]):
+                if self.picture_dir and os.path.exists(os.path.join(self.picture_dir, os.path.basename(name))):
+                    continue
+                cursor.execute('INSERT OR IGNORE INTO PhotoDownloadList (PhotoFile, DownloadCount) VALUES (?, 0)', (name,))
+
+    def _delete_activity_pictures(self, cursor, activity_id: str) -> None:
+        """Remove an activity's Picture rows, their queued downloads and their files."""
+        if not self._table_exists(cursor, "Picture"):
+            return
+        cursor.execute('SELECT FileName, Type FROM Picture WHERE ActivityID = ?', (activity_id,))
+        for file_name, media_type in cursor.fetchall():
+            for name in records.media_files(file_name, media_type or 0):
+                if self._table_exists(cursor, "PhotoDownloadList"):
+                    cursor.execute('DELETE FROM PhotoDownloadList WHERE PhotoFile = ?', (name,))
+            self._remove_picture_files(file_name, media_type or 0)
+        cursor.execute('DELETE FROM Picture WHERE ActivityID = ?', (activity_id,))
+
+    def get_pending_downloads(self, max_attempts: int = 10) -> List[tuple]:
+        """Queued picture files as (name, failed attempts) still under max_attempts, fewest attempts first."""
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            self._ensure_sync_tables(cursor)
+            cursor.execute('SELECT PhotoFile, DownloadCount FROM PhotoDownloadList WHERE DownloadCount < ? '
+                           'ORDER BY DownloadCount, PhotoFile', (max_attempts,))
+            return cursor.fetchall()
+        finally:
+            conn.close()
+
+    def finish_download(self, file_name: str) -> None:
+        """Take a file off the download queue (downloaded, or given up on)."""
+        conn = self._connect()
+        try:
+            conn.execute('DELETE FROM PhotoDownloadList WHERE PhotoFile = ?', (file_name,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def fail_download(self, file_name: str) -> int:
+        """Count a failed attempt (increaseDownloadPhotoFileFailedCount); returns the attempts so far."""
+        conn = self._connect()
+        try:
+            conn.execute('UPDATE PhotoDownloadList SET DownloadCount = DownloadCount + 1 WHERE PhotoFile = ?',
+                         (file_name,))
+            conn.commit()
+            row = conn.execute('SELECT DownloadCount FROM PhotoDownloadList WHERE PhotoFile = ?',
+                               (file_name,)).fetchone()
+            return row[0] if row else 0
+        finally:
+            conn.close()
+
+    def get_named_wire(self, object_type: str, object_id: str) -> Optional[Dict]:
+        """A stored baby or selection as the apps send it, or None if it isn't there."""
+        record_type = records.record_type(object_type)
+        conn = self._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            if not self._table_exists(cursor, record_type.table):
+                return None
+            row = cursor.execute(f'SELECT * FROM "{record_type.table}" WHERE ID = ?', (object_id,)).fetchone()
+            return None if row is None else records.named_wire(records.canonical_type(object_type), dict(row))
+        finally:
+            conn.close()
+
+    def get_account_id(self) -> Optional[str]:
+        """The account this database was synced with, or None if not recorded yet."""
+        if not os.path.exists(self.db_path):
+            return None
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            self._ensure_sync_tables(cursor)
+            row = cursor.execute("SELECT Value FROM SyncState WHERE Key = 'AccountID'").fetchone()
+            conn.commit()
+            return row[0] if row else None
+        finally:
+            conn.close()
+
+    def set_account_id(self, account_id) -> None:
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            self._ensure_sync_tables(cursor)
+            cursor.execute("INSERT OR REPLACE INTO SyncState (Key, Value) VALUES ('AccountID', ?)", (str(account_id),))
+            conn.commit()
         finally:
             conn.close()
 
@@ -2992,6 +3121,16 @@ class BabyTrackerLocalDatabase:
         cursor.execute('CREATE TABLE IF NOT EXISTS "TransactionLog" '
                        '("ID" INTEGER PRIMARY KEY AUTOINCREMENT, "OpCode" INTEGER NOT NULL, "Log" BLOB NOT NULL)')
         cursor.execute('CREATE TABLE IF NOT EXISTS "ReliveList" ("ID" TEXT PRIMARY KEY NOT NULL UNIQUE)')
+        cursor.execute('CREATE TABLE IF NOT EXISTS "PhotoDownloadList" '
+                       '("PhotoFile" TEXT PRIMARY KEY NOT NULL UNIQUE, "DownloadCount" INTEGER DEFAULT 0)')
+        cursor.execute('CREATE TABLE IF NOT EXISTS "PhotoList" ("PhotoFile" TEXT PRIMARY KEY NOT NULL UNIQUE)')
+        cursor.execute('CREATE TABLE IF NOT EXISTS "MergedTransaction" '
+                       '("DeviceID" TEXT PRIMARY KEY NOT NULL UNIQUE, "SyncID" INTEGER)')
+        cursor.execute('CREATE TABLE IF NOT EXISTS "Picture" ("ID" TEXT PRIMARY KEY NOT NULL UNIQUE, '
+                       '"Timestamp" REAL DEFAULT 0, "ActivityID" TEXT NOT NULL, "Type" INTEGER, '
+                       '"FileName" TEXT NOT NULL, "Thumbnail" BLOB)')
+        # Ours, not the app's: what the database was synced with
+        cursor.execute('CREATE TABLE IF NOT EXISTS "SyncState" ("Key" TEXT PRIMARY KEY NOT NULL, "Value" TEXT)')
 
     def add_relive(self, object_id: str) -> None:
         conn = self._connect()
@@ -3058,16 +3197,19 @@ class BabyTrackerLocalDatabase:
 
     def clear_sync_state(self) -> None:
         """
-        Drop queued uploads and relives inherited from a seed database
-        (BTDatabaseImple.deleteAllTransactionLogImple), so another device's
-        pending work is never uploaded as ours.
+        Drop sync state inherited from a seed database
+        (BTDatabaseImple.deleteAllTransactionLogImple): queued uploads, relives,
+        the seeding device's merge progress and photo lists, so another device's
+        pending work is never uploaded as ours. Also forgets the account the
+        database was synced with, so a force resync can join a reset group.
         """
         conn = self._connect()
         try:
             cursor = conn.cursor()
             self._ensure_sync_tables(cursor)
-            cursor.execute('DELETE FROM TransactionLog')
-            cursor.execute('DELETE FROM ReliveList')
+            for table in ("TransactionLog", "PhotoList", "MergedTransaction", "ReliveList",
+                          "PhotoDownloadList", "SyncState"):
+                cursor.execute(f'DELETE FROM "{table}"')
             conn.commit()
         finally:
             conn.close()

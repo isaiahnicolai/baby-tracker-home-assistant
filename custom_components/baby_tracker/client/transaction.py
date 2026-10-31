@@ -12,6 +12,12 @@ and the mergeInsert*/mergeUpdate*/mergeDelete* methods):
 - RELIVE restores a deleted baby/selection; CONFLICT merges two babies or
   selections that clashed on name, re-pointing the loser's records to the winner.
 
+Merging can also queue transactions of our own, as the app does (the `isJoining`
+flag in BTDatabaseImple's merge methods suppresses them): a ConflictRecord when
+an incoming baby/selection loses a name clash, a RELIVE when an incoming delete
+is refused because the record is in use, and a repeat of every delete that was
+applied. See `enqueue`.
+
 How each record type is stored is defined in records.py.
 """
 
@@ -20,6 +26,8 @@ from .database import BabyTrackerLocalDatabase
 import logging
 import base64
 import json
+import time
+import uuid
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,15 +42,31 @@ SUCCESS, IGNORED, REJECTED, ERROR = "success", "ignored", "rejected", "error"
 class TransactionHandler:
     """Handles Baby Tracker transactions"""
 
-    def __init__(self, database: BabyTrackerLocalDatabase):
-        """Initialize with a database connection"""
+    def __init__(self, database: BabyTrackerLocalDatabase, enqueue=None):
+        """
+        Initialize with a database connection.
+
+        enqueue(op_code, record_dict) queues a transaction of ours for upload;
+        without it nothing is echoed.
+        """
         self.db = database
+        self.enqueue = enqueue
+        # True while joining a group (the initial seed and first sync): nothing is echoed
+        self.joining = False
+        # Per merge: the transaction as received, and whether we may queue echoes for it
+        self._raw = None
+        self._emit = False
 
-    def process_transaction(self, transaction, apply_to_db=True):
-        """Apply a transaction; returns False only if it could not be applied."""
-        return self.merge(transaction) != ERROR
+    def process_transaction(self, transaction, apply_to_db=True, echo=True, own_device=False):
+        """
+        Apply a transaction; returns False only if it could not be applied.
 
-    def merge(self, transaction):
+        echo=False is for our own new records, own_device=True for transactions
+        downloaded from our own device ID (they are our past work coming back).
+        """
+        return self.merge(transaction, echo=echo, own_device=own_device) != ERROR
+
+    def merge(self, transaction, echo=True, own_device=False):
         """Apply a transaction and return SUCCESS, IGNORED, REJECTED or ERROR."""
         if "Transaction" not in transaction or "SyncID" not in transaction or "OPCode" not in transaction:
             _LOGGER.warning(f"Incomplete transaction: {transaction}")
@@ -54,6 +78,8 @@ class TransactionHandler:
             data = json.loads(base64.b64decode(transaction["Transaction"]).decode('utf-8'))
             _LOGGER.debug(f"Processing transaction {sync_id} (OpCode: {op_code}): "
                           f"{data.get('BCObjectType', '')} - {data.get('objectID', '')}")
+            self._raw = data
+            self._emit = bool(echo and not own_device and not self.joining and self.enqueue)
 
             if op_code == OP_CONFLICT:
                 return self._merge_conflict(data)
@@ -70,6 +96,10 @@ class TransactionHandler:
             if op_code == OP_DELETE:
                 return self._merge_delete(record)
             if op_code == OP_RELIVE:
+                if own_device:
+                    # A relive we sent, coming back: it must not mark the record as
+                    # awaiting a delete that was already dealt with
+                    return IGNORED
                 return self._merge_relive(record)
 
             _LOGGER.warning(f"Unhandled operation code: {op_code}")
@@ -91,6 +121,15 @@ class TransactionHandler:
         """Babies and selections: unique by name, protected from deletion while used."""
         return self._type(record) == "Baby" or records.record_type(self._type(record)).selection
 
+    def _echo(self, op_code, record):
+        """Queue a transaction of ours triggered by this merge (unless joining, or it is our own)."""
+        if not self._emit:
+            return
+        try:
+            self.enqueue(op_code, record)
+        except Exception as e:  # the merge itself succeeded; the app only logs this too
+            _LOGGER.error(f"Could not queue op {op_code} for upload: {e}")
+
     def _local_timestamp(self, record):
         return self.db.get_row_timestamp(self._table(record), record.get("objectID", ""))
 
@@ -109,6 +148,17 @@ class TransactionHandler:
                 local_id, local_ts = clash
                 if local_ts < self.db.convert_timestamp(record.get("timestamp")):
                     _LOGGER.info(f"{self._type(record)} '{record['name']}' already exists locally and is older; keeping it")
+                    # buildConflictRecord(winner = ours, loser = theirs)
+                    winner = self.db.get_named_wire(self._type(record), local_id)
+                    if winner is not None:
+                        self._echo(OP_CONFLICT, {
+                            "BCObjectType": "ConflictRecord",
+                            "objectID": str(uuid.uuid4()),
+                            "timestamp": records.format_date(time.time()),
+                            "newFlage": True,
+                            "winner": winner,
+                            "loser": self._raw,
+                        })
                     return REJECTED
                 self.db.merge_references(self._table(record), records.usages(self._type(record)),
                                          record["objectID"], local_id)
@@ -130,10 +180,16 @@ class TransactionHandler:
                 return SUCCESS
             if self.db.is_referenced(records.usages(self._type(record)), object_id):
                 _LOGGER.info(f"Not deleting {self._type(record)} {object_id}: it still has records")
+                # Tell the other devices to bring it back: a RELIVE of our copy
+                local = self.db.get_named_wire(self._type(record), object_id)
+                if local is not None:
+                    self._echo(OP_RELIVE, local)
                 return REJECTED
         if self._local_timestamp(record) is None:
             return IGNORED
         self.db.delete_record(self._type(record), object_id)
+        # Repeat the delete under our device, as the app does after every merged delete
+        self._echo(OP_DELETE, self._raw)
         return SUCCESS
 
     def _merge_relive(self, record):

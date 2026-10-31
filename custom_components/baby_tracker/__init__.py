@@ -16,7 +16,7 @@ from .const import (
     CONF_UNIT_SYSTEM, DEFAULT_UNIT_SYSTEM,
     EVENT_FEEDING, EVENT_DIAPER, EVENT_SLEEP,
 )
-from .client import AuthenticationError
+from .client import AccountResetError, AuthenticationError
 from .client import BabyTracker
 from .entity import migrate_to_baby_ids
 from .services import async_register_services, async_unregister_services
@@ -179,7 +179,8 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         job rather than one per query.
         """
         tracker = self.baby_tracker
-        sync_result = tracker.sync()
+        # Activity pictures go to www/baby_tracker/pictures/ (served via /local/ too)
+        sync_result = tracker.sync(picture_dir=os.path.join(www_dir, "pictures"))
         if sync_result.get("status") != "success":
             raise UpdateFailed(f"Sync failed: {sync_result.get('message')}")
 
@@ -190,8 +191,12 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         # Baby pictures are saved to www/baby_tracker/ and served via /local/
         baby_pictures = {}
         for baby in all_babies:
-            if baby.picture_name and tracker.download_baby_picture(baby.picture_name, www_dir):
-                baby_pictures[baby.name] = f"/local/baby_tracker/{baby.picture_name}"
+            if not baby.picture_name:
+                continue
+            saved = tracker.download_baby_picture(baby.picture_name, www_dir)
+            if saved:
+                # The file may have gained a .jpg extension
+                baby_pictures[baby.name] = f"/local/baby_tracker/{os.path.basename(saved)}"
 
         baby_data = {}
         for baby in all_babies:
@@ -325,6 +330,12 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
             # Credentials rejected: ask the user to log in again
             self.authenticated = False
             raise ConfigEntryAuthFailed(str(err)) from err
+        except AccountResetError as err:
+            # Not a bad password: the group was reset, and our data belongs to the old one
+            _LOGGER.error(
+                "Baby Tracker account was reset or recreated, so syncing has stopped: %s. "
+                "Press the Force Resync button (or call the force_resync service) to rejoin the group.", err)
+            raise UpdateFailed(f"Account was reset; use Force Resync to rejoin: {err}") from err
         except UpdateFailed:
             raise
         except Exception as err:

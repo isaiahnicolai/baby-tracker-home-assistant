@@ -18,11 +18,11 @@ SCHEMA = pathlib.Path(__file__).parent / "fixtures" / "app_schema.sql"
 
 
 class Response:
-    def __init__(self, status, body=None):
+    def __init__(self, status, body=None, content=None):
         self.status_code = status
         self._body = body
         self.text = json.dumps(body) if body is not None else ""
-        self.content = self.text.encode()
+        self.content = content if content is not None else self.text.encode()
         self.headers = {}
 
     def json(self):
@@ -44,6 +44,10 @@ class FakeServer:
         self.requests = []
         self.expire_session_once = False
         self.reject_login = False
+        self.account_id = 1
+        self.pictures = {}                   # file name -> bytes served by /account/picture/<name>
+        self.picture_uploads = []            # (headers, body) of each POST /account/picture
+        self.seed = b""                      # the zip served by /account/seed
 
     def post_session(self, session, url, headers=None, json=None, timeout=None):
         assert timeout, "login must use a timeout"
@@ -51,7 +55,7 @@ class FakeServer:
             return Response(401, {})
         session.cookies.set("PHPSESSID", "session")
         self.devices.setdefault(json["Device"]["DeviceUUID"], 0)
-        return Response(200, {"AccountID": 1})
+        return Response(200, {"AccountID": self.account_id})
 
     def request(self, session, method, url, timeout=None, **kwargs):
         assert timeout, f"{method} {url} must use a timeout"
@@ -62,6 +66,16 @@ class FakeServer:
         if self.expire_session_once:
             self.expire_session_once = False
             return Response(401, {})
+        if method == "DELETE" and path == "/session":
+            return Response(200, {})
+        if method == "GET" and path == "/account/seed":
+            return Response(200, content=self.seed)
+        if method == "GET" and path.startswith("/account/picture/"):
+            data = self.pictures.get(path.split("/account/picture/", 1)[1])
+            return Response(404, {}) if data is None else Response(200, content=data)
+        if method == "POST" and path == "/account/picture":
+            self.picture_uploads.append((kwargs.get("headers", {}), kwargs["data"]))
+            return Response(201, {})
         if path == "/account/device":
             return Response(200, [{"DeviceUUID": d, "LastSyncID": n} for d, n in self.devices.items()])
         if method == "POST" and path == "/account/transaction":
