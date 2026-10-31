@@ -1,0 +1,37 @@
+name: Release
+
+# Attach the integration as baby_tracker.zip to a published GitHub release.
+# hacs.json sets zip_release, so HACS downloads this file instead of the source.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the version matches the release tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(python3 -c "import json; print(json.load(open('custom_components/baby_tracker/manifest.json'))['version'])")
+          if [ "${TAG#v}" != "$version" ]; then
+            echo "Release tag $TAG does not match manifest.json version $version" >&2
+            exit 1
+          fi
+
+      - name: Zip the integration
+        run: |
+          cd custom_components/baby_tracker
+          zip -r ../../baby_tracker.zip . -x "__pycache__/*" "*/__pycache__/*" "*.pyc"
+
+      - name: Attach it to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: baby_tracker.zip
