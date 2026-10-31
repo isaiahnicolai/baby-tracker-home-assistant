@@ -1,6 +1,6 @@
 """Binary sensor platform for Baby Tracker health alerts."""
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -11,35 +11,37 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .entity import baby_device_info, baby_unique_id
 from .const import (
-    DOMAIN,
-    ALERT_TYPE_FEEDING_OVERDUE,
-    ALERT_TYPE_NO_POOP,
-    ALERT_TYPE_LOW_WET_DIAPERS,
-    ALERT_TYPE_FEVER,
-    ALERT_TYPE_LONG_SLEEP,
-    ALERT_TYPE_INTAKE_LOW,
     ALERT_TYPE_FEED_DUE,
+    ALERT_TYPE_FEEDING_OVERDUE,
+    ALERT_TYPE_FEVER,
+    ALERT_TYPE_INTAKE_LOW,
+    ALERT_TYPE_LONG_SLEEP,
+    ALERT_TYPE_LOW_WET_DIAPERS,
+    ALERT_TYPE_NO_POOP,
     ALERT_TYPE_WAKE_TO_FEED,
+    ATTR_AGE_BRACKET,
+    ATTR_ALERT_TYPE,
+    ATTR_BABY_AGE_DAYS,
+    ATTR_CURRENT_VALUE,
+    ATTR_DISMISSED,
+    ATTR_THRESHOLD,
+    DOMAIN,
     FEEDING_THRESHOLDS,
-    NO_POOP_THRESHOLDS,
-    LONG_SLEEP_THRESHOLDS,
     FEVER_THRESHOLD_F,
-    LOW_WET_THRESHOLD,
+    LONG_SLEEP_THRESHOLDS,
     LOW_WET_CHECK_HOUR,
     LOW_WET_MIN_AGE_DAYS,
-    NIGHT_START_HOUR,
+    LOW_WET_THRESHOLD,
     NIGHT_END_HOUR,
-    ATTR_ALERT_TYPE,
-    ATTR_THRESHOLD,
-    ATTR_CURRENT_VALUE,
-    ATTR_BABY_AGE_DAYS,
-    ATTR_AGE_BRACKET,
-    ATTR_DISMISSED,
+    NIGHT_START_HOUR,
+    NO_POOP_THRESHOLDS,
 )
+from .entity import baby_device_info, baby_unique_id
 
 _LOGGER = logging.getLogger(__name__)
+
+PARALLEL_UPDATES = 0
 
 
 def _get_baby_age_days(baby_info):
@@ -48,7 +50,7 @@ def _get_baby_age_days(baby_info):
         return None
     try:
         dob = datetime.strptime(baby_info.dob, "%Y-%m-%d %H:%M:%S %z")
-        age_delta = datetime.now(timezone.utc) - dob
+        age_delta = datetime.now(UTC) - dob
         return age_delta.days
     except (ValueError, TypeError):
         return None
@@ -101,26 +103,26 @@ async def async_setup_entry(
         entities.append(BabyTrackerNightModeSensor(coordinator, baby_name))
 
     coordinator._alert_entities.extend(entities)
-    async_add_entities(entities, True)
+    async_add_entities(entities)
 
 
 class BabyTrackerAlert(CoordinatorEntity, BinarySensorEntity):
     """Base class for Baby Tracker health alert binary sensors."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_has_entity_name = True
+    _alert_type = None  # the unique ID suffix and translation key, set by each alert
 
-    def __init__(self, coordinator, baby_name, alert_type, alert_name):
+    def __init__(self, coordinator, baby_name):
         """Initialize the alert."""
         super().__init__(coordinator)
         self._baby_name = baby_name
-        self._alert_type = alert_type
         self._dismissed = False
         self._was_clear = True
 
-        self._attr_has_entity_name = True
-        self._attr_name = alert_name
+        self._attr_translation_key = self._alert_type
         self._attr_unique_id = (
-            baby_unique_id(coordinator, baby_name, alert_type)
+            baby_unique_id(coordinator, baby_name, self._alert_type)
         )
         self._attr_device_info = baby_device_info(coordinator, baby_name)
 
@@ -206,11 +208,7 @@ class BabyTrackerAlert(CoordinatorEntity, BinarySensorEntity):
 class FeedingOverdueAlert(BabyTrackerAlert):
     """Alert when feeding is overdue based on age thresholds."""
 
-    def __init__(self, coordinator, baby_name):
-        super().__init__(
-            coordinator, baby_name, ALERT_TYPE_FEEDING_OVERDUE, "Feeding Overdue"
-        )
-        self._attr_icon = "mdi:baby-bottle"
+    _alert_type = ALERT_TYPE_FEEDING_OVERDUE
 
     def _get_hours_since_feeding(self):
         baby_data = self._get_baby_data()
@@ -240,11 +238,7 @@ class FeedingOverdueAlert(BabyTrackerAlert):
 class NoPoopAlert(BabyTrackerAlert):
     """Alert when baby hasn't pooped for too long based on age thresholds."""
 
-    def __init__(self, coordinator, baby_name):
-        super().__init__(
-            coordinator, baby_name, ALERT_TYPE_NO_POOP, "No Poop"
-        )
-        self._attr_icon = "mdi:emoticon-poop"
+    _alert_type = ALERT_TYPE_NO_POOP
 
     def _get_hours_since_poop(self):
         baby_data = self._get_baby_data()
@@ -274,11 +268,7 @@ class NoPoopAlert(BabyTrackerAlert):
 class LowWetDiapersAlert(BabyTrackerAlert):
     """Alert when wet diaper count is low, checked after 8pm for babies > 3 days old."""
 
-    def __init__(self, coordinator, baby_name):
-        super().__init__(
-            coordinator, baby_name, ALERT_TYPE_LOW_WET_DIAPERS, "Low Wet Diapers"
-        )
-        self._attr_icon = "mdi:water-alert"
+    _alert_type = ALERT_TYPE_LOW_WET_DIAPERS
 
     def _get_today_wet_count(self):
         baby_data = self._get_baby_data()
@@ -313,11 +303,7 @@ class LowWetDiapersAlert(BabyTrackerAlert):
 class FeverAlert(BabyTrackerAlert):
     """Alert when baby's temperature is >= 100.4F."""
 
-    def __init__(self, coordinator, baby_name):
-        super().__init__(
-            coordinator, baby_name, ALERT_TYPE_FEVER, "Fever"
-        )
-        self._attr_icon = "mdi:thermometer-alert"
+    _alert_type = ALERT_TYPE_FEVER
 
     def _get_temp(self):
         baby_data = self._get_baby_data()
@@ -345,11 +331,7 @@ class FeverAlert(BabyTrackerAlert):
 class LongSleepAlert(BabyTrackerAlert):
     """Alert when baby has been sleeping too long based on age thresholds."""
 
-    def __init__(self, coordinator, baby_name):
-        super().__init__(
-            coordinator, baby_name, ALERT_TYPE_LONG_SLEEP, "Long Sleep"
-        )
-        self._attr_icon = "mdi:sleep"
+    _alert_type = ALERT_TYPE_LONG_SLEEP
 
     def _get_sleep_info(self):
         """Return (is_sleeping, current_duration_hours) or (False, None)."""
@@ -401,11 +383,7 @@ class InsightAlert(BabyTrackerAlert):
 class IntakeLowAlert(InsightAlert):
     """Alert when the last 24 hours of bottle milk is under 150 ml/kg."""
 
-    def __init__(self, coordinator, baby_name):
-        super().__init__(
-            coordinator, baby_name, ALERT_TYPE_INTAKE_LOW, "Intake Low"
-        )
-        self._attr_icon = "mdi:baby-bottle-outline"
+    _alert_type = ALERT_TYPE_INTAKE_LOW
 
     def _get_threshold_info(self):
         return self._get_insight("intake").get("expected_min_ml"), "ml in 24h"
@@ -421,11 +399,7 @@ class IntakeLowAlert(InsightAlert):
 class FeedDueAlert(InsightAlert):
     """Alert when the predicted time of the next feed has passed."""
 
-    def __init__(self, coordinator, baby_name):
-        super().__init__(
-            coordinator, baby_name, ALERT_TYPE_FEED_DUE, "Feed Due"
-        )
-        self._attr_icon = "mdi:clock-alert-outline"
+    _alert_type = ALERT_TYPE_FEED_DUE
 
     def _get_current_value(self):
         return self._get_insight("next_feed").get("predicted_at")
@@ -437,11 +411,7 @@ class FeedDueAlert(InsightAlert):
 class WakeToFeedAlert(InsightAlert):
     """Alert when a baby who should be woken to feed has gone past the longest sensible gap."""
 
-    def __init__(self, coordinator, baby_name):
-        super().__init__(
-            coordinator, baby_name, ALERT_TYPE_WAKE_TO_FEED, "Wake To Feed"
-        )
-        self._attr_icon = "mdi:alarm-bell"
+    _alert_type = ALERT_TYPE_WAKE_TO_FEED
 
     def _get_threshold_info(self):
         return self._get_insight("next_feed").get("max_gap_hours"), "hours between feeds"
@@ -456,12 +426,13 @@ class WakeToFeedAlert(InsightAlert):
 class BabyTrackerNightModeSensor(CoordinatorEntity, BinarySensorEntity):
     """Binary sensor that indicates if the baby is in night mode (sleeping at night)."""
 
+    _attr_has_entity_name = True
+    _attr_translation_key = "night_mode"
+
     def __init__(self, coordinator, baby_name):
         """Initialize the night mode sensor."""
         super().__init__(coordinator)
         self._baby_name = baby_name
-        self._attr_has_entity_name = True
-        self._attr_name = "Night Mode"
         self._attr_unique_id = (
             baby_unique_id(coordinator, baby_name, "night_mode")
         )
@@ -494,13 +465,6 @@ class BabyTrackerNightModeSensor(CoordinatorEntity, BinarySensorEntity):
         # Night hours: 7pm (19) to 7am (7) — wraps around midnight
         is_night = current_hour >= NIGHT_START_HOUR or current_hour < NIGHT_END_HOUR
         return is_night
-
-    @property
-    def icon(self):
-        """Return icon based on state."""
-        if self.is_on:
-            return "mdi:moon-waning-crescent"
-        return "mdi:white-balance-sunny"
 
     @property
     def extra_state_attributes(self):

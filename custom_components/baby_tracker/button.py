@@ -3,14 +3,17 @@ import logging
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .entity import baby_device_info, baby_unique_id, system_device_info
 from .const import DOMAIN
+from .entity import baby_device_info, baby_unique_id, system_device_info
 
 _LOGGER = logging.getLogger(__name__)
+
+PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
@@ -63,7 +66,7 @@ async def async_setup_entry(
     buttons.append(BabyTrackerSyncButton(coordinator))
     buttons.append(BabyTrackerForceResyncButton(coordinator))
 
-    async_add_entities(buttons, True)
+    async_add_entities(buttons)
 
 
 class BabyTrackerBottleButton(CoordinatorEntity, ButtonEntity):
@@ -77,9 +80,9 @@ class BabyTrackerBottleButton(CoordinatorEntity, ButtonEntity):
         self._amount_oz = amount_oz
 
         self._attr_has_entity_name = True
-        self._attr_name = f"Add {size_label} Bottle"
+        self._attr_translation_key = "add_bottle"
+        self._attr_translation_placeholders = {"size": size_label}
         self._attr_unique_id = baby_unique_id(coordinator, baby_name, f"add_{size_label.lower()}_bottle")
-        self._attr_icon = "mdi:bottle-tonic-plus"
 
         self._attr_device_info = baby_device_info(coordinator, baby_name)
 
@@ -114,9 +117,9 @@ class BabyTrackerDiaperButton(CoordinatorEntity, ButtonEntity):
 
         safe_type = diaper_type.lower()
         self._attr_has_entity_name = True
-        self._attr_name = f"Add {diaper_type} Diaper"
+        self._attr_translation_key = "add_diaper"
+        self._attr_translation_placeholders = {"type": diaper_type}
         self._attr_unique_id = baby_unique_id(coordinator, baby_name, f"add_{safe_type}_diaper")
-        self._attr_icon = "mdi:baby-carriage"
 
         self._attr_device_info = baby_device_info(coordinator, baby_name)
 
@@ -148,9 +151,8 @@ class BabyTrackerBathButton(CoordinatorEntity, ButtonEntity):
         self._label = label
 
         self._attr_has_entity_name = True
-        self._attr_name = f"Log {label}"
+        self._attr_translation_key = "log_bath"
         self._attr_unique_id = baby_unique_id(coordinator, baby_name, "log_bath")
-        self._attr_icon = "mdi:shower"
 
         self._attr_device_info = baby_device_info(coordinator, baby_name)
 
@@ -182,9 +184,8 @@ class BabyTrackerSleepButton(CoordinatorEntity, ButtonEntity):
 
         action = "start" if is_start else "end"
         self._attr_has_entity_name = True
-        self._attr_name = label
+        self._attr_translation_key = f"{action}_sleep"
         self._attr_unique_id = baby_unique_id(coordinator, baby_name, f"{action}_sleep")
-        self._attr_icon = "mdi:sleep" if is_start else "mdi:sleep-off"
 
         self._attr_device_info = baby_device_info(coordinator, baby_name)
 
@@ -216,9 +217,9 @@ class BabyTrackerMedicineButton(CoordinatorEntity, ButtonEntity):
 
         safe_medicine = medicine_name.lower().replace(" ", "_")
         self._attr_has_entity_name = True
-        self._attr_name = f"Give {medicine_name}"
+        self._attr_translation_key = "give_medicine"
+        self._attr_translation_placeholders = {"medicine": medicine_name}
         self._attr_unique_id = baby_unique_id(coordinator, baby_name, f"give_{safe_medicine}")
-        self._attr_icon = "mdi:medical-bag"
 
         self._attr_device_info = baby_device_info(coordinator, baby_name)
 
@@ -247,9 +248,9 @@ class BabyTrackerSyncButton(CoordinatorEntity, ButtonEntity):
         super().__init__(coordinator)
 
         self._attr_has_entity_name = True
-        self._attr_name = "Sync Now"
+        self._attr_translation_key = "sync_now"
+        self._attr_entity_category = EntityCategory.CONFIG
         self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_sync_now"
-        self._attr_icon = "mdi:sync"
 
         self._attr_device_info = system_device_info(coordinator)
 
@@ -279,9 +280,9 @@ class BabyTrackerForceResyncButton(CoordinatorEntity, ButtonEntity):
         super().__init__(coordinator)
 
         self._attr_has_entity_name = True
-        self._attr_name = "Force Resync"
+        self._attr_translation_key = "force_resync"
+        self._attr_entity_category = EntityCategory.CONFIG
         self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_force_resync"
-        self._attr_icon = "mdi:database-sync"
 
         self._attr_device_info = system_device_info(coordinator)
 
