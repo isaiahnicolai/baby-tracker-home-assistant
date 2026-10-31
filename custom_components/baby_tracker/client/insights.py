@@ -207,9 +207,12 @@ class FeedPrediction:
     wake_by: datetime | None       # last feed + max_gap_hours
 
 
-def default_interval_hours(age_days: float, night: bool = False) -> float:
-    """Typical start-to-start feeding interval for an age; nights run 1 hour longer."""
-    months = age_days / DAYS_PER_MONTH
+def default_interval_hours(age_days: float | None, night: bool = False) -> float:
+    """
+    Typical start-to-start feeding interval for an age; nights run 1 hour longer.
+    Without a date of birth (None) it is the 1-2 month figure, not the newborn one.
+    """
+    months = 1.5 if age_days is None else age_days / DAYS_PER_MONTH
     if months < 1:
         hours = 2.5
     elif months < 2:
@@ -221,9 +224,10 @@ def default_interval_hours(age_days: float, night: bool = False) -> float:
     return hours + (1.0 if night else 0.0)
 
 
-def feed_gap_guidance(age_days: float, weight_kg: float | None = None,
+def feed_gap_guidance(age_days: float | None, weight_kg: float | None = None,
                       birth_weight_kg: float | None = None) -> float | None:
     """Longest sensible stretch between feeds, in hours, or None when there's no limit.
+    Also None when the age is unknown (no date of birth): that is no basis for waking anyone.
 
     AAP: wake a newborn to feed if they sleep more than 4-5 hours, until they
     have regained their birth weight (and are gaining well); most formula-fed
@@ -232,6 +236,8 @@ def feed_gap_guidance(age_days: float, weight_kg: float | None = None,
     4.5 h while under 14 days old or below birth weight; 5 h while under 2
     months and under 5.4 kg (an unknown weight counts as under).
     """
+    if age_days is None:
+        return None
     if age_days < 14:
         return 4.5
     if weight_kg is not None and birth_weight_kg is not None and weight_kg < birth_weight_kg:
@@ -257,7 +263,7 @@ def _feed_session_starts(feeds: Sequence[Feed], now: datetime) -> list[datetime]
     return starts
 
 
-def predict_next_feed(feeds: Sequence[Feed], now: datetime, age_days: float, *,
+def predict_next_feed(feeds: Sequence[Feed], now: datetime, age_days: float | None, *,
                       weight_kg: float | None = None,
                       birth_weight_kg: float | None = None) -> FeedPrediction:
     """When the next feed is likely, from the pattern of recent feeds.
@@ -350,7 +356,7 @@ class IntakeAssessment:
 
 
 def intake_assessment(feeds_last_24h: Sequence[Feed], weight_kg: float | None,
-                      age_days: float, feeding_type: str | None = None) -> IntakeAssessment:
+                      age_days: float | None, feeding_type: str | None = None) -> IntakeAssessment:
     """Compare the last 24 hours of bottle milk with 150-200 ml per kg per day.
 
     The AAP's 2.5 oz per lb (about 165 ml/kg) sits inside that range, and the
@@ -375,6 +381,8 @@ def intake_assessment(feeds_last_24h: Sequence[Feed], weight_kg: float | None,
         return unknown("No weight recorded")
     lo = int(round(min(INTAKE_CAP_ML, weight_kg * INTAKE_ML_PER_KG_MIN)))
     hi = int(round(min(INTAKE_CAP_ML, weight_kg * INTAKE_ML_PER_KG_MAX)))
+    if age_days is None:
+        return unknown("No date of birth, so the age is unknown", lo, hi)
     if age_days < INTAKE_MIN_AGE_DAYS:
         return unknown("Intake builds up over the first week", lo, hi)
     if age_days >= INTAKE_MAX_AGE_DAYS:
@@ -415,7 +423,7 @@ class DiaperAdequacy:
 
 
 def diaper_adequacy(wet_count: int | None, dirty_count: int | None,
-                    age_days: float) -> DiaperAdequacy:
+                    age_days: float | None) -> DiaperAdequacy:
     """Is the wet and dirty diaper count enough for the baby's age?
 
     Wet diapers, by day of life: day 1 at least 1, day 2 at least 2, day 3 at
@@ -424,6 +432,10 @@ def diaper_adequacy(wet_count: int | None, dirty_count: int | None,
     expected (fewer in the first 3 days, which follow the day of life); after
     6 weeks infrequent stools are normal; in between there is no flag.
     """
+    if age_days is None:
+        # No date of birth: there is nothing to judge the counts against
+        return DiaperAdequacy("unknown", "unknown", "unknown", wet_count, dirty_count, 0, 0, 0, 0,
+                              "No date of birth, so the age is unknown")
     day = int(age_days) + 1
     if day < 5:
         expected_wet = low_below = day

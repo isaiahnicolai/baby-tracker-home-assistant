@@ -148,19 +148,21 @@ class BabyTrackerAPI:
             # Get account ID from the response
             try:
                 account_data = response.json()
-                account_id = account_data.get("AccountID")
-                self._check_account(account_id)
-                self.account_id = account_id
-                _LOGGER.info(f"Logged in successfully with account ID: {self.account_id}")
-                self.is_authenticated = True
-
-                # Initialize transaction handler if we have a local database
-                if self.local_db and not self.transaction_handler:
-                    self.transaction_handler = self._new_handler()
-                    _LOGGER.info("Initialized transaction handler")
-
             except ValueError:
+                account_data = None
+            account_id = account_data.get("AccountID") if isinstance(account_data, dict) else None
+            if account_id is None:
+                # The session is good, so carry on; we just can't tell whether the group was reset
                 _LOGGER.warning("Could not extract account ID from login response")
+            self._check_account(account_id)
+            self.account_id = account_id
+            _LOGGER.info(f"Logged in successfully with account ID: {self.account_id}")
+            self.is_authenticated = True
+
+            # Initialize transaction handler if we have a local database
+            if self.local_db and not self.transaction_handler:
+                self.transaction_handler = self._new_handler()
+                _LOGGER.info("Initialized transaction handler")
 
             # Never adopt another device's UUID: posting under it would advance
             # that device's SyncID and make every client skip its records.

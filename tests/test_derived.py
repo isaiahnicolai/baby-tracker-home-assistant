@@ -276,3 +276,20 @@ def test_the_last_pump_session_is_never_an_inventory_adjustment(apply, tracker):
     apply(record("Pump", "ADJ", hours_ago(1), label="InventoryAdjustment", amount=volume(500)))
     assert tracker.get_last_pump()["id"] == "P1"
     assert [r["id"] for r in tracker.get_pump_records()] == ["P1"]
+
+
+# --- Diapers by day ---
+
+def test_diapers_by_day_ends_with_today(apply, tracker):
+    now = datetime.now(UTC)
+    apply(record("Diaper", "D-NOW", now.strftime("%Y-%m-%d %H:%M:%S"), status="Wet", amount="Normal"))
+    apply(record("Diaper", "D-OLD", (now - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S"),
+                 status="Dirty", amount="Normal"))
+
+    by_day = tracker.get_diaper_summary(7, EVERLY)["diapers_by_day"]
+
+    today = now.astimezone(tracker.tz).strftime("%Y-%m-%d")
+    three_days_ago = (now - timedelta(days=3)).astimezone(tracker.tz).strftime("%Y-%m-%d")
+    assert len(by_day) == 7 and list(by_day)[-1] == today
+    assert by_day[today] == 1 and by_day[three_days_ago] == 1
+    assert sum(by_day.values()) == 2

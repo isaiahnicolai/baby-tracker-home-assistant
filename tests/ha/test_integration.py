@@ -21,6 +21,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 from pytest_homeassistant_custom_component.components.diagnostics import get_diagnostics_for_config_entry
 
+from custom_components.baby_tracker import BabyTrackerDataCoordinator
 from custom_components.baby_tracker.client import AccountResetError, AuthenticationError
 from custom_components.baby_tracker.client.models import Baby
 from custom_components.baby_tracker.const import DOMAIN
@@ -29,6 +30,7 @@ EMAIL = "me@example.com"
 EVERLY = Baby({"objectID": "ID-EVERLY", "name": "Everly", "dob": "", "dueDay": ""})
 TWIN = Baby({"objectID": "ID-TWIN", "name": "Ann Marie", "dob": "", "dueDay": ""})
 CORE = "custom_components.baby_tracker.client.core.BabyTracker"
+REAL_FETCH = BabyTrackerDataCoordinator._fetch  # the `backend` fixture swaps it out while a test runs
 
 
 def make_entry(unit_system="imperial", options=None):
@@ -315,6 +317,28 @@ async def test_migration_leaves_account_level_entities_alone(hass):
     for unique_id, entity_id in account.items():
         assert ent_reg.async_get(entity_id).unique_id == unique_id
     assert ent_reg.async_get_entity_id("sensor", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-SYSTEM_last_feeding")
+
+
+async def test_a_bad_row_in_the_diaper_or_medicine_reads_does_not_fail_the_refresh(hass, backend):
+    from unittest.mock import MagicMock
+
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    tracker = MagicMock()
+    tracker.sync.return_value = {"status": "success"}
+    tracker.get_all_babies.return_value = [EVERLY]
+    tracker.get_baby_info.return_value = EVERLY
+    tracker.get_events_between.return_value = []
+    tracker.get_diaper_summary.side_effect = ValueError("bad row")
+    tracker.get_medicine_selections.side_effect = ValueError("bad row")
+    coordinator.baby_tracker = tracker
+
+    # The real _fetch (the fixture replaced it on the class)
+    _, _, _, baby_data, _, medicines = REAL_FETCH(coordinator, coordinator.photo_dir)
+
+    assert baby_data["Everly"]["diaper_summary"] is None
+    assert medicines == []
 
 
 async def test_a_second_account_cannot_be_added(hass):

@@ -1903,8 +1903,9 @@ class BabyTracker:
 
         # Corrected age drives feeding and growth expectations; the day of
         # life for diapers is the chronological one.
-        corrected_days = max(0, age.corrected_days) if age else 0
-        chronological_days = age.chronological_days if age else 0
+        # (None without a date of birth: the age-based answers are then "unknown", not a newborn's)
+        corrected_days = max(0, age.corrected_days) if age else None
+        chronological_days = age.chronological_days if age else None
 
         latest_weight = next((r for r in reversed(growth_rows) if r["weight_kg"]), None)
         weight_kg = latest_weight["weight_kg"] if latest_weight else None

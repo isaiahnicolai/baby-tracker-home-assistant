@@ -571,3 +571,26 @@ def test_get_insights_opens_the_database_in_the_trackers_zone(tracker):
     tracker.db = None  # not opened yet, as after a restart before the first sync
     tracker.get_insights(EVERLY, now=NOW)
     assert tracker.db.tz == tracker.tz == CHICAGO
+
+def test_unknown_age_is_unknown_not_a_newborn():
+    assert insights.feed_gap_guidance(None) is None
+    assert insights.default_interval_hours(None) == 3.0
+    no_age = insights.intake_assessment([Feed(NOW, None, 120, "Formula")], 4.0, None)
+    assert no_age.status == "unknown" and "date of birth" in no_age.reason
+    diapers = insights.diaper_adequacy(0, 0, None)
+    assert (diapers.status, diapers.wet_status, diapers.stool_status) == ("unknown", "unknown", "unknown")
+    assert (diapers.wet_count, diapers.dirty_count) == (0, 0)
+
+
+def test_get_insights_for_a_baby_without_a_date_of_birth(tracker, app_db):
+    conn = sqlite3.connect(app_db)
+    conn.execute("UPDATE Baby SET DOB = 0 WHERE ID = ?", (EVERLY,))
+    conn.commit()
+    conn.close()
+
+    result = tracker.get_insights(EVERLY, now=NOW)
+
+    assert result["age"] is None
+    assert result["diapers"] is None
+    assert result["next_feed"]["max_gap_hours"] is None  # not "4.5 hours, as for a newborn"
+    assert result["intake"]["status"] == "unknown"

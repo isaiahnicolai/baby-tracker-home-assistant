@@ -626,9 +626,9 @@ class BabyTrackerLocalDatabase:
                 if 0 <= texture <= 5:
                     summary["texture_distribution"][texture] = count
             
-            # Get diapers by day
+            # Get diapers by day: the last `days` days, today included (as the streak counts it)
             for i in range(days):
-                day_date = start_date + timedelta(days=i)
+                day_date = end_date - timedelta(days=days - 1 - i)
                 day_start = int(day_date.replace(hour=0, minute=0, second=0).timestamp())
                 day_end = int(day_date.replace(hour=23, minute=59, second=59).timestamp())
                 

@@ -281,6 +281,17 @@ def test_a_failed_upload_does_not_fail_the_sync(tracker, server, monkeypatch):
     assert result["synced_transactions"] == 1
 
 
+def test_a_login_reply_without_an_account_id_still_gets_a_working_session(app_db, server):
+    server.account_id = None
+    server.publish(IPHONE, [diaper("FROM-PHONE")])
+    api = BabyTrackerAPI(db_path=str(app_db))
+    api.local_db = BabyTrackerLocalDatabase(str(app_db))
+
+    assert api.login(EMAIL, "pw", OURS)
+    assert api.is_authenticated and api.transaction_handler is not None
+    assert len(api.sync_transactions()) == 1  # no "NoneType has no attribute process_transaction"
+
+
 def test_the_first_login_records_the_account(tracker):
     assert tracker.db.get_account_id() == "1"
 

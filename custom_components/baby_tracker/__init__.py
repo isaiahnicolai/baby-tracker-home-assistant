@@ -455,7 +455,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
             baby_data[baby.name] = {
                 "baby_info": baby,
                 "feeding_summary": tracker.get_feeding_summary(7, baby_id),
-                "diaper_summary": tracker.get_diaper_summary(7, baby_id),
+                "diaper_summary": self._derived("Diaper summary", None, tracker.get_diaper_summary, 7, baby_id),
                 "last_feeding": tracker.get_last_feeding(baby_id),
                 "last_temperature": tracker.get_last_temperature(baby_id),
                 "time_since_last_feeding": tracker.time_since_last_feeding(baby_id),
@@ -489,7 +489,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
             "pending_uploads": self.pending_uploads,
         }
         # The account's medicines, for the Medicine select (shared by all babies)
-        medicines = tracker.get_medicine_selections()
+        medicines = self._derived("Medicine selections", [], tracker.get_medicine_selections)
 
         return all_babies, baby_info, baby_pictures, baby_data, account, medicines
 
