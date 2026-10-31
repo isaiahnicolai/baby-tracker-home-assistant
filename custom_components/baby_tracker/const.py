@@ -172,6 +172,7 @@ FEVER_WINDOW_HOURS = 24
 ISSUE_OLD_WWW_FOLDER = "old_www_folder"
 ISSUE_UPLOADS_PENDING = "uploads_pending"
 ISSUE_ACCOUNT_RESET = "account_reset"
+ISSUE_CUSTOM_SENTENCES = "custom_sentences"  # the Assist sentence file is not installed or is out of date
 UPLOADS_PENDING_REFRESHES = 3  # raise the issue once records stay unsent for more refreshes than this
 
 # Event names

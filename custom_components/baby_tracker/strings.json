@@ -414,6 +414,23 @@
     "account_reset": {
       "title": "Baby Tracker account was reset",
       "description": "The Baby Tracker account was reset or recreated, so the data kept in Home Assistant belongs to the old group and syncing has stopped. Press the Force Resync button (or call the baby_tracker.force_resync service) to rejoin the group. Records that were never uploaded are discarded."
+    },
+    "custom_sentences": {
+      "title": "Install the Baby Tracker voice commands",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Install the Baby Tracker voice commands",
+            "description": "Home Assistant only reads Assist sentences from {folder}. Select Submit to write the Baby Tracker sentence file there, with your babies' names filled in, so you can say things like \"Everly had a wet diaper\" or \"when did Everly last eat\". An existing baby_tracker.yaml in that folder is replaced.\n\nThe conversation agent is asked to reload the sentences. If a command is not recognised straight away, restart Home Assistant."
+          }
+        },
+        "error": {
+          "write_failed": "The sentence file could not be written. Check the Home Assistant log, and that the configuration folder is writable."
+        },
+        "abort": {
+          "no_entry": "No Baby Tracker account is set up"
+        }
+      }
     }
   },
   "services": {

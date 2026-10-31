@@ -1,0 +1,222 @@
+# Assist sentences for Baby Tracker (English).
+#
+# This file is a template. Home Assistant only reads sentence files from
+# <config>/custom_sentences/<language>/, so the integration fills in the baby
+# list (`lists.baby.values`) with the names of your babies and offers to write the
+# result there as a repair (Settings > Repairs). Edit the copy in your config
+# directory only if you accept that the repair will offer to replace it when your
+# babies change.
+language: "en"
+
+intents:
+  # ----- logging -----
+  BabyTrackerLogDiaper:
+    data:
+      - sentences:
+          - "<log> [a|an] {kind} <diaper> [for {baby}]"
+          - "<log> {baby}['s] {kind} <diaper>"
+          - "{baby} (had|has|got|just had|just got|has had) [a|an] {kind} <diaper>"
+          - "{baby}['s] <diaper> (is|was) {kind}"
+          - "(I|we) (changed|changed a|just changed) [a|an] {kind} <diaper> [for|on] [{baby}]"
+          - "<diaper> change [for {baby}] {kind}"
+          - "[a|an] {kind} <diaper> for {baby}"
+      - sentences:
+          - "{baby} (peed|weed|wet [the|her|his|their] <diaper>)"
+          - "<log> that {baby} (peed|weed)"
+        slots:
+          kind: "wet"
+      - sentences:
+          - "{baby} (pooped|pooed|pood|pooped in [the|her|his|their] <diaper>)"
+          - "<log> that {baby} (pooped|pooed)"
+        slots:
+          kind: "dirty"
+
+  BabyTrackerLogBottle:
+    data:
+      - sentences:
+          - "<log> [a|an] {amount} [{unit}] [{type}] (bottle|feed|feeding) [of {type}] [for {baby}]"
+          - "<log> {baby}['s] {amount} [{unit}] [{type}] (bottle|feed|feeding)"
+          - "<log> {amount} [{unit}] (of|for) [{type}] [for] {baby}"
+          - "{baby} (had|drank|drink|took|finished|ate) [a|an] {amount} [{unit}] [{type}] [bottle|feed|feeding]"
+          - "{baby} (had|drank|took|finished|ate) [a|an] {amount} [{unit}] of [{type}]"
+          - "(I|we) (gave|fed) {baby} [a|an] {amount} [{unit}] [{type}] [bottle|feed|feeding]"
+          - "(give|gave|feed|fed) {baby} [a|an] {amount} [{unit}] [{type}] [bottle|feed|feeding]"
+          - "{baby} (just|has) (had|drunk|finished) [a|an] {amount} [{unit}] [{type}] [bottle]"
+
+  BabyTrackerStartSleep:
+    data:
+      - sentences:
+          - "{baby} (is|just fell|fell|went|is going|has gone|has fallen|just went) [to] (asleep|sleep|sleeping|napping)"
+          - "{baby} is (down for|taking) a nap"
+          - "{baby} (went|is going) down for a nap"
+          - "(start|begin) [a|the] (sleep|nap|sleep timer|nap timer) [for {baby}]"
+          - "(start|begin) {baby}['s] (sleep|nap)"
+          - "(put|laid|put down) {baby} (down|to bed|to sleep|down for a nap)"
+          - "{baby} (is|has) (in bed|gone to bed)"
+
+  BabyTrackerEndSleep:
+    data:
+      - sentences:
+          - "{baby} (woke up|woke|is up|got up|is awake|just woke up|has woken up|has woken|is awake now)"
+          - "(end|stop|finish) [a|the] (sleep|nap) [for {baby}]"
+          - "(end|stop|finish) {baby}['s] (sleep|nap)"
+          - "<log> that {baby} (woke up|is awake|woke)"
+          - "{baby} (woke up|is awake) from [a|the|her|his|their] (sleep|nap)"
+
+  BabyTrackerStartNursing:
+    data:
+      - sentences:
+          - "(start|begin) (nursing|breastfeeding) {baby} on [the] {side} [side]"
+          - "(start|begin) (nursing|breastfeeding) on [the] {side} [side] [for {baby}]"
+          - "(start|begin) {baby}['s] (nursing|breastfeeding) on [the] {side} [side]"
+          - "{baby} (is|started|just started) (nursing|breastfeeding) on [the] {side} [side]"
+          - "{baby} (is|started|just started) (nursing|breastfeeding) [on] [the] {side}"
+          - "(nursing|breastfeeding) {baby} on [the] {side} [side]"
+
+  BabyTrackerEndNursing:
+    data:
+      - sentences:
+          - "(end|stop|finish) (nursing|breastfeeding) [{baby}]"
+          - "(end|stop|finish) {baby}['s] (nursing|breastfeeding) [session]"
+          - "(end|stop|finish) the (nursing|breastfeeding) session [for {baby}]"
+          - "{baby} (is done|is finished|finished|stopped|is all done|has finished) (nursing|breastfeeding)"
+          - "{baby} (is done|is finished|finished|stopped) (feeding|eating)"
+
+  BabyTrackerLogTemperature:
+    data:
+      - sentences:
+          - "<log> [a] temperature [reading] (of|at|as) {temperature} [degrees] [for {baby}]"
+          - "<log> [a] temperature [reading] [for] {baby} (of|at|as) {temperature} [degrees]"
+          - "<log> {baby}['s] temperature (of|at|as) {temperature} [degrees]"
+          - "{baby}['s] temperature is {temperature} [degrees]"
+          - "{baby} has a (temperature|fever) of {temperature} [degrees]"
+          - "{baby} (took|had) a temperature of {temperature} [degrees]"
+          - "the temperature (for|of) {baby} is {temperature} [degrees]"
+
+  # ----- questions -----
+  BabyTrackerLastFeed:
+    data:
+      - sentences:
+          - "when did {baby} (last|last time|most recently) (eat|feed|have a bottle|nurse|have milk|have a feed)"
+          - "when (was|did) {baby} last (fed|eat|eaten|ate|nurse|nursed)"
+          - "when was {baby}['s] last (feed|feeding|bottle|meal|nursing)"
+          - "how long (ago|since) (did|was) {baby} (eat|ate|fed|last fed|last ate|last eat|last eaten)"
+          - "how long (ago|since) {baby}['s] last (feed|feeding|bottle|meal)"
+          - "how long since {baby} (last ate|last fed|last had a bottle|ate)"
+          - "(what time|when) was the last (feed|feeding|bottle|meal) [for {baby}]"
+          - "when did the baby (last|most recently) (eat|feed|have a bottle|nurse)"
+          - "when was the baby last fed"
+          - "when did {baby} eat"
+
+  BabyTrackerLastDiaper:
+    data:
+      - sentences:
+          - "when was {baby}['s] last <diaper> [change]"
+          - "when (was|did) {baby} last (have a <diaper> change|get changed|have a <diaper>)"
+          - "when was {baby} last changed"
+          - "how long (ago|since) (was|did) {baby} last (changed|get changed|have a <diaper> change)"
+          - "how long since {baby}['s] last <diaper> [change]"
+          - "(what time|when) was the last <diaper> [change] [for {baby}]"
+          - "when did the baby last (get changed|have a <diaper> change)"
+          - "when was the baby last changed"
+
+  BabyTrackerNextFeed:
+    data:
+      - sentences:
+          - "when is {baby}['s] next (feed|feeding|bottle|meal)"
+          - "when (should|will|does) {baby} (eat|feed|need to eat|need to feed) next"
+          - "when is {baby} (due to eat|due to feed|due for a feed|due for a bottle|hungry) next"
+          - "when (is|does) {baby} (due|need) to (eat|feed)"
+          - "when should I (feed|next feed) {baby} [next]"
+          - "when is the next (feed|feeding|bottle|meal) [for {baby}]"
+          - "when will {baby} be (hungry|due) next"
+          - "what time is {baby}['s] next (feed|feeding|bottle)"
+          - "when is {baby} (hungry|due for a feed|due for a bottle) next"
+
+  BabyTrackerIntakeToday:
+    data:
+      - sentences:
+          - "how much (has|did|does) {baby} (eaten|eat|had|have|drunk|drink|fed|taken|take) [today|in the last (24|twenty four) hours|so far]"
+          - "how much (milk|formula) (has|did) {baby} (had|have|drunk|drink|taken|eaten) [today|so far]"
+          - "what is {baby}['s] (intake|milk intake|feeding total) [today|in the last (24|twenty four) hours]"
+          - "(has|did) {baby} (eaten|eat|had|have) enough [today]"
+          - "is {baby} (eating|feeding|getting) enough [today]"
+          - "how is {baby}['s] (intake|eating|feeding)"
+          - "how much (has|did) the baby (eaten|eat|had|drunk|taken) [today]"
+
+  BabyTrackerSleepStatus:
+    data:
+      - sentences:
+          - "is {baby} (asleep|sleeping|awake|napping|up|still asleep|still sleeping|still awake)"
+          - "is the baby (asleep|sleeping|awake|napping|up|still asleep|still sleeping|still awake)"
+          - "how long has {baby} (been asleep|been sleeping|been awake|been up|been napping)"
+          - "how long did {baby} (sleep|nap)"
+          - "when did {baby} (fall asleep|wake up|go to sleep|last sleep|last nap|go down)"
+          - "when did {baby} last (sleep|nap|wake up)"
+          - "has {baby} (slept|napped|woken up|woken)"
+
+  BabyTrackerSummary:
+    data:
+      - sentences:
+          - "how is {baby} (doing|going)"
+          - "how's {baby} (doing|going)"
+          - "how is {baby}"
+          - "how's {baby}"
+          - "(give me|tell me|what's|what is) {baby}['s] (status|summary|update|report)"
+          - "{baby}['s] (status|summary|update|report)"
+          - "(baby|babies|the baby|the babies) (status|summary|update|report) [for {baby}]"
+          - "(what's|what is) the (baby|babies)['s] (status|summary|update|report)"
+          - "how (is|are) the (baby|babies) (doing|going)"
+          - "(give me|tell me) an update on {baby}"
+          - "update on {baby}"
+
+expansion_rules:
+  log: "(log|record|add|enter|save|note|put in|track)"
+  diaper: "(diaper|nappy)"
+
+lists:
+  # Filled in with the names of your babies when the file is written
+  baby:
+    values: []
+  kind:
+    values:
+      - in: "(wet|pee|peed|pee pee|urine)"
+        out: "wet"
+      - in: "(dirty|messy|soiled|poop|poo|stool)"
+        out: "dirty"
+      - in: "(poopy|pooey)"
+        out: "poopy"
+      - in: "(mixed|wet and dirty|dirty and wet|wet and poopy|poopy and wet|both)"
+        out: "mixed"
+      - in: "(dry|clean|empty)"
+        out: "dry"
+  side:
+    values:
+      - in: "left"
+        out: "left"
+      - in: "right"
+        out: "right"
+  type:
+    values:
+      - in: "formula"
+        out: "formula"
+      - in: "(pumped|pumped milk|expressed|expressed milk)"
+        out: "pumped"
+      - in: "(breast milk|breastmilk|mother's milk|mom's milk)"
+        out: "breast milk"
+  unit:
+    values:
+      - in: "(ml|mls|milliliter|milliliters|millilitre|millilitres|cc)"
+        out: "ml"
+      - in: "(oz|ounce|ounces|fluid ounces)"
+        out: "oz"
+  amount:
+    range:
+      from: 1
+      to: 500
+      fractions: "halves"
+  temperature:
+    range:
+      from: 34
+      to: 110
+      fractions: "tenths"

@@ -33,6 +33,7 @@ from .const import (
     EVENT_FEEDING,
     EVENT_SLEEP,
     ISSUE_ACCOUNT_RESET,
+    ISSUE_CUSTOM_SENTENCES,
     ISSUE_OLD_WWW_FOLDER,
     ISSUE_UPLOADS_PENDING,
     NURSING_STORE_VERSION,
@@ -42,6 +43,7 @@ from .const import (
     activity_signal,
 )
 from .entity import migrate_to_baby_ids, remove_retired_entities
+from .sentences import async_check_sentences
 from .services import async_register_services, async_unregister_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -106,6 +108,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
+    # Voice control needs a sentence file with the babies' names in the config directory (a repair installs it)
+    await async_check_sentences(hass, coordinator)
+
     # Settings changed in the options flow take effect on reload
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
     # A baby added or renamed in the app needs its entities created/renamed
@@ -165,7 +170,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry):
     db_path = os.path.join(hass.config.path(), "baby_tracker.db")
     await hass.async_add_executor_job(_remove_database, db_path)
     await Store(hass, NURSING_STORE_VERSION, f"{DOMAIN}.{entry.entry_id}.nursing").async_remove()
-    for issue_id in (ISSUE_OLD_WWW_FOLDER, ISSUE_UPLOADS_PENDING, ISSUE_ACCOUNT_RESET):
+    for issue_id in (ISSUE_OLD_WWW_FOLDER, ISSUE_UPLOADS_PENDING, ISSUE_ACCOUNT_RESET, ISSUE_CUSTOM_SENTENCES):
         ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
