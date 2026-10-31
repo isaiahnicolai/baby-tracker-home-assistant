@@ -1,31 +1,40 @@
 """Services for Baby Tracker integration."""
 import logging
-from datetime import datetime, timezone
-import voluptuous as vol
 
+import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
+from homeassistant.util import dt as dt_util
 
 from .const import (
-    DOMAIN,
-    CONF_UNIT_SYSTEM,
-    DEFAULT_UNIT_SYSTEM,
-    UNIT_SYSTEM_IMPERIAL,
+    ALERT_TYPE_FEED_DUE,
     ALERT_TYPE_FEEDING_OVERDUE,
-    ALERT_TYPE_NO_POOP,
-    ALERT_TYPE_LOW_WET_DIAPERS,
     ALERT_TYPE_FEVER,
+    ALERT_TYPE_INTAKE_LOW,
     ALERT_TYPE_LONG_SLEEP,
+    ALERT_TYPE_LOW_WET_DIAPERS,
+    ALERT_TYPE_NO_POOP,
+    ALERT_TYPE_WAKE_TO_FEED,
+    DEFAULT_UNIT_SYSTEM,
+    DOMAIN,
+    UNIT_SYSTEM_IMPERIAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# Service schemas
-DIAPER_SCHEMA = vol.Schema({
+# Fields every service that logs a record takes: which baby, and when it happened
+# (the time a record is dated at; without it, now)
+RECORD_FIELDS = {
     vol.Optional("baby_name"): cv.string,
     vol.Optional("device_id"): cv.string,
+    vol.Optional("time"): cv.datetime,
+}
+
+# Service schemas
+DIAPER_SCHEMA = vol.Schema({
+    **RECORD_FIELDS,
     vol.Optional("pee", default=True): cv.boolean,
     vol.Optional("poo", default=False): cv.boolean,
     # 5 = "not set", as the app uses when no color/texture is recorded
@@ -37,8 +46,7 @@ DIAPER_SCHEMA = vol.Schema({
 })
 
 NURSING_SCHEMA = vol.Schema({
-    vol.Optional("baby_name"): cv.string,
-    vol.Optional("device_id"): cv.string,
+    **RECORD_FIELDS,
     vol.Optional("left_duration", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=120)),
     vol.Optional("right_duration", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=120)),
     vol.Optional("both_duration", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=120)),
@@ -47,83 +55,74 @@ NURSING_SCHEMA = vol.Schema({
 })
 
 FORMULA_SCHEMA = vol.Schema({
-    vol.Optional("baby_name"): cv.string,
-    vol.Optional("device_id"): cv.string,
+    **RECORD_FIELDS,
     vol.Required("amount"): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional("is_english_measure"): cv.boolean,
     vol.Optional("note", default=""): cv.string,
 })
 
 PUMPED_SCHEMA = vol.Schema({
-    vol.Optional("baby_name"): cv.string,
-    vol.Optional("device_id"): cv.string,
+    **RECORD_FIELDS,
     vol.Required("amount"): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional("is_english_measure"): cv.boolean,
     vol.Optional("note", default=""): cv.string,
 })
 
 TEMPERATURE_SCHEMA = vol.Schema({
-    vol.Optional("baby_name"): cv.string,
-    vol.Optional("device_id"): cv.string,
+    **RECORD_FIELDS,
     vol.Required("temperature"): vol.All(vol.Coerce(float)),
-    vol.Optional("is_fahrenheit", default=True): cv.boolean,
+    vol.Optional("is_fahrenheit"): cv.boolean,  # defaults to the integration's unit setting
     vol.Optional("note", default=""): cv.string,
 })
 
 BATH_SCHEMA = vol.Schema({
-    vol.Optional("baby_name"): cv.string,
-    vol.Optional("device_id"): cv.string,
+    **RECORD_FIELDS,
     vol.Optional("bath_type"): vol.Any(None, vol.In(["Bubble Bath", "Sponge Bath", "Shower", "Washed Hair"])),
     vol.Optional("note", default=""): cv.string,
 })
 
 PUMP_SCHEMA = vol.Schema({
-    vol.Optional("baby_name"): cv.string,
-    vol.Optional("device_id"): cv.string,
+    **RECORD_FIELDS,
     vol.Optional("left_duration", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=120)),
     vol.Optional("right_duration", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=120)),
     vol.Optional("left_amount", default=0): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional("right_amount", default=0): vol.All(vol.Coerce(float), vol.Range(min=0)),
-    vol.Optional("is_english_scale", default=False): cv.boolean,
+    vol.Optional("is_english_scale"): cv.boolean,  # defaults to the integration's unit setting
     vol.Optional("note", default=""): cv.string,
 })
 
 MEDICINE_SCHEMA = vol.Schema({
-    vol.Optional("baby_name"): cv.string,
-    vol.Optional("device_id"): cv.string,
+    **RECORD_FIELDS,
     vol.Required("medicine_name"): cv.string,
     vol.Required("amount"): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional("note", default=""): cv.string,
 })
 
 SLEEP_SCHEMA = vol.Schema({
-    vol.Optional("baby_name"): cv.string,
-    vol.Optional("device_id"): cv.string,
+    **RECORD_FIELDS,
     vol.Required("is_start"): cv.boolean,
     vol.Optional("note", default=""): cv.string,
 })
 
 GROWTH_SCHEMA = vol.Schema({
-    vol.Optional("baby_name"): cv.string,
-    vol.Optional("device_id"): cv.string,
+    **RECORD_FIELDS,
     vol.Optional("weight", default=0): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional("length", default=0): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional("head", default=0): vol.All(vol.Coerce(float), vol.Range(min=0)),
-    vol.Optional("is_english_weight_scale", default=True): cv.boolean,
-    vol.Optional("is_english_length_scale", default=True): cv.boolean,
+    # Both default to the integration's unit setting
+    vol.Optional("is_english_weight_scale"): cv.boolean,
+    vol.Optional("is_english_length_scale"): cv.boolean,
     vol.Optional("note", default=""): cv.string,
 })
 
 MILESTONE_SCHEMA = vol.Schema({
-    vol.Optional("baby_name"): cv.string,
-    vol.Optional("device_id"): cv.string,
+    **RECORD_FIELDS,
     vol.Required("milestone_name"): cv.string,
     vol.Optional("note", default=""): cv.string,
 })
 
 DOCTOR_VISIT_SCHEMA = vol.Schema({
-    vol.Optional("baby_name"): cv.string,
-    vol.Optional("device_id"): cv.string,
+    **RECORD_FIELDS,
     vol.Optional("is_appointment", default=True): cv.boolean,
     vol.Optional("visit_type", default=0): vol.All(vol.Coerce(int), vol.Range(min=0)),
     vol.Optional("note", default=""): cv.string,
@@ -132,8 +131,7 @@ DOCTOR_VISIT_SCHEMA = vol.Schema({
 })
 
 VACCINE_SCHEMA = vol.Schema({
-    vol.Optional("baby_name"): cv.string,
-    vol.Optional("device_id"): cv.string,
+    **RECORD_FIELDS,
     vol.Required("vaccine_name"): cv.string,
     vol.Optional("note", default=""): cv.string,
 })
@@ -153,6 +151,9 @@ DISMISS_ALERT_SCHEMA = vol.Schema({
         ALERT_TYPE_LOW_WET_DIAPERS,
         ALERT_TYPE_FEVER,
         ALERT_TYPE_LONG_SLEEP,
+        ALERT_TYPE_INTAKE_LOW,
+        ALERT_TYPE_FEED_DUE,
+        ALERT_TYPE_WAKE_TO_FEED,
     ]),
 })
 
@@ -182,7 +183,7 @@ async def async_register_services(hass: HomeAssistant):
                     baby_id = identifier[len(prefix):]
                     if any(b.object_id == baby_id for b in (coordinator.data or {}).get("babies") or []):
                         return baby_id
-            raise ServiceValidationError("That device isn't one of your Baby Tracker babies")
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="device_not_a_baby")
 
         baby_name = data.get("baby_name")
 
@@ -192,34 +193,58 @@ async def async_register_services(hass: HomeAssistant):
                 baby_name
             )
             if not baby:
-                raise ServiceValidationError(f"Baby '{baby_name}' not found")
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN, translation_key="baby_not_found",
+                    translation_placeholders={"baby_name": baby_name},
+                )
             return baby.object_id
 
         babies = (coordinator.data or {}).get("babies") or []
         if len(babies) == 1:
             return babies[0].object_id
         if not babies:
-            raise ServiceValidationError("No babies found in Baby Tracker")
-        names = ", ".join(b.name for b in babies)
-        raise ServiceValidationError(f"baby_name is required when there are multiple babies ({names})")
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_babies")
+        raise ServiceValidationError(
+            translation_domain=DOMAIN, translation_key="baby_required",
+            translation_placeholders={"names": ", ".join(b.name for b in babies)},
+        )
 
     def _check(result, what):
         """Raise if a core write reported failure, so the caller sees the error."""
         ok = result.get("status") == "success" if isinstance(result, dict) else bool(result)
         if not ok:
             message = result.get("message") if isinstance(result, dict) else None
-            raise HomeAssistantError(f"Failed to {what}: {message or 'unknown error'}")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="action_failed",
+                translation_placeholders={"action": what, "error": message or "unknown error"},
+            )
 
     def _get_unit_system_from_config():
         """Get the configured unit system (imperial or metric), honouring the options flow."""
         try:
             return _get_coordinator(hass).unit_system
-        except ValueError:
+        except ServiceValidationError:
             return DEFAULT_UNIT_SYSTEM
 
     def _is_imperial_config():
         """Check if the configured unit system is imperial (oz, lbs, F)."""
         return _get_unit_system_from_config() == UNIT_SYSTEM_IMPERIAL
+
+    def _unit_default(data, key):
+        """A unit flag from the call, else true for an imperial entry and false for a metric one."""
+        value = data.get(key)
+        return _is_imperial_config() if value is None else value
+
+    def _utc(data):
+        """The time the call asked to date the record at, as an aware UTC datetime (None for now)."""
+        moment = data.get("time")
+        # A time with no zone is in Home Assistant's time zone
+        return dt_util.as_utc(moment) if moment else None
+
+    def _time_str(data):
+        """That time in the sync format, "2026-03-01 09:30:00 +0000" (None for now)."""
+        moment = _utc(data)
+        return moment.strftime("%Y-%m-%d %H:%M:%S +0000") if moment else None
 
     async def add_diaper(call: ServiceCall):
         """Add a diaper change record."""
@@ -230,7 +255,7 @@ async def async_register_services(hass: HomeAssistant):
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.add_diaper,
             baby_id,
-            None,  # time_str
+            _time_str(data),
             data.get("pee"),
             data.get("poo"),
             data.get("pee_color", 5),
@@ -256,7 +281,7 @@ async def async_register_services(hass: HomeAssistant):
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.add_nursing,
             baby_id,
-            None,  # time_str
+            _time_str(data),
             data.get("left_duration", 0),
             data.get("right_duration", 0),
             data.get("both_duration", 0),
@@ -283,7 +308,7 @@ async def async_register_services(hass: HomeAssistant):
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.add_formula,
             baby_id,
-            None,  # time_str
+            _time_str(data),
             data.get("amount"),
             is_english,
             data.get("note", "")
@@ -306,7 +331,7 @@ async def async_register_services(hass: HomeAssistant):
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.add_pumped,
             baby_id,
-            None,  # time_str
+            _time_str(data),
             data.get("amount"),
             is_english,
             data.get("note", "")
@@ -324,9 +349,9 @@ async def async_register_services(hass: HomeAssistant):
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.add_temperature,
             baby_id,
-            None,  # time_str
+            _time_str(data),
             data.get("temperature"),
-            data.get("is_fahrenheit", True),
+            _unit_default(data, "is_fahrenheit"),
             data.get("note", "")
         )
 
@@ -345,7 +370,7 @@ async def async_register_services(hass: HomeAssistant):
             baby_id,
             data.get("bath_type"),
             data.get("note", ""),
-            None  # time (defaults to now)
+            _time_str(data),
         )
         _check(result, "log bath")
 
@@ -365,9 +390,9 @@ async def async_register_services(hass: HomeAssistant):
             data.get("right_duration", 0),
             data.get("left_amount", 0),
             data.get("right_amount", 0),
-            data.get("is_english_scale", False),
+            _unit_default(data, "is_english_scale"),
             data.get("note", ""),
-            None  # time (defaults to now)
+            _time_str(data),
         )
 
         _check(result, "log pump session")
@@ -397,12 +422,15 @@ async def async_register_services(hass: HomeAssistant):
                 break
 
         if not med_id:
-            raise ServiceValidationError(f"Medicine '{medicine_name}' not found")
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="medicine_not_found",
+                translation_placeholders={"name": medicine_name},
+            )
 
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.add_medicine,
             baby_id,
-            None,  # time_str (defaults to now)
+            _time_str(data),
             med_id,
             data.get("amount"),
             data.get("note", "")
@@ -425,7 +453,8 @@ async def async_register_services(hass: HomeAssistant):
             coordinator.baby_tracker.log_sleep_event,
             baby_id,
             is_start,
-            data.get("note", "")
+            data.get("note", ""),
+            _utc(data),
         )
         _check(result, "start sleep" if is_start else "end sleep")
 
@@ -445,10 +474,10 @@ async def async_register_services(hass: HomeAssistant):
             data.get("weight", 0),
             data.get("length", 0),
             data.get("head", 0),
-            data.get("is_english_weight_scale", True),
-            data.get("is_english_length_scale", True),
+            _unit_default(data, "is_english_weight_scale"),
+            _unit_default(data, "is_english_length_scale"),
             data.get("note", ""),
-            None  # time (defaults to now)
+            _time_str(data),
         )
 
         _check(result, "log growth measurement")
@@ -479,14 +508,17 @@ async def async_register_services(hass: HomeAssistant):
                 break
 
         if not milestone_selection_id:
-            raise ServiceValidationError(f"Milestone '{milestone_name}' not found")
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="milestone_not_found",
+                translation_placeholders={"name": milestone_name},
+            )
 
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.log_milestone,
             baby_id,
             milestone_selection_id,
             data.get("note", ""),
-            None  # time (defaults to now)
+            _time_str(data),
         )
 
         _check(result, "log milestone")
@@ -509,7 +541,7 @@ async def async_register_services(hass: HomeAssistant):
             data.get("note", ""),
             data.get("doctor_note", ""),
             data.get("symptom", ""),
-            None  # time (defaults to now)
+            _utc(data).timestamp() if data.get("time") else None,  # the app's time: seconds since 1970
         )
 
         _check(result, "log doctor visit")
@@ -540,7 +572,10 @@ async def async_register_services(hass: HomeAssistant):
                 break
 
         if not vacc_id:
-            raise ServiceValidationError(f"Vaccine '{vaccine_name}' not found")
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="vaccine_not_found",
+                translation_placeholders={"name": vaccine_name},
+            )
 
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.log_vaccine,
@@ -548,7 +583,7 @@ async def async_register_services(hass: HomeAssistant):
             vacc_id,
             data.get("note", ""),
             "",  # doc_visit_id (empty for now)
-            None  # time (defaults to now)
+            _time_str(data),
         )
 
         _check(result, "log vaccine")
@@ -591,7 +626,7 @@ async def async_register_services(hass: HomeAssistant):
         coordinator = _get_coordinator(hass)
 
         result = await hass.async_add_executor_job(
-            coordinator.baby_tracker.sync
+            coordinator.baby_tracker.sync, coordinator.picture_dir
         )
 
         _check(result, "sync")
@@ -637,7 +672,7 @@ async def async_register_services(hass: HomeAssistant):
         for entry_id, coordinator in hass.data[DOMAIN].items():
             if entry_id != "config":
                 return coordinator
-        raise ValueError("No configured Baby Tracker entry found")
+        raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_entry")
 
     # Register the services
     hass.services.async_register(
@@ -800,8 +835,7 @@ async def async_register_services(hass: HomeAssistant):
 
     # Register quick action services
     QUICK_BOTTLE_SCHEMA = vol.Schema({
-        vol.Optional("baby_name"): cv.string,
-        vol.Optional("device_id"): cv.string,
+        **RECORD_FIELDS,
         vol.Optional("note"): cv.string,
     })
 
