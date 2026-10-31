@@ -177,8 +177,12 @@ class BabyTrackerSensor(CoordinatorEntity, SensorEntity):
         # Make unique_id baby-specific to support multiple babies
         self._attr_unique_id = baby_unique_id(coordinator, baby_name, self._sensor_type)
         self._attr_device_info = baby_device_info(coordinator, baby_name)
-        if self._imperial_unit and coordinator.unit_system != UNIT_SYSTEM_METRIC:
-            self._attr_suggested_unit_of_measurement = self._imperial_unit
+        if self._imperial_unit:
+            # The entry's unit setting decides what is shown, not Home Assistant's own unit system
+            self._attr_suggested_unit_of_measurement = (
+                self._attr_native_unit_of_measurement
+                if coordinator.unit_system == UNIT_SYSTEM_METRIC else self._imperial_unit
+            )
 
     def _get_baby_data(self):
         """This baby's data from the coordinator."""
@@ -485,6 +489,8 @@ class BabyTrackerLastTemperatureSensor(BabyTrackerSensor):
         self._attr_native_unit_of_measurement = (
             UnitOfTemperature.CELSIUS if self._metric else UnitOfTemperature.FAHRENHEIT
         )
+        # Show the unit chosen for this entry, not the one Home Assistant's own unit system would convert to
+        self._attr_suggested_unit_of_measurement = self._attr_native_unit_of_measurement
 
     def _value(self, record):
         return record.get("celsius" if self._metric else "fahrenheit")

@@ -260,7 +260,7 @@ class BabyTrackerSyncButton(CoordinatorEntity, ButtonEntity):
 
         try:
             await self.hass.async_add_executor_job(
-                self.coordinator.baby_tracker.sync
+                self.coordinator.baby_tracker.sync, self.coordinator.picture_dir
             )
         except Exception as e:
             _LOGGER.error(f"Sync failed: {e}")

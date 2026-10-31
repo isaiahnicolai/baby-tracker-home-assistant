@@ -2,20 +2,21 @@
 import logging
 import os
 import uuid
-import voluptuous as vol
 
+import voluptuous as vol
 from homeassistant import config_entries, core, exceptions
 from homeassistant.core import callback
 
 from .const import (
-    DOMAIN,
+    CONF_DEVICE_UUID,
     CONF_EMAIL,
     CONF_PASSWORD,
     CONF_SCAN_INTERVAL,
     CONF_UNIT_SYSTEM,
-    CONF_DEVICE_UUID,
+    CONFIG_ENTRY_VERSION,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_UNIT_SYSTEM,
+    DOMAIN,
     UNIT_SYSTEM_IMPERIAL,
     UNIT_SYSTEM_METRIC,
 )
@@ -36,8 +37,7 @@ DATA_SCHEMA = vol.Schema(
 
 async def validate_input(hass: core.HomeAssistant, data):
     """Validate the user input allows us to connect, and download the account's data."""
-    from .client import AuthenticationError
-    from .client import BabyTracker
+    from .client import AuthenticationError, BabyTracker
 
     db_path = os.path.join(hass.config.path(), "baby_tracker.db")
     baby_tracker = BabyTracker(db_path=db_path, time_zone=hass.config.time_zone)
@@ -73,7 +73,8 @@ async def validate_login(hass: core.HomeAssistant, email, password, device_uuid)
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Baby Tracker."""
 
-    VERSION = 1
+    VERSION = CONFIG_ENTRY_VERSION  # 2: each entry stores its own device_uuid (see async_migrate_entry)
+    MINOR_VERSION = 1
 
     @staticmethod
     @callback

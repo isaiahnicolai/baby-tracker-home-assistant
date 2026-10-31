@@ -2,30 +2,39 @@
 import logging
 import os
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 
+import homeassistant.helpers.config_validation as cv
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-import homeassistant.helpers.config_validation as cv
 from homeassistant.util import dt as dt_util
 
+from .client import AccountResetError, AuthenticationError, BabyTracker
 from .const import (
-    DOMAIN, CONF_EMAIL, CONF_PASSWORD, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, CONF_DEVICE_UUID,
-    CONF_UNIT_SYSTEM, DEFAULT_UNIT_SYSTEM,
-    EVENT_FEEDING, EVENT_DIAPER, EVENT_SLEEP,
+    CONF_DEVICE_UUID,
+    CONF_EMAIL,
+    CONF_PASSWORD,
+    CONF_SCAN_INTERVAL,
+    CONF_UNIT_SYSTEM,
+    CONFIG_ENTRY_VERSION,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_UNIT_SYSTEM,
+    DOMAIN,
+    EVENT_DIAPER,
+    EVENT_FEEDING,
+    EVENT_SLEEP,
+    PHOTO_DIR_NAME,
 )
-from .client import AccountResetError, AuthenticationError
-from .client import BabyTracker
-from .entity import migrate_to_baby_ids
+from .entity import migrate_to_baby_ids, remove_retired_entities
 from .services import async_register_services, async_unregister_services
 
 _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-PLATFORMS = ["sensor", "button", "binary_sensor"]
+PLATFORMS = ["sensor", "button", "binary_sensor", "image"]
 
 
 async def async_setup(hass: HomeAssistant, config: dict):
@@ -47,26 +56,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     db_path = os.path.join(hass.config.path(), "baby_tracker.db")
     _LOGGER.info(f"Setting up Baby Tracker with database at: {db_path}")
 
-    device_uuid = config.get(CONF_DEVICE_UUID)
-    if not device_uuid:
-        # Entries created before this was stored borrowed another device's
-        # identity (usually a phone). Give this install its own, and rebuild
-        # the local database since its per-device sync progress can't be trusted.
-        _LOGGER.warning("Registering Baby Tracker as its own sync device; local data will be re-downloaded")
-        device_uuid = str(uuid.uuid4())
-        hass.config_entries.async_update_entry(entry, data={**config, CONF_DEVICE_UUID: device_uuid})
-        await hass.async_add_executor_job(_remove_database, db_path)
-
     # Create the data coordinator
     coordinator = BabyTrackerDataCoordinator(
         hass,
         email=config[CONF_EMAIL],
         password=config[CONF_PASSWORD],
-        device_uuid=device_uuid,
+        device_uuid=config[CONF_DEVICE_UUID],
         db_path=db_path,
         scan_interval=timedelta(minutes=get_option(entry, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)),
         entry=entry,
     )
+
+    # Older versions saved photos under www/, where anyone on the network can fetch them without a login
+    legacy_photo_dir = hass.config.path("www", "baby_tracker")
+    if await hass.async_add_executor_job(os.path.isdir, legacy_photo_dir):
+        _LOGGER.warning(
+            "Baby photos are now kept privately and shown by the Photo image entities. "
+            "The old copies in %s are still readable at /local/baby_tracker/ without logging in; "
+            "delete that folder to remove them", legacy_photo_dir)
 
     # Raises ConfigEntryNotReady (retry later) or ConfigEntryAuthFailed (re-login)
     await coordinator.async_config_entry_first_refresh()
@@ -74,6 +81,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Entities used to be keyed by baby name; re-key them by baby ID before
     # the platforms create them, so existing entity IDs are kept
     migrate_to_baby_ids(hass, entry, coordinator.email, coordinator.data.get("babies") or [])
+    remove_retired_entities(hass, entry)
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
@@ -88,6 +96,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     # Set up all platforms for this device/entry
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Bring a config entry made by an older version up to the current one."""
+    if entry.version > CONFIG_ENTRY_VERSION:
+        return False  # made by a newer version; can't be downgraded
+
+    if entry.version == 1:
+        # Version 2: every entry has its own device identity on the sync server
+        data = dict(entry.data)
+        if not data.get(CONF_DEVICE_UUID):
+            # Entries created before this was stored borrowed another device's
+            # identity (usually a phone). Give this install its own, and rebuild
+            # the local database since its per-device sync progress can't be trusted.
+            _LOGGER.warning("Registering Baby Tracker as its own sync device; local data will be re-downloaded")
+            data[CONF_DEVICE_UUID] = str(uuid.uuid4())
+            await hass.async_add_executor_job(_remove_database, os.path.join(hass.config.path(), "baby_tracker.db"))
+        hass.config_entries.async_update_entry(entry, data=data, version=2, minor_version=1)
 
     return True
 
@@ -154,6 +182,11 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         self.alert_dismiss_state = {}
         self._alert_entities = []
         self._previous_data = None  # None until the first refresh, so startup fires no events
+        # Baby and activity photos are kept here, not under www, so nothing is served without a login
+        self.photo_dir = hass.config.path(PHOTO_DIR_NAME)
+        self.picture_dir = os.path.join(self.photo_dir, "pictures")
+        self.last_sync_result = None  # what the last sync reported, for diagnostics
+        self.pending_uploads = None  # records logged here that the server hasn't received yet
         _LOGGER.info(f"Initialized Baby Tracker coordinator with database at: {db_path}")
 
     def baby_id_for(self, baby_name):
@@ -182,14 +215,18 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("Insights for %s unavailable: %s", baby.name, err, exc_info=True)
             return {}
 
-    def _fetch(self, www_dir):
+    def _fetch(self, photo_dir):
         """
         Sync and read everything for one refresh. Runs in a single executor
         job rather than one per query.
         """
         tracker = self.baby_tracker
-        # Activity pictures go to www/baby_tracker/pictures/ (served via /local/ too)
-        sync_result = tracker.sync(picture_dir=os.path.join(www_dir, "pictures"))
+        # Activity pictures go to the private photo directory's pictures/ folder
+        sync_result = tracker.sync(picture_dir=os.path.join(photo_dir, "pictures"))
+        self.last_sync_result = {
+            key: value.isoformat() if isinstance(value, datetime) else value for key, value in sync_result.items()
+        }
+        self.pending_uploads = tracker.pending_upload_count()
         if sync_result.get("status") != "success":
             raise UpdateFailed(f"Sync failed: {sync_result.get('message')}")
 
@@ -197,15 +234,19 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         # For backwards compatibility, also get the first baby as "baby_info"
         baby_info = tracker.get_baby_info()
 
-        # Baby pictures are saved to www/baby_tracker/ and served via /local/
+        # Baby pictures are saved in the private photo directory, and served
+        # only by the image entities
         baby_pictures = {}
         for baby in all_babies:
             if not baby.picture_name:
                 continue
-            saved = tracker.download_baby_picture(baby.picture_name, www_dir)
+            saved = tracker.download_baby_picture(baby.picture_name, photo_dir)
             if saved:
                 # The file may have gained a .jpg extension
-                baby_pictures[baby.name] = f"/local/baby_tracker/{os.path.basename(saved)}"
+                baby_pictures[baby.name] = {
+                    "path": saved,
+                    "updated": dt_util.utc_from_timestamp(os.path.getmtime(saved)),
+                }
 
         baby_data = {}
         for baby in all_babies:
@@ -251,7 +292,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 self.authenticated = True
 
             all_babies, baby_info, baby_pictures, baby_data = await self.hass.async_add_executor_job(
-                self._fetch, self.hass.config.path("www", "baby_tracker")
+                self._fetch, self.photo_dir
             )
 
             # Fire events for detected changes (skipped on the first refresh,
@@ -350,4 +391,4 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
             raise
         except Exception as err:
             _LOGGER.error("Error updating Baby Tracker data: %s", err)
-            raise UpdateFailed(f"Error communicating with Baby Tracker: {err}")
+            raise UpdateFailed(f"Error communicating with Baby Tracker: {err}") from err
