@@ -2881,7 +2881,7 @@ class BabyTrackerLocalDatabase:
         Feeds since a time, oldest first, for one baby: nursing, formula, pumped
         and bottle-type other feeds (solids and the like are left out).
 
-        Each dict has time, duration (nursing seconds, else 0), amount_ml
+        Each dict has time, duration (nursing minutes as the app stores them, else 0), amount_ml
         (None for nursing) and kind ("Nursing", "Formula", "Pumped", "OtherFeed").
         """
         conn = self._connect()

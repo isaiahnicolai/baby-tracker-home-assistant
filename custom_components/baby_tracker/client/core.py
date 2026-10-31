@@ -1734,7 +1734,8 @@ class BabyTracker:
         feeds = [
             insights.Feed(
                 start=at(row["time"]),
-                end=at(row["time"] + row["duration"]) if row["duration"] else None,
+                # Nursing durations are minutes (Android: time + duration * 60000 ms)
+                end=at(row["time"] + row["duration"] * 60) if row["duration"] else None,
                 amount_ml=row["amount_ml"],
                 kind=row["kind"],
             )
