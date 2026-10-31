@@ -401,6 +401,100 @@ def named_wire(object_type: str, row: Dict[str, Any]) -> Dict[str, Any]:
     return wire
 
 
+# The selection a record points at: (column, selection type, key in the record's JSON)
+SELECTION_REFERENCES = {
+    "OtherFeed": ("TypeID", "OtherFeedSelection", "feedType"),
+    "Medication": ("MedID", "MedicationSelection", "medicationSelection"),
+    "OtherActivity": ("DescID", "OtherActivityDescription", "desc"),
+    "Bath": ("DescID", "BathType", "bathType"),
+    "Milestone": ("MilestoneSelectionID", "MilestoneSelection", "milestoneType"),
+    "Vaccine": ("VaccID", "VaccineSelection", "vaccineType"),
+}
+
+
+def _measure_wire(value, english, kind="VolumeMeasure") -> Dict[str, Any]:
+    return {"value": value or 0, "englishMeasure": bool(english), "BCObjectType": kind}
+
+
+def record_wire(object_type: str, row: Dict[str, Any], baby: Optional[Dict[str, Any]] = None,
+                selection: Optional[Dict[str, Any]] = None, tz_offset: int = 0) -> Dict[str, Any]:
+    """
+    A stored record (not a baby or selection) as the apps send it, for the
+    transactions we upload about records that already exist, i.e. deletes.
+    `row` is its table row by column name; `baby` and `selection` are the
+    nested wire objects (named_wire) it refers to, when they are known. The
+    inverse of RecordType.row for the fields the apps read.
+    """
+    object_type = canonical_type(object_type)
+    kind = RECORD_TYPES[object_type]
+    wire: Dict[str, Any] = {
+        "BCObjectType": object_type,
+        "objectID": row["ID"],
+        "timestamp": format_date(row["Timestamp"]),
+        "newFlage": False,
+        "pictureLoaded": True,
+        "pictureNote": [],
+        "timezone": tz_offset,
+    }
+    if kind.activity:
+        wire["time"] = format_date(row["Time"])
+        wire["note"] = row["Note"] or ""
+    if kind.baby:
+        wire["baby"] = baby or {"objectID": row["BabyID"]}
+    ref = SELECTION_REFERENCES.get(object_type)
+    if ref and selection:
+        wire[ref[2]] = selection
+
+    def amount(english="IsEnglishScale"):
+        return _measure_wire(row["Amount"], row[english])
+
+    if object_type == "Diaper":
+        wire.update({"status": row["Status"], "amount": row["Amount"], "peeColor": row["PeeColor"],
+                     "pooColor": row["PooColor"], "texture": row["Texture"], "flag": row["Flag"] or 0})
+    elif object_type == "Nursing":
+        wire.update({"finishSide": row["FinishSide"], "leftDuration": row["LeftDuration"] or 0,
+                     "rightDuration": row["RightDuration"] or 0, "bothDuration": row["BothDuration"] or 0})
+    elif object_type in ("Formula", "Pumped"):
+        wire["amount"] = amount()
+    elif object_type == "OtherFeed":
+        wire.update({"amount": amount(), "unit": row["Unit"] or ""})
+    elif object_type == "Temperature":
+        wire["temperature"] = _measure_wire(row["Temp"], row["IsEnglishScale"], "TemperatureMeasure")
+    elif object_type == "Sleep":
+        wire["duration"] = row["Duration"] or 0
+    elif object_type == "Medication":
+        wire["amount"] = row["Amount"] or 0
+    elif object_type == "OtherActivity":
+        wire["duration"] = row["Duration"] or 0
+        if row["LocationID"]:
+            wire["locationID"] = row["LocationID"]
+    elif object_type == "Milestone":
+        wire["hasNewType"] = False
+    elif object_type == "Growth":
+        wire.update({"deleted": False, "queryIndex": 0})
+        for key, column, scale in (("weight", "Weight", "IsEnglishWeightScale"),
+                                   ("length", "Length", "IsEnglishLengthScale"),
+                                   ("head", "Head", "IsEnglishLengthScale")):
+            if row[column]:
+                wire[key] = _measure_wire(row[column], row[scale])
+    elif object_type == "DoctorVisit":
+        wire.update({"isAppointment": bool(row["IsAppointment"]), "visitType": row["VisitType"] or 0,
+                     "doctorNote": row["DoctorNote"] or "", "symptom": row["Symptom"] or "",
+                     "growthID": row["GrowthID"] or "", "sickID": row["SickID"] or ""})
+        if row["DoctorID"]:
+            wire["doctorID"] = row["DoctorID"]
+    elif object_type == "Pump":
+        english = row["IsEnglishScale"]
+        wire.update({
+            "amount": _measure_wire(row["Amount"], english), "leftAmount": _measure_wire(row["LeftAmount"], english),
+            "rightAmount": _measure_wire(row["RightAmount"], english), "leftDuration": row["LeftDuration"] or 0,
+            "rightDuration": row["RightDuration"] or 0, "finishSide": row["FinishSide"] or 0,
+            "sides": row["Sides"] or 0})
+        if row["Label"]:
+            wire["label"] = row["Label"]
+    return wire
+
+
 def canonical_type(object_type: str) -> str:
     return ALIASES.get(object_type, object_type)
 

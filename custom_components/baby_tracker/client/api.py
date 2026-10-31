@@ -12,7 +12,7 @@ from datetime import datetime, timezone, tzinfo
 
 from . import dbconn as sqlite3  # sqlite3 with a busy timeout and WAL
 from .dbconn import remove_sidecar_files
-from .transaction import TransactionHandler
+from .transaction import OP_DELETE, TransactionHandler
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -763,6 +763,31 @@ class BabyTrackerAPI:
             _LOGGER.warning(f"Saved {record.get('BCObjectType')} locally; upload will be retried: {e}")
 
         return {"status": "success", "objectID": record["objectID"], "queued": queued}
+
+    def delete_record(self, object_type, object_id):
+        """
+        Delete a record here and tell the other devices: the row is removed the way an
+        incoming delete removes it, and a DELETE carrying the record's full JSON (what the
+        app sends when it deletes one) is queued and uploaded.
+
+        Doctor visits made here were never uploaded (the apps have no such record), so
+        deleting one is local only. Raises ValueError for a record that isn't there or
+        isn't deletable (babies and selections).
+
+        Returns:
+            dict: {"status": "success", "objectID": <id>, "queued": <still waiting to upload>}
+        """
+        if not self.is_authenticated:
+            raise Exception("Not authenticated")
+        if not self.local_db or not self.transaction_handler:
+            raise Exception("Local database not available")
+        wire = self.local_db.get_record_wire(object_type, object_id, self._tz_offset())
+        if wire is None:
+            raise ValueError(f"{object_type} {object_id} not found in local database")
+        if wire["BCObjectType"] == "DoctorVisit":
+            self.local_db.delete_record("DoctorVisit", object_id)
+            return {"status": "success", "objectID": object_id, "queued": False}
+        return self._post_record(wire, op_code=OP_DELETE)
 
     def _baby_ref(self, baby_id):
         """

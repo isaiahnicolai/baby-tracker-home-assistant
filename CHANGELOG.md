@@ -92,6 +92,16 @@ before upgrading.
   `get_upcoming_milestones`, `get_upcoming_vaccines`,
   `pending_upload_count`, `add_other_feed`, `add_activity` and
   `get_last_activity`.
+- **Delete and undo in the client**: `delete_record(object_type, object_id)`
+  removes a record here and uploads a delete carrying the whole record, so
+  the phone sees it on its next sync. `get_recent_records(baby_id, limit,
+  within_hours)` lists a baby's newest records of every type with a short
+  label, and `undo_last(baby_id, within_hours)` deletes the newest. The
+  command line gets `recent`, `delete` and `undo` (both ask for `--yes`).
+  Pump sessions have no baby, so they can be deleted but are not listed.
+  Doctor visits made here were never uploaded, so deleting one is local.
+- `download_baby_landscape_picture` fetches the `<pictureName>_l.jpg`
+  variant of a baby photo that the app keeps next to the portrait.
 - **Sync protocol completed**: activity pictures are downloaded and kept
   (with a retry limit), pictures can be uploaded, `logout` ends the server
   session, and the app's conflict, relive and repeated-delete messages are

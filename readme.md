@@ -79,6 +79,9 @@ babytracker add-nursing --baby Everly --left 10 --right 8                  # min
 babytracker insights --baby Everly          # next feed, 24 hour intake, diapers, growth percentiles
 babytracker next                            # each baby's predicted next feed, and who is due first
 babytracker calendar --baby Everly --days 2 # feeds, sleeps, baths, visits and medicines
+babytracker recent --baby Everly --limit 10 # newest records, with the type and ID `delete` takes
+babytracker delete Diaper <object-id> --yes # delete a record on every device
+babytracker undo --baby Everly --yes        # delete the newest record from the last day
 babytracker inventory                       # pumped milk in store
 babytracker devices
 babytracker raw <device-uuid> --since 100   # decoded records exactly as the server sends them
