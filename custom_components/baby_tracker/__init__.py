@@ -38,6 +38,7 @@ from .const import (
     NURSING_STORE_VERSION,
     NURSING_TIMER_MAX_AGE_HOURS,
     PHOTO_DIR_NAME,
+    RECENT_RECORDS_LIMIT,
     UPLOADS_PENDING_REFRESHES,
     activity_signal,
 )
@@ -489,6 +490,8 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 "upcoming_milestones": self._derived("Upcoming milestones", [], tracker.get_upcoming_milestones, baby_id),
                 "upcoming_vaccines": self._derived("Upcoming vaccines", [], tracker.get_upcoming_vaccines, baby_id),
                 "last_event": self._latest_event(tracker, baby_id, now),
+                "recent_records": self._derived(
+                    "Recent records", [], tracker.get_recent_records, baby_id, RECENT_RECORDS_LIMIT),
             }
 
         account = {

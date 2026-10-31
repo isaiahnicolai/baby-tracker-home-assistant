@@ -20,6 +20,7 @@
       "next_medicine_dose": {"default": "mdi:pill-clock"},
       "upcoming_milestones": {"default": "mdi:star-circle-outline"},
       "upcoming_vaccines": {"default": "mdi:needle"},
+      "recent_entries": {"default": "mdi:history"},
       "next_feed_due": {"default": "mdi:baby-bottle"},
       "next_feed_baby": {"default": "mdi:account-child"},
       "last_fed_baby": {"default": "mdi:baby-bottle-outline"},

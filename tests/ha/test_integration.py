@@ -135,6 +135,7 @@ EVERLY_DATA = {
     "upcoming_milestones": [{"id": "MS1", "name": "First smile", "description": "", "for_age": 2},
                             {"id": "MS2", "name": "Rolls over", "description": "", "for_age": 5}],
     "upcoming_vaccines": [{"id": "V1", "name": "HepB", "description": "", "for_age": 0}],
+    "recent_records": RECENT,
 }
 
 # What the coordinator keeps for the account as a whole
@@ -1490,3 +1491,54 @@ async def test_undo_and_delete_ask_for_a_debounced_refresh(hass, backend):
             DOMAIN, "delete_record", {"object_type": "Diaper", "object_id": "DIAPER-1"}, blocking=True)
     assert request.call_count == 2
     refresh.assert_not_called()
+
+
+async def test_recent_entries_sensor_lists_the_newest_records(hass, backend):
+    await setup(hass, make_entry())
+
+    recent = hass.states.get("sensor.everly_recent_entries")
+    assert recent.state == "wet diaper"  # the newest
+    # The type and ID are what delete_record takes
+    assert recent.attributes["records"] == RECENT
+    assert er.async_get(hass).async_get("sensor.everly_recent_entries").entity_category is EntityCategory.DIAGNOSTIC
+
+    # Nothing logged for Ann Marie
+    assert hass.states.get("sensor.ann_marie_recent_entries").state == "unknown"
+
+
+async def test_recent_entries_follow_the_refresh(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    newer = [{"object_type": "Sleep", "object_id": "SLEEP-1", "time": "2026-03-01T11:00:00+00:00",
+              "kind": "sleep 45 min", "note": ""}, *RECENT]
+
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch_with(recent_records=newer)):
+        await coordinator_for(hass, entry).async_refresh()
+        await hass.async_block_till_done()
+
+    recent = hass.states.get("sensor.everly_recent_entries")
+    assert recent.state == "sleep 45 min" and len(recent.attributes["records"]) == 3
+
+
+async def test_the_fetch_reads_each_babys_recent_records_in_the_same_job(hass, backend):
+    from unittest.mock import MagicMock
+
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    tracker = MagicMock()
+    tracker.sync.return_value = {"status": "success"}
+    tracker.get_all_babies.return_value = [EVERLY]
+    tracker.get_baby_info.return_value = EVERLY
+    tracker.get_events_between.return_value = []
+    tracker.get_recent_records.return_value = RECENT
+    coordinator.baby_tracker = tracker
+
+    _, _, _, baby_data, _, _ = REAL_FETCH(coordinator, coordinator.photo_dir)
+    assert baby_data["Everly"]["recent_records"] == RECENT
+    tracker.get_recent_records.assert_called_once_with("ID-EVERLY", 10)
+
+    # A record the database cannot read leaves the sensor empty rather than failing the refresh
+    tracker.get_recent_records.side_effect = ValueError("bad row")
+    _, _, _, baby_data, _, _ = REAL_FETCH(coordinator, coordinator.photo_dir)
+    assert baby_data["Everly"]["recent_records"] == []

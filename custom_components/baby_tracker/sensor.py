@@ -1185,6 +1185,24 @@ class BabyTrackerUpcomingVaccinesSensor(BabyTrackerUpcomingSensor):
     _data_key = "upcoming_vaccines"
 
 
+class BabyTrackerRecentEntriesSensor(BabyTrackerSensor):
+    """
+    The baby's newest records of every kind, for dashboards and the delete_record service: the
+    state is the newest one's label and the records attribute lists them with the type and ID the
+    service takes.
+    """
+
+    _sensor_type = "recent_entries"
+    _data_key = "recent_records"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def _value(self, record):
+        return str(record[0]["kind"])[:255]
+
+    def _attributes(self, record):
+        return {"records": record}
+
+
 # --- Household: all babies together, on the account's own "Baby Tracker" device ---
 
 class BabyTrackerHouseholdSensor(CoordinatorEntity, SensorEntity):
@@ -1407,4 +1425,5 @@ PER_BABY_SENSORS = (
     BabyTrackerNextMedicineDoseSensor,
     BabyTrackerUpcomingMilestonesSensor,
     BabyTrackerUpcomingVaccinesSensor,
+    BabyTrackerRecentEntriesSensor,
 )

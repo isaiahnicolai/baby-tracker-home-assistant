@@ -215,6 +215,9 @@
       "upcoming_vaccines": {
         "name": "Upcoming Vaccines"
       },
+      "recent_entries": {
+        "name": "Recent Entries"
+      },
       "next_feed_due": {
         "name": "Next Feed Due"
       },

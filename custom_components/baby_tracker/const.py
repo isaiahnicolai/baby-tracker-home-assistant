@@ -186,6 +186,7 @@ DELETABLE_RECORD_TYPES = [
     "Growth", "Milestone", "Vaccine", "OtherActivity", "Joy", "Journal", "DoctorVisit",
 ]
 UNDO_WINDOW_HOURS = 24
+RECENT_RECORDS_LIMIT = 10  # how many records the Recent Entries sensor lists
 NOTHING_TO_UNDO = "Nothing to undo"  # what the client's undo_last reports when there is no record in the window
 
 # What a baby's Activity event entity can report
