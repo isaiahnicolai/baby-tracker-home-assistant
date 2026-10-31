@@ -10,6 +10,10 @@ from dateutil import parser
 
 _LOGGER = logging.getLogger(__name__)
 
+# A sleep with Duration 0 is "in progress" - but only for this long. An older one was never
+# ended (forgotten, or its end was lost) and must not be shown as running forever.
+IN_PROGRESS_SLEEP_SECONDS = 24 * 3600
+
 class BabyTrackerLocalDatabase:
     """
     Local SQLite database for Baby Tracker, focusing on baby info, diapers, and feedings
@@ -622,9 +626,9 @@ class BabyTrackerLocalDatabase:
                 if 0 <= texture <= 5:
                     summary["texture_distribution"][texture] = count
             
-            # Get diapers by day
+            # Get diapers by day: the last `days` days, today included (as the streak counts it)
             for i in range(days):
-                day_date = start_date + timedelta(days=i)
+                day_date = end_date - timedelta(days=days - 1 - i)
                 day_start = int(day_date.replace(hour=0, minute=0, second=0).timestamp())
                 day_end = int(day_date.replace(hour=23, minute=59, second=59).timestamp())
                 
@@ -2217,39 +2221,48 @@ class BabyTrackerLocalDatabase:
 
             # Query Pump table - note: no BabyID column in Pump table!
             # The app links pumping to baby through the Pumped table via PumpedID
+            # Rows with a Label are inventory adjustments, not sessions (as get_next_breast
+            # and the milk inventory treat them)
             cursor.execute("""
                 SELECT ID, Time, LeftDuration, RightDuration, LeftAmount, RightAmount,
                        Amount, IsEnglishScale, Note, FinishSide, Sides
                 FROM Pump
+                WHERE COALESCE(Label, '') = ''
                 ORDER BY Time DESC
                 LIMIT 1
             """)
 
             row = cursor.fetchone()
-            if row:
-                left_duration = row[2] or 0
-                right_duration = row[3] or 0
-                total_duration = left_duration + right_duration
-
-                return {
-                    "id": row[0],
-                    "time": self._format_timestamp(row[1]) if row[1] else None,
-                    "raw_time": row[1],
-                    "left_duration": left_duration,
-                    "right_duration": right_duration,
-                    "total_duration": total_duration,
-                    "left_amount": row[4] or 0,
-                    "right_amount": row[5] or 0,
-                    "total_amount": row[6] or 0,
-                    "is_english_scale": bool(row[7]),
-                    "unit": "oz" if row[7] else "ml",
-                    "note": row[8] if row[8] else "",
-                    "finish_side": row[9],  # 0=Right, 1=Left, 2=Both
-                    "sides": row[10]  # Which sides were pumped
-                }
-            return None
+            return self._pump_record(row) if row else None
         finally:
             conn.close()
+
+    def _pump_record(self, row) -> Dict:
+        """A Pump row (the column order of the queries above) as a dict."""
+        left_duration = row[2] or 0
+        right_duration = row[3] or 0
+        left_amount = row[4] or 0
+        right_amount = row[5] or 0
+        # A session logged per side has no total
+        total_amount = row[6] or (left_amount + right_amount)
+        english = bool(row[7])
+        return {
+            "id": row[0],
+            "time": self._format_timestamp(row[1]) if row[1] else None,
+            "raw_time": row[1],
+            "left_duration": left_duration,
+            "right_duration": right_duration,
+            "total_duration": left_duration + right_duration,
+            "left_amount": left_amount,
+            "right_amount": right_amount,
+            "total_amount": total_amount,
+            "total_amount_ml": round(total_amount * (self.ML_PER_OZ if english else 1), 1),
+            "is_english_scale": english,
+            "unit": "oz" if english else "ml",
+            "note": row[8] if row[8] else "",
+            "finish_side": row[9],  # 0=Right, 1=Left, 2=Both
+            "sides": row[10]  # Which sides were pumped
+        }
 
     def get_pump_records(self, limit=50, baby_id: Optional[str] = None) -> List[Dict]:
         """
@@ -2270,34 +2283,12 @@ class BabyTrackerLocalDatabase:
                 SELECT ID, Time, LeftDuration, RightDuration, LeftAmount, RightAmount,
                        Amount, IsEnglishScale, Note, FinishSide, Sides
                 FROM Pump
+                WHERE COALESCE(Label, '') = ''
                 ORDER BY Time DESC
-                LIMIT {limit}
+                LIMIT {int(limit)}
             """)
 
-            records = []
-            for row in cursor.fetchall():
-                left_duration = row[2] or 0
-                right_duration = row[3] or 0
-                total_duration = left_duration + right_duration
-
-                records.append({
-                    "id": row[0],
-                    "time": self._format_timestamp(row[1]) if row[1] else None,
-                    "raw_time": row[1],
-                    "left_duration": left_duration,
-                    "right_duration": right_duration,
-                    "total_duration": total_duration,
-                    "left_amount": row[4] or 0,
-                    "right_amount": row[5] or 0,
-                    "total_amount": row[6] or 0,
-                    "is_english_scale": bool(row[7]),
-                    "unit": "oz" if row[7] else "ml",
-                    "note": row[8] if row[8] else "",
-                    "finish_side": row[9],
-                    "sides": row[10]
-                })
-
-            return records
+            return [self._pump_record(row) for row in cursor.fetchall()]
         finally:
             conn.close()
 
@@ -2332,11 +2323,9 @@ class BabyTrackerLocalDatabase:
             }
 
         total_sessions = len(recent_records)
-        total_amount = sum(r["total_amount"] for r in recent_records)
+        # Sessions can be recorded in either unit, so add them up in millilitres
+        total_amount = sum(r["total_amount_ml"] for r in recent_records)
         total_duration = sum(r["total_duration"] for r in recent_records)
-
-        # Check unit from most recent record
-        unit = recent_records[0]["unit"]
 
         return {
             "total_sessions": total_sessions,
@@ -2345,7 +2334,7 @@ class BabyTrackerLocalDatabase:
             "avg_amount_per_session": round(total_amount / total_sessions, 1) if total_sessions > 0 else 0,
             "avg_duration_per_session": round(total_duration / total_sessions, 1) if total_sessions > 0 else 0,
             "sessions_per_day": round(total_sessions / days, 1),
-            "unit": unit,
+            "unit": "ml",
             "days": days
         }
 
@@ -2370,43 +2359,48 @@ class BabyTrackerLocalDatabase:
                 if baby_id is None:
                     return None
 
-            # Build query
-            query = """
+            cursor.execute("""
                 SELECT ID, Time, Weight, Length, Head,
                        IsEnglishWeightScale, IsEnglishLengthScale, Note
                 FROM Growth
                 WHERE BabyID = ?
                 ORDER BY Time DESC
-                LIMIT 1
-            """
+            """, (baby_id,))
+            rows = cursor.fetchall()
 
-            cursor.execute(query, (baby_id,))
-            row = cursor.fetchone()
-
-            if not row:
+            if not rows:
                 return None
 
-            # Parse data
-            time_val = row[1]
-            weight = row[2] or 0
-            length = row[3] or 0
-            head = row[4] or 0
-            is_english_weight = bool(row[5])
-            is_english_length = bool(row[6])
-            note = row[7] or ""
+            # The latest row names the record, but a visit often measures only some things,
+            # so each measure comes from the latest row that actually has it (0 is "not
+            # measured"), with its own time and unit
+            latest = rows[0]
+
+            def last_measured(column):
+                return next((row for row in rows if row[column]), latest)
+
+            weight_row, length_row, head_row = last_measured(2), last_measured(3), last_measured(4)
+            is_english_weight = bool(weight_row[5])
+            is_english_length = bool(length_row[6])
+            is_english_head = bool(head_row[6])
 
             return {
-                "id": row[0],
-                "time": self._format_timestamp(time_val),
-                "raw_time": time_val,
-                "weight": weight,
-                "length": length,
-                "head": head,
+                "id": latest[0],
+                "time": self._format_timestamp(latest[1]),
+                "raw_time": latest[1],
+                "weight": weight_row[2] or 0,
+                "length": length_row[3] or 0,
+                "head": head_row[4] or 0,
+                "weight_time": self._format_timestamp(weight_row[1]),
+                "length_time": self._format_timestamp(length_row[1]),
+                "head_time": self._format_timestamp(head_row[1]),
                 "weight_unit": "lbs" if is_english_weight else "kg",
                 "length_unit": "in" if is_english_length else "cm",
+                "head_unit": "in" if is_english_head else "cm",
                 "is_english_weight": is_english_weight,
                 "is_english_length": is_english_length,
-                "note": note
+                "is_english_head": is_english_head,
+                "note": latest[7] or ""
             }
         finally:
             conn.close()
@@ -3035,8 +3029,10 @@ class BabyTrackerLocalDatabase:
 
     def get_next_medicine_dose(self, baby_id: str) -> Optional[Dict]:
         """
-        When the baby's most recent medicine can be given again: the time it was
-        given plus the medicine's interval (MedicineSelection.Interval, in minutes).
+        When the baby's next medicine dose is due: each medicine given in the 48 hours up to
+        the latest dose has its last dose plus its interval (MedicineSelection.Interval,
+        in minutes), and the earliest of those still to come is reported. When none is
+        still to come (all can be given again), it is the most recently given one.
 
         :return: None when no medicine has been given, else {"medicine_name", "med_id", "amount", "unit",
             "last_given" (text), "interval_minutes", "next_dose_at" (ISO UTC text, None without an interval)}
@@ -3048,14 +3044,24 @@ class BabyTrackerLocalDatabase:
                 """
                 SELECT m.Time, m.MedID, m.Amount, ms.Name, ms.Unit, ms.Interval
                 FROM Medicine m LEFT JOIN MedicineSelection ms ON m.MedID = ms.ID
-                WHERE m.BabyID = ? ORDER BY m.Time DESC LIMIT 1
+                WHERE m.BabyID = ? ORDER BY m.Time DESC
                 """, (baby_id,))
-            row = cursor.fetchone()
+            rows = []
+            for row in cursor.fetchall():
+                if rows and row[0] < rows[0][0] - 48 * 3600:
+                    break
+                if all(row[1] != seen[1] for seen in rows):  # the latest dose of each medicine
+                    rows.append(row)
         finally:
             conn.close()
-        if not row:
+        if not rows:
             return None
-        given, med_id, amount, name, unit, interval = row
+        now = self._now().timestamp()
+        due = [(row[0] + row[5] * 60, row) for row in rows if row[5] and row[5] > 0]
+        coming = [item for item in due if item[0] >= now]
+        # Soonest dose still to come, else the most recent medicine
+        chosen = min(coming, key=lambda item: item[0])[1] if coming else rows[0]
+        given, med_id, amount, name, unit, interval = chosen
         next_dose = None
         if interval and interval > 0:
             next_dose = datetime.fromtimestamp(given + interval * 60, timezone.utc).isoformat()
@@ -3156,14 +3162,21 @@ class BabyTrackerLocalDatabase:
                                "WHERE BabyID = ? AND Time >= ? AND Time < ?", window)
                 for time, value, english, note in cursor.fetchall():
                     add("feeding", time, f"{label} {amount(value, english)}" if value else label, note)
-            # A sleep that began before the range still counts while it runs into it
+            # A sleep that began before the range still counts while it runs into it. One with
+            # no duration is "in progress" only for a day; an older one was never ended, and
+            # is just shown where it started
+            recent = now - IN_PROGRESS_SLEEP_SECONDS
             cursor.execute("SELECT Time, Duration, Note FROM Sleep WHERE BabyID = ? AND Time < ? "
-                           "AND (COALESCE(Duration, 0) = 0 OR Time + Duration * 60 > ?)", (baby_id, end, start))
+                           "AND ((COALESCE(Duration, 0) = 0 AND (Time >= ? OR Time > ?)) "
+                           "OR Time + Duration * 60 > ?)", (baby_id, end, start, recent, start))
             for time, minutes, note in cursor.fetchall():
                 if minutes:
                     add("sleep", time, f"Sleep ({minutes // 60}h {minutes % 60}m)", note, minutes * 60)
-                elif now > start:  # still asleep
-                    add("sleep", time, "Sleep (in progress)", note, max(now - time, short))
+                elif time > recent:
+                    if now > start:  # still asleep
+                        add("sleep", time, "Sleep (in progress)", note, max(now - time, short))
+                else:
+                    add("sleep", time, "Sleep (never ended)", note, 60)
             cursor.execute("SELECT b.Time, d.Name, b.Note FROM Bath b LEFT JOIN BathDesc d ON b.DescID = d.ID "
                            "WHERE b.BabyID = ? AND b.Time >= ? AND b.Time < ?", window)
             for time, name, note in cursor.fetchall():

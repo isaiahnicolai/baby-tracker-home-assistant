@@ -95,7 +95,8 @@ class BabyTrackerAPI:
         self.device_uuid = None
         self.is_authenticated = False
         self.last_sync_time = None
-        
+        self.last_picture_status = None  # see get_picture
+
         # API state
         self.transaction_handler = None
         self._merge_failures = {}  # (device, SyncID) -> failed apply attempts
@@ -147,19 +148,21 @@ class BabyTrackerAPI:
             # Get account ID from the response
             try:
                 account_data = response.json()
-                account_id = account_data.get("AccountID")
-                self._check_account(account_id)
-                self.account_id = account_id
-                _LOGGER.info(f"Logged in successfully with account ID: {self.account_id}")
-                self.is_authenticated = True
-
-                # Initialize transaction handler if we have a local database
-                if self.local_db and not self.transaction_handler:
-                    self.transaction_handler = self._new_handler()
-                    _LOGGER.info("Initialized transaction handler")
-
             except ValueError:
+                account_data = None
+            account_id = account_data.get("AccountID") if isinstance(account_data, dict) else None
+            if account_id is None:
+                # The session is good, so carry on; we just can't tell whether the group was reset
                 _LOGGER.warning("Could not extract account ID from login response")
+            self._check_account(account_id)
+            self.account_id = account_id
+            _LOGGER.info(f"Logged in successfully with account ID: {self.account_id}")
+            self.is_authenticated = True
+
+            # Initialize transaction handler if we have a local database
+            if self.local_db and not self.transaction_handler:
+                self.transaction_handler = self._new_handler()
+                _LOGGER.info("Initialized transaction handler")
 
             # Never adopt another device's UUID: posting under it would advance
             # that device's SyncID and make every client skip its records.
@@ -830,6 +833,30 @@ class BabyTrackerAPI:
         except Exception:
             return f"op={item.get('OPCode')} undecodable"
 
+    def _note_own_upload(self, sync_id):
+        """
+        Step our own device's merge progress past a transaction the server just accepted.
+
+        Our own device is downloaded like any other (see sync_transactions), and its
+        progress only moves when it downloads. So without this, every upload is fetched
+        back on the next sync and merged a second time - which would put back a record
+        another device has deleted since (the insert is older than the delete, but the
+        delete left nothing to compare it with). The SyncID is ours to choose and the POST
+        answers with just a status, so we know exactly what the server now holds for us:
+        if we had already merged everything it held before, we have merged this too.
+        """
+        own = next((d for d in self.devices or [] if d.get("DeviceUUID") == self.device_uuid), None)
+        server_last = (own or {}).get("LastSyncID", 0) or 0
+        try:
+            merged = self.get_local_device_sync_info().get(self.device_uuid, {}).get("last_sync_id") or 0
+            if merged >= server_last and sync_id > merged:
+                self.update_device_sync_info(self.device_uuid, sync_id)
+        except Exception as e:
+            # Worst case the upload is merged again by the next sync, as before
+            _LOGGER.debug(f"Could not record own upload {sync_id} as merged: {e}")
+        if own is not None:
+            own["LastSyncID"] = max(server_last, sync_id)
+
     def upload_pending(self):
         """
         Upload queued transactions in order (Android startUploadTransactionImpl).
@@ -858,6 +885,7 @@ class BabyTrackerAPI:
             if response.status_code not in [200, 201]:
                 raise Exception(f"Upload of sync ID {sync_id} failed: {response.status_code} - {response.text[:200]}")
             self.local_db.delete_pending_transaction(sync_id)
+            self._note_own_upload(sync_id)
             uploaded += 1
         if uploaded:
             _LOGGER.info(f"Uploaded {uploaded} transaction(s)")
@@ -1122,7 +1150,7 @@ class BabyTrackerAPI:
                         "amountPerTime": sel.get("amount_per_time", amount),
                         "interval": sel.get("interval", 0),
                         "unit": sel.get("unit", "ml"),
-                        "prescription": sel.get("prescription", False),
+                        "prescription": bool(sel.get("is_prescription", False)),
                         "newFlage": False,
                         "timestamp": "1970-01-01 00:00:00 +0000"
                     }
@@ -1420,6 +1448,9 @@ class BabyTrackerAPI:
             _LOGGER.debug("No picture name provided")
             return None
 
+        # The HTTP status of the last request (None when it never got an answer), so a caller
+        # can tell "the server doesn't have it" (404) from a failure worth trying again
+        self.last_picture_status = None
         try:
             url = f"{BASE_URL}/account/picture/{picture_name}"
             _LOGGER.debug(f"Fetching picture from: {url}")
@@ -1429,6 +1460,7 @@ class BabyTrackerAPI:
                 f"/account/picture/{picture_name}",
                 headers={'User-Agent': self.USER_AGENT}
             )
+            self.last_picture_status = response.status_code
 
             _LOGGER.debug(f"Picture response: status={response.status_code}, content-type={response.headers.get('Content-Type', 'unknown')}, content-length={len(response.content) if response.content else 0}")
 

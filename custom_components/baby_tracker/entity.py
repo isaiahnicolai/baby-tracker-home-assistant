@@ -7,7 +7,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
-from .const import CLOCK_TICK_SECONDS, DOMAIN, VERSION
+from .const import ACCOUNT_ENTITY_KEYS, CLOCK_TICK_SECONDS, DOMAIN, VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -115,7 +115,10 @@ def migrate_to_baby_ids(hass, entry, email, babies):
         return
 
     ent_reg = er.async_get(hass)
+    account_level = {f"{DOMAIN}_{email}_{key}" for key in ACCOUNT_ENTITY_KEYS}
     for entity in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+        if entity.unique_id in account_level:
+            continue  # e.g. "..._system_next_feed_due" is not a baby called System's "next_feed_due"
         for legacy, baby_id in keys:
             prefix = f"{DOMAIN}_{email}_{legacy}_"
             if entity.unique_id.startswith(prefix):
@@ -131,6 +134,8 @@ def migrate_to_baby_ids(hass, entry, email, babies):
     for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
         for legacy, baby_id in keys:
             old = (DOMAIN, f"{email}_{legacy}")
+            if old == (DOMAIN, f"{email}_system"):
+                break  # the account's own device, not a baby called System's
             if old in device.identifiers:
                 new = (DOMAIN, f"{email}_{baby_id}")
                 if _find_device(dev_reg, entry.entry_id, new):

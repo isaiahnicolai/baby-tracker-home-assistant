@@ -9,7 +9,7 @@ import zipfile
 
 import pytest
 
-from babytracker_client import AccountResetError, BabyTrackerAPI, BabyTrackerLocalDatabase
+from babytracker_client import AccountResetError, AuthenticationError, BabyTrackerAPI, BabyTrackerLocalDatabase
 from helpers import EMAIL, EVERLY, IPHONE, MILESTONE, OURS, TWIN, b64, unb64
 from test_sync import baby, diaper, merge
 
@@ -159,6 +159,31 @@ def test_baby_picture_gets_a_jpg_extension_unless_it_has_one(tracker, server, tm
     assert asked == ["/account/picture/BABYPIC.jpg", "/account/picture/other.png"]
 
 
+def test_a_transient_baby_picture_failure_is_not_remembered(tracker, server, tmp_path):
+    server.online = False
+    assert tracker.download_baby_picture("BABYPIC", str(tmp_path)) is None
+    assert not (tmp_path / "BABYPIC.jpg.failed").exists()
+
+    server.online = True
+    server.pictures = {"BABYPIC.jpg": b"j" * 200}
+    assert os.path.basename(tracker.download_baby_picture("BABYPIC", str(tmp_path))) == "BABYPIC.jpg"
+
+
+def test_a_missing_baby_picture_is_left_alone_for_a_day(tracker, server, tmp_path):
+    assert tracker.download_baby_picture("BABYPIC", str(tmp_path)) is None  # 404
+    placeholder = tmp_path / "BABYPIC.jpg.failed"
+    assert placeholder.exists()
+
+    server.pictures = {"BABYPIC.jpg": b"j" * 200}  # uploaded since
+    assert tracker.download_baby_picture("BABYPIC", str(tmp_path)) is None
+    assert [p for _, p in server.requests if p.startswith("/account/picture/")] == ["/account/picture/BABYPIC.jpg"]
+
+    old = placeholder.stat().st_mtime - 25 * 3600
+    os.utime(placeholder, (old, old))
+    assert os.path.basename(tracker.download_baby_picture("BABYPIC", str(tmp_path))) == "BABYPIC.jpg"
+    assert not placeholder.exists()
+
+
 # ----- picture upload --------------------------------------------------------------
 
 def test_upload_picture_posts_multipart_form_data(tracker, server, tmp_path):
@@ -209,6 +234,62 @@ def test_force_resync_rejoins_a_reset_group(tracker, server, app_db):
 
     assert result["status"] == "success"
     assert tracker.db.get_account_id() == "2"
+
+
+def test_a_failed_force_resync_is_recovered_by_the_next_sync(tracker, server, app_db, monkeypatch):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.write(app_db, "EasyLog.db")
+    server.seed = buf.getvalue()
+    real_join = tracker.api.join_group
+
+    def failing_join(*args, **kwargs):
+        raise RuntimeError("server unreachable")
+
+    monkeypatch.setattr(tracker.api, "join_group", failing_join)
+    assert tracker.force_resync(EMAIL, "pw", OURS)["status"] == "error"
+    assert not tracker.is_authenticated
+
+    # The database is gone and we're signed out, but the next sync signs in and rejoins by itself
+    monkeypatch.setattr(tracker.api, "join_group", real_join)
+    result = tracker.sync()
+
+    assert result["status"] == "success"
+    assert tracker.is_authenticated
+    assert tracker.get_all_babies()
+
+
+def test_sync_signs_in_again_and_rejected_credentials_surface(tracker, server):
+    tracker.is_authenticated = False
+    server.reject_login = True
+    with pytest.raises(AuthenticationError):
+        tracker.sync()
+
+
+def test_a_failed_upload_does_not_fail_the_sync(tracker, server, monkeypatch):
+    server.publish(IPHONE, [diaper("FROM-PHONE")])
+    tracker.add_diaper(EVERLY, None)
+
+    def refuse(*args, **kwargs):
+        raise Exception("Upload of sync ID 44 failed: 500")
+
+    monkeypatch.setattr(tracker.api, "upload_pending", refuse)
+    result = tracker.sync()
+
+    assert result["status"] == "success"
+    assert "500" in result["upload_error"]
+    assert result["synced_transactions"] == 1
+
+
+def test_a_login_reply_without_an_account_id_still_gets_a_working_session(app_db, server):
+    server.account_id = None
+    server.publish(IPHONE, [diaper("FROM-PHONE")])
+    api = BabyTrackerAPI(db_path=str(app_db))
+    api.local_db = BabyTrackerLocalDatabase(str(app_db))
+
+    assert api.login(EMAIL, "pw", OURS)
+    assert api.is_authenticated and api.transaction_handler is not None
+    assert len(api.sync_transactions()) == 1  # no "NoneType has no attribute process_transaction"
 
 
 def test_the_first_login_records_the_account(tracker):

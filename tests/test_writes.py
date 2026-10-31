@@ -125,6 +125,49 @@ def test_sleep_cannot_end_before_it_started(tracker):
     assert result["status"] == "error"
 
 
+def test_a_sleep_ended_within_its_first_minute_is_still_ended(tracker, server, query):
+    import time
+
+    assert tracker.log_sleep_event(TWIN, is_start=True)["status"] == "success"
+    time.sleep(1.1)  # an update only replaces a record with an older timestamp
+    assert tracker.log_sleep_event(TWIN, is_start=False)["status"] == "success"
+    # Duration 0 would mean "still sleeping"
+    assert server.uploads[-1]["record"]["duration"] == 1
+    assert query("SELECT Duration FROM Sleep WHERE BabyID=?", (TWIN,)) == [(1,)]
+    assert tracker.is_currently_sleeping(TWIN) is False
+
+
+def test_ending_a_sleep_rounds_to_the_nearest_minute(tracker, server):
+    from datetime import datetime, timedelta
+
+    started = datetime.now(UTC) - timedelta(minutes=10, seconds=40)
+    assert tracker.log_sleep_event(TWIN, is_start=True, time=started)["status"] == "success"
+    assert tracker.log_sleep_event(TWIN, is_start=False)["status"] == "success"
+    assert server.uploads[-1]["record"]["duration"] == 11
+
+
+def test_an_old_unended_sleep_is_not_closed_by_a_new_wake_up(tracker):
+    from datetime import datetime, timedelta
+
+    stray = datetime.now(UTC) - timedelta(days=3)
+    assert tracker.log_sleep_event(TWIN, is_start=True, time=stray)["status"] == "success"
+    result = tracker.log_sleep_event(TWIN, is_start=False)
+    assert result["status"] == "error"
+    assert "No active sleep" in result["message"]
+
+
+def test_a_medicine_is_posted_with_its_own_prescription_flag(tracker, apply, server):
+    for object_id, prescription in (("MED-RX", True), ("MED-OTC", False)):
+        apply({"BCObjectType": "MedicationSelection", "objectID": object_id, "name": object_id,
+               "timestamp": "2026-10-30 12:00:00 +0000", "prescription": prescription, "amountPerTime": 2.5,
+               "unit": "ml", "interval": 240})
+
+    for med_id, prescription in (("MED-RX", True), ("MED-OTC", False)):
+        assert tracker.add_medicine(EVERLY, None, med_id=med_id, amount=2.5)["status"] == "success"
+        selection = server.uploads[-1]["record"]["medicationSelection"]
+        assert selection["objectID"] == med_id and selection["prescription"] is prescription
+
+
 def test_pending_upload_count_is_what_has_not_been_sent(tracker, server):
     assert tracker.pending_upload_count() == 0
     server.online = False

@@ -1,13 +1,14 @@
 """Baby Tracker core functionality."""
 
 from .api import AccountResetError, AuthenticationError, BabyTrackerAPI
-from .database import BabyTrackerLocalDatabase
+from .database import IN_PROGRESS_SLEEP_SECONDS, BabyTrackerLocalDatabase
 import os
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import functools
 import logging
 import threading
+import time as _time
 
 from . import dbconn as sqlite3  # sqlite3 with a busy timeout and WAL
 from . import insights
@@ -15,6 +16,8 @@ from .dbconn import remove_sidecar_files
 from .models import Baby
 
 _LOGGER = logging.getLogger(__name__)
+
+PICTURE_RETRY_SECONDS = 24 * 3600  # how long a picture the server doesn't have is left alone
 
 
 def _time_str(time):
@@ -56,6 +59,7 @@ class BabyTracker:
         
         # State tracking
         self.is_authenticated = False
+        self._credentials = None  # (email, password, device_uuid) of the last authenticate, to sign in again
         self.last_sync_time = None
         # Held by sync and every write (see _serialized, below). Re-entrant: force_resync
         # authenticates and syncs.
@@ -78,6 +82,7 @@ class BabyTracker:
         Returns:
             dict: Authentication result
         """
+        self._credentials = (email, password, device_uuid)
         try:
             # Always initialize the database object first
             self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
@@ -96,6 +101,8 @@ class BabyTracker:
                 # Use join_group instead of just login
                 _LOGGER.info(f"Not in a group, joining with {email}")
                 result = self.api.join_group(email, password, device_uuid)
+                if result.get("status") != "success":
+                    return {"status": "error", "message": result.get("message") or "Joining the group failed"}
             else:
                 # Just log in
                 _LOGGER.info(f"Already in a group, logging in with {email}")
@@ -175,6 +182,13 @@ class BabyTracker:
         Returns:
             dict: Sync results with counts of transactions
         """
+        if not self.is_authenticated and self._credentials:
+            # A failed force resync (or any lost session) leaves us signed out: sign in again
+            # rather than failing every later sync
+            _LOGGER.info("Not signed in; authenticating before syncing")
+            auth = self.authenticate(*self._credentials)
+            if auth.get("status") != "success":
+                return {"status": "error", "message": f"Not authenticated: {auth.get('message')}"}
         if not self.is_authenticated:
             return {"status": "error", "message": "Not authenticated"}
 
@@ -198,8 +212,15 @@ class BabyTracker:
                     # As in the app, a photo problem doesn't stop our records going up
                     _LOGGER.warning(f"Picture download failed: {e}")
                     result["picture_error"] = str(e)
-            result["uploaded_transactions"] = self.api.upload_pending()
             result["status"] = "success"
+            try:
+                result["uploaded_transactions"] = self.api.upload_pending()
+            except (AuthenticationError, AccountResetError):
+                raise
+            except Exception as e:
+                # What we downloaded is merged; the unsent records stay queued and go up on a later sync
+                _LOGGER.warning(f"Upload failed, will retry on the next sync: {e}")
+                result["upload_error"] = str(e)
         except (AuthenticationError, AccountResetError):
             raise
         except Exception as e:
@@ -399,22 +420,24 @@ class BabyTracker:
                 _LOGGER.debug(f"Picture already exists locally: {local_path}")
                 return local_path
 
-            # Check if we already tried and failed
+            # A picture the server said it doesn't have isn't asked for again for a day (it may
+            # be uploaded since)
             placeholder_path = local_path + ".failed"
             if os.path.exists(placeholder_path):
-                _LOGGER.debug(f"Picture download previously failed: {picture_name}")
-                return None
+                if _time.time() - os.path.getmtime(placeholder_path) < PICTURE_RETRY_SECONDS:
+                    _LOGGER.debug(f"Picture is not on the server: {picture_name}")
+                    return None
+                os.remove(placeholder_path)
 
             # Download the picture from the API
             picture_data = self.api.get_picture(picture_name)
             if not picture_data:
-                # Only log once per picture to avoid spam
                 _LOGGER.debug(f"Could not download picture: {picture_name}")
-                # Create an empty placeholder to prevent repeated attempts
-                placeholder_path = local_path + ".failed"
-                if not os.path.exists(placeholder_path):
+                # Only a definite "not found" is remembered. Any other failure (a timeout, a
+                # server error, a dropped session) is tried again on the next refresh.
+                if self.api.last_picture_status == 404:
                     with open(placeholder_path, 'w') as f:
-                        f.write("download_failed")
+                        f.write("not_found")
                 return None
 
             # Save the picture locally
@@ -1604,10 +1627,10 @@ class BabyTracker:
                 try:
                     cursor = conn.execute('''
                         SELECT ID, Time FROM Sleep
-                        WHERE BabyID = ? AND Duration = 0
+                        WHERE BabyID = ? AND Duration = 0 AND Time >= ?
                         ORDER BY Time DESC
                         LIMIT 1
-                    ''', (baby_id,))
+                    ''', (baby_id, time_unix - IN_PROGRESS_SLEEP_SECONDS))
 
                     row = cursor.fetchone()
                 finally:
@@ -1619,8 +1642,9 @@ class BabyTracker:
                     duration_seconds = time_unix - start_time
                     if duration_seconds < 0:
                         return {"status": "error", "message": "The sleep can't end before it started"}
-                    # Convert to minutes (API uses minutes, not seconds)
-                    duration_minutes = duration_seconds // 60
+                    # Minutes (the API's unit). Never 0: a Duration of 0 means "still sleeping",
+                    # so a sleep ended within its first minute would stay open
+                    duration_minutes = max(1, round(duration_seconds / 60))
 
                     _LOGGER.debug(f"Found active sleep: objectID={sleep_object_id}, start_time={start_time}, duration={duration_minutes}min")
 
@@ -1779,8 +1803,8 @@ class BabyTracker:
 
     def get_next_medicine_dose(self, baby_id):
         """
-        When the baby's last medicine can be given again (time given plus the
-        medicine's interval).
+        When the baby's next medicine dose is due: the earliest still to come of
+        each recent medicine's last dose plus its interval.
 
         Returns:
             dict: {"medicine_name", "med_id", "amount", "unit", "last_given",
@@ -1853,12 +1877,8 @@ class BabyTracker:
             plain dict, or None when the data it needs is missing. Empty when
             the baby isn't found.
         """
-        if not self.db:
-            if self.db_path and os.path.exists(self.db_path):
-                self.db = BabyTrackerLocalDatabase(self.db_path)
-                self.api.local_db = self.db
-            else:
-                return {}
+        if not self._open_db():
+            return {}
 
         if baby_id:
             baby = next((b for b in self.db.get_all_babies() if b.object_id == baby_id), None)
@@ -1883,8 +1903,9 @@ class BabyTracker:
 
         # Corrected age drives feeding and growth expectations; the day of
         # life for diapers is the chronological one.
-        corrected_days = max(0, age.corrected_days) if age else 0
-        chronological_days = age.chronological_days if age else 0
+        # (None without a date of birth: the age-based answers are then "unknown", not a newborn's)
+        corrected_days = max(0, age.corrected_days) if age else None
+        chronological_days = age.chronological_days if age else None
 
         latest_weight = next((r for r in reversed(growth_rows) if r["weight_kg"]), None)
         weight_kg = latest_weight["weight_kg"] if latest_weight else None

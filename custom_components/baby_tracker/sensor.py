@@ -792,7 +792,7 @@ class BabyTrackerWeightSensor(BabyTrackerSensor):
 
     def _attributes(self, record):
         return {
-            ATTR_TIME: record.get("time"),
+            ATTR_TIME: record.get("weight_time", record.get("time")),
             "weight": record.get("weight", 0),
             "unit": record.get("weight_unit", "lbs"),
         } | _note(record)
@@ -813,15 +813,21 @@ class BabyTrackerLengthSensor(BabyTrackerSensor):
         length = record.get(self._field)
         if not length:  # 0 is "not measured"
             return None
-        if record.get("is_english_length", record.get("length_unit") == "in"):
+        if self._english(record):
             length = _DISTANCE(length, UnitOfLength.INCHES, UnitOfLength.CENTIMETERS)
         return round(length, 1)
 
+    def _english(self, record):
+        """Whether this measure was recorded in inches (head and length can differ between visits)."""
+        key = f"is_english_{self._field}"
+        return record[key] if key in record else record.get("is_english_length", record.get("length_unit") == "in")
+
     def _attributes(self, record):
         return {
-            ATTR_TIME: record.get("time"),
+            # When this measure was taken, which may be an earlier visit than the latest one
+            ATTR_TIME: record.get(f"{self._field}_time", record.get("time")),
             self._field: record.get(self._field, 0),
-            "unit": record.get("length_unit", "in"),
+            "unit": "in" if self._english(record) else "cm",
         } | _note(record)
 
 

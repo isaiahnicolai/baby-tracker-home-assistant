@@ -1,6 +1,6 @@
 """Binary sensor platform for Baby Tracker health alerts."""
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -38,6 +38,7 @@ from .const import (
     FEEDING_THRESHOLDS,
     FEVER_THRESHOLD_C,
     FEVER_THRESHOLD_F,
+    FEVER_WINDOW_HOURS,
     LONG_SLEEP_THRESHOLDS,
     LOW_WET_CHECK_HOUR,
     LOW_WET_MIN_AGE_DAYS,
@@ -48,6 +49,7 @@ from .const import (
     UNIT_SYSTEM_METRIC,
 )
 from .entity import ClockTickMixin, baby_device_info, baby_unique_id, hours_since_feeding
+from .sensor import parse_time
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -282,7 +284,7 @@ class NoPoopAlert(BabyTrackerAlert):
         return hours >= threshold
 
 
-class LowWetDiapersAlert(BabyTrackerAlert):
+class LowWetDiapersAlert(ClockTickMixin, BabyTrackerAlert):
     """Alert when wet diaper count is low, checked after 8pm for babies > 3 days old."""
 
     _alert_type = ALERT_TYPE_LOW_WET_DIAPERS
@@ -320,8 +322,12 @@ class LowWetDiapersAlert(BabyTrackerAlert):
         return wet_count < self._minimum()
 
 
-class FeverAlert(BabyTrackerAlert):
-    """Alert when baby's temperature reaches the fever threshold (100.4 F / 38.0 C unless changed)."""
+class FeverAlert(ClockTickMixin, BabyTrackerAlert):
+    """
+    Alert when baby's temperature reaches the fever threshold (100.4 F / 38.0 C unless
+    changed). Only a reading from the last FEVER_WINDOW_HOURS counts: an old one says
+    nothing about how the baby is now.
+    """
 
     _alert_type = ALERT_TYPE_FEVER
 
@@ -334,6 +340,9 @@ class FeverAlert(BabyTrackerAlert):
             return None
         temp_data = baby_data.get("last_temperature")
         if not temp_data:
+            return None
+        taken = parse_time(temp_data.get("time"))
+        if taken is not None and dt_util.utcnow() - taken > timedelta(hours=FEVER_WINDOW_HOURS):
             return None
         # In the entry's temperature unit, whatever scale the reading was recorded in
         return temp_data.get("celsius" if self._is_metric() else "fahrenheit")
@@ -354,7 +363,7 @@ class FeverAlert(BabyTrackerAlert):
         return temp >= self._threshold()
 
 
-class LongSleepAlert(BabyTrackerAlert):
+class LongSleepAlert(ClockTickMixin, BabyTrackerAlert):
     """Alert when baby has been sleeping too long based on age thresholds."""
 
     _alert_type = ALERT_TYPE_LONG_SLEEP
@@ -370,8 +379,12 @@ class LongSleepAlert(BabyTrackerAlert):
         is_sleeping = last_sleep.get("is_sleeping", False)
         if not is_sleeping:
             return False, None
-        current_duration_minutes = last_sleep.get("current_duration", 0)
-        return True, current_duration_minutes / 60.0
+        # How long since the sleep began, as of now (the figure the client worked out is as of
+        # the last refresh, so it would stand still between them)
+        started = parse_time(last_sleep.get("time"))
+        if started is not None:
+            return True, max(0.0, (dt_util.utcnow() - started).total_seconds() / 3600)
+        return True, last_sleep.get("current_duration", 0) / 60.0
 
     def _get_threshold_info(self):
         age_days = _get_baby_age_days(self._get_baby_info())

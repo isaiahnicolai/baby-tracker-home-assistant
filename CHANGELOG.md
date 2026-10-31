@@ -133,6 +133,23 @@ before upgrading.
 - Nursing durations are minutes, not seconds.
 - The 24 hour intake total is rounded so floating point noise cannot push
   an exactly-on-the-bound total over it.
+- A failed Force Resync no longer leaves the integration signed out until a
+  restart; syncing signs in again by itself.
+- An upload failure no longer makes every entity unavailable.
+- A sleep ended within its first minute is ended (duration at least 1 min),
+  and old never-ended sleeps are not shown as in progress.
+- Records logged in Home Assistant are no longer re-merged on the next
+  sync, so a record deleted on the phone cannot come back.
+- Pump totals are summed in millilitres, exclude inventory adjustments and
+  count per-side amounts; a head-only growth row no longer blanks Weight
+  and Length.
+- The nursing timer survives reloads and restarts; a failed button press can
+  be retried at once.
+- Fever ignores readings older than 24 hours; Fever, Low Wet Diapers and
+  Long Sleep re-evaluate every minute.
+- A transient photo download failure is retried instead of remembered.
+- Only one account can be added (`single_config_entry`); the registry
+  migration cannot capture account-level entities.
 
 ## [0.2.0] - 2026-10-30
 

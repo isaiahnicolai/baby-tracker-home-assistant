@@ -63,6 +63,34 @@ def test_our_own_uploads_coming_back_are_harmless(tracker, server, query):
     assert query("SELECT COUNT(*) FROM Diaper") == before
 
 
+def test_a_record_deleted_elsewhere_is_not_resurrected_by_our_own_upload(tracker, server, query):
+    # A fresh server log for this device, listed after the phone's (so the phone's delete is merged first)
+    server.devices = {IPHONE: 0, OURS: 0}
+    tracker.sync()
+    object_id = tracker.add_diaper(EVERLY, None)["objectID"]
+    # What the real server now holds for us
+    server.logs[OURS] = [{k: u[k] for k in ("SyncID", "OPCode", "Transaction")} for u in server.uploads]
+
+    # The phone downloads it, then deletes it
+    server.publish(IPHONE, [diaper(object_id)], op=2)
+    assert tracker.sync()["status"] == "success"
+    assert query("SELECT COUNT(*) FROM Diaper WHERE ID=?", (object_id,)) == [(0,)]
+
+    # Our own upload isn't fetched back and merged a second time
+    assert tracker.sync()["status"] == "success"
+    assert query("SELECT COUNT(*) FROM Diaper WHERE ID=?", (object_id,)) == [(0,)]
+    own_gets = [p for m, p in server.requests if m == "GET" and p.startswith(f"/account/transaction/{OURS}")]
+    assert own_gets == []
+    rows = query("SELECT last_sync_id FROM DeviceSyncInfo WHERE device_uuid=?", (OURS,))
+    assert rows == [(server.uploads[-1]["SyncID"],)]
+
+
+def test_our_own_progress_only_advances_when_everything_before_was_merged(tracker, server, query):
+    # The server already held 7 transactions of ours that this database never merged
+    tracker.add_diaper(EVERLY, None)
+    assert query("SELECT last_sync_id FROM DeviceSyncInfo WHERE device_uuid=?", (OURS,)) in ([], [(0,)])
+
+
 def test_deleting_a_baby_with_records_is_rejected(tracker, query):
     tracker.add_diaper(TWIN, None)
     assert merge(tracker, baby(TWIN, "Ann Marie"), op=2) == "rejected"
