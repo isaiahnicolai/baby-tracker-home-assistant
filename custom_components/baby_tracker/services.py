@@ -18,7 +18,11 @@ from .const import (
     ALERT_TYPE_NO_POOP,
     ALERT_TYPE_WAKE_TO_FEED,
     DEFAULT_UNIT_SYSTEM,
+    DELETABLE_RECORD_TYPES,
     DOMAIN,
+    EVENT_UNDO,
+    NOTHING_TO_UNDO,
+    UNDO_WINDOW_HOURS,
     UNIT_SYSTEM_IMPERIAL,
 )
 
@@ -175,6 +179,20 @@ DISMISS_ALERT_SCHEMA = vol.Schema({
 
 DISMISS_ALL_ALERTS_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
+})
+
+UNDO_LAST_SCHEMA = vol.Schema({
+    vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
+    vol.Optional("within_hours", default=UNDO_WINDOW_HOURS): vol.All(vol.Coerce(float), vol.Range(min=0.01)),
+})
+
+DELETE_RECORD_SCHEMA = vol.Schema({
+    # Only used to say which baby's Activity event the deletion is reported on
+    vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
+    vol.Required("object_type"): vol.In(DELETABLE_RECORD_TYPES),
+    vol.Required("object_id"): cv.string,
 })
 
 
@@ -661,6 +679,58 @@ async def async_register_services(hass: HomeAssistant):
         _LOGGER.info(f"Logged solids: {food_name}, {data.get('amount')} {data.get('unit', '')}")
         await coordinator.async_request_refresh()
 
+    async def undo_last(call: ServiceCall):
+        """Delete a baby's newest record (within the last within_hours), on every device."""
+        data = call.data
+        coordinator = _get_coordinator(hass)
+        baby_id = await _get_baby_id(coordinator, data)
+
+        result = await hass.async_add_executor_job(
+            coordinator.baby_tracker.undo_last, baby_id, data.get("within_hours", UNDO_WINDOW_HOURS)
+        )
+        if result.get("status") != "success" and result.get("message") == NOTHING_TO_UNDO:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="nothing_to_undo",
+                translation_placeholders={"hours": f"{data.get('within_hours', UNDO_WINDOW_HOURS):g}"},
+            )
+        _check(result, "undo the last entry")
+
+        deleted = result.get("deleted") or {}
+        _LOGGER.info(f"Undid the last entry: {deleted.get('kind')} ({deleted.get('object_type')} {deleted.get('object_id')})")
+        coordinator._announce("undo", coordinator.baby_name_for(baby_id), baby_id, {
+            "object_type": deleted.get("object_type"),
+            "object_id": deleted.get("object_id"),
+            "kind": deleted.get("kind"),
+            "time": deleted.get("time"),
+        }, EVENT_UNDO)
+        await coordinator.async_request_refresh()
+
+    async def delete_record(call: ServiceCall):
+        """Delete one record by its type and ID (see the Recent Entries sensor), on every device."""
+        data = call.data
+        coordinator = _get_coordinator(hass)
+        baby_id = await _get_baby_id(coordinator, data) if data.get("baby_name") or data.get("device_id") else None
+
+        result = await hass.async_add_executor_job(
+            coordinator.baby_tracker.delete_record, data["object_type"], data["object_id"]
+        )
+        if result.get("status") != "success":
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="delete_failed",
+                translation_placeholders={
+                    "object_type": data["object_type"], "object_id": data["object_id"],
+                    "error": result.get("message") or "unknown error",
+                },
+            )
+
+        _LOGGER.info(f"Deleted {data['object_type']} {data['object_id']}")
+        if baby_id:
+            coordinator._announce("undo", coordinator.baby_name_for(baby_id), baby_id, {
+                "object_type": result.get("object_type", data["object_type"]),
+                "object_id": data["object_id"],
+            }, EVENT_UNDO)
+        await coordinator.async_request_refresh()
+
     async def list_babies(call: ServiceCall):
         """List all babies in the database."""
         coordinator = _get_coordinator(hass)
@@ -792,6 +862,12 @@ async def async_register_services(hass: HomeAssistant):
     )
     hass.services.async_register(
         DOMAIN, "add_solids", add_solids, schema=SOLIDS_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "undo_last", undo_last, schema=UNDO_LAST_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "delete_record", delete_record, schema=DELETE_RECORD_SCHEMA
     )
     hass.services.async_register(
         DOMAIN, "list_babies", list_babies, schema=LIST_BABIES_SCHEMA, supports_response="only"
@@ -945,6 +1021,8 @@ async def async_unregister_services(hass: HomeAssistant):
         "log_vaccine",
         "log_activity",
         "add_solids",
+        "undo_last",
+        "delete_record",
         "list_babies",
         "sync",
         "force_resync",

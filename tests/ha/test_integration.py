@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import EntityCategory, UnitOfLength, UnitOfMass, UnitOfTemperature, UnitOfVolume
 from homeassistant.core import State
@@ -46,6 +47,13 @@ def make_entry(unit_system="imperial", options=None):
 MEDICINES = [
     {"id": "MED-TYLENOL", "name": "Tylenol", "amount_per_time": 3.75, "unit": "ml"},
     {"id": "MED-VITD", "name": "Vitamin D", "amount_per_time": 1.0, "unit": "ml"},
+]
+# What get_recent_records returns for Everly (newest first), and what undo_last deletes
+RECENT = [
+    {"object_type": "Diaper", "object_id": "DIAPER-1", "time": "2026-03-01T10:00:00+00:00",
+     "kind": "wet diaper", "note": ""},
+    {"object_type": "Formula", "object_id": "FORMULA-1", "time": "2026-03-01T09:30:00+00:00",
+     "kind": "formula 4 oz", "note": "after the nap"},
 ]
 FOODS = [{"id": "FOOD-BANANA", "name": "Banana", "description": "", "is_bottle": False}]
 
@@ -191,8 +199,18 @@ def backend():
         calls.append(("add_other_feed", baby_id, feed_type_id, amount, unit, is_english_measure))
         return {"status": "success"}
 
+    def undo_last(self, baby_id, within_hours=24):
+        calls.append(("undo_last", baby_id, within_hours))
+        return {"status": "success", "deleted": RECENT[0], "queued": True}
+
+    def delete_record(self, object_type, object_id):
+        calls.append(("delete_record", object_type, object_id))
+        return {"status": "success", "object_type": object_type, "object_id": object_id, "queued": True}
+
     with patch(f"{CORE}.authenticate", return_value={"status": "success"}), \
          patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fake_fetch), \
+         patch(f"{CORE}.undo_last", undo_last), \
+         patch(f"{CORE}.delete_record", delete_record), \
          patch(f"{CORE}.add_diaper", add_diaper), \
          patch(f"{CORE}.add_temperature", add_temperature), \
          patch(f"{CORE}.log_growth", log_growth), \
@@ -819,7 +837,8 @@ async def test_activity_event_fires_when_something_new_is_found(hass, backend, c
 
     state = hass.states.get("event.everly_activity")
     assert state.attributes["event_type"] == event_type
-    assert state.attributes["event_types"] == ["feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine"]
+    assert state.attributes["event_types"] == [
+        "feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine", "undo"]
     assert state.attributes["baby_name"] == "Everly"
     assert state.attributes["time"] == next(iter(changes.values()))["time"]
     assert hass.states.get("event.ann_marie_activity").state == "unknown"  # only Everly's changed
@@ -1363,3 +1382,111 @@ async def test_a_failed_press_can_be_tried_again_at_once(hass, backend):
     logged = len(backend)
     await press(hass, "button.everly_add_wet_diaper")
     assert len(backend) == logged
+
+
+# ----- undo and delete -----
+
+async def test_undo_button_deletes_the_newest_entry(hass, backend):
+    await setup(hass, make_entry())
+    bus_events = async_capture_events(hass, "baby_tracker_undo")
+
+    await press(hass, "button.everly_undo_last_entry")
+    await hass.async_block_till_done()
+
+    assert backend[-1] == ("undo_last", "ID-EVERLY", 24.0)
+    # It is announced like the other writes: on the bus and on the baby's Activity event
+    assert len(bus_events) == 1 and bus_events[0].data["kind"] == "wet diaper"
+    state = hass.states.get("event.everly_activity")
+    assert state.attributes["event_type"] == "undo"
+    assert state.attributes["object_type"] == "Diaper" and state.attributes["object_id"] == "DIAPER-1"
+    assert hass.states.get("event.ann_marie_activity").state == "unknown"
+    # Each baby has the button
+    assert hass.states.get("button.ann_marie_undo_last_entry") is not None
+
+
+async def test_undo_button_is_debounced_so_it_cannot_delete_two_entries(hass, backend):
+    await setup(hass, make_entry())
+    for _ in range(3):
+        await press(hass, "button.everly_undo_last_entry")
+    assert [call[0] for call in backend].count("undo_last") == 1
+
+
+async def test_undo_with_nothing_to_undo_is_refused(hass, backend):
+    await setup(hass, make_entry())
+    nothing = {"status": "error", "message": "Nothing to undo"}
+    with patch(f"{CORE}.undo_last", return_value=nothing), pytest.raises(ServiceValidationError) as err:
+        await press(hass, "button.everly_undo_last_entry")
+    assert err.value.translation_key == "nothing_to_undo"
+    assert err.value.translation_placeholders == {"hours": "24"}
+
+    # A refused press is not debounced, and fires no event
+    assert hass.states.get("event.everly_activity").state == "unknown"
+    await press(hass, "button.everly_undo_last_entry")
+    assert backend[-1][0] == "undo_last"
+
+
+async def test_undo_last_service(hass, backend):
+    await setup(hass, make_entry())
+
+    await hass.services.async_call(DOMAIN, "undo_last", {"baby_name": "Everly", "within_hours": 6}, blocking=True)
+    assert backend[-1] == ("undo_last", "ID-EVERLY", 6.0)
+
+    await hass.services.async_call(DOMAIN, "undo_last", {"baby_name": "Ann Marie"}, blocking=True)
+    assert backend[-1] == ("undo_last", "ID-TWIN", 24.0)  # the default window
+
+    with pytest.raises(ServiceValidationError):  # two babies and none chosen
+        await hass.services.async_call(DOMAIN, "undo_last", {}, blocking=True)
+
+    # Any other failure is an error, not a validation problem
+    with patch(f"{CORE}.undo_last", return_value={"status": "error", "message": "Not authenticated"}), \
+         pytest.raises(HomeAssistantError) as err:
+        await hass.services.async_call(DOMAIN, "undo_last", {"baby_name": "Everly"}, blocking=True)
+    assert not isinstance(err.value, ServiceValidationError)
+
+
+async def test_delete_record_service(hass, backend):
+    await setup(hass, make_entry())
+    bus_events = async_capture_events(hass, "baby_tracker_undo")
+
+    # No baby needed: a record's type and ID are enough
+    await hass.services.async_call(
+        DOMAIN, "delete_record", {"object_type": "Formula", "object_id": "FORMULA-1"}, blocking=True)
+    assert backend[-1] == ("delete_record", "Formula", "FORMULA-1")
+    assert not bus_events
+
+    # With a baby, the deletion is reported on that baby's Activity event
+    await hass.services.async_call(
+        DOMAIN, "delete_record",
+        {"baby_name": "Everly", "object_type": "Diaper", "object_id": "DIAPER-1"}, blocking=True)
+    await hass.async_block_till_done()
+    assert backend[-1] == ("delete_record", "Diaper", "DIAPER-1")
+    assert len(bus_events) == 1 and bus_events[0].data["object_id"] == "DIAPER-1"
+    assert hass.states.get("event.everly_activity").attributes["event_type"] == "undo"
+
+    with pytest.raises(vol.Invalid):  # only the record types the app has
+        await hass.services.async_call(
+            DOMAIN, "delete_record", {"object_type": "Pizza", "object_id": "X"}, blocking=True)
+
+
+async def test_delete_record_reports_what_the_client_refused(hass, backend):
+    await setup(hass, make_entry())
+    refused = {"status": "error", "message": "No Diaper record with ID NOPE"}
+    with patch(f"{CORE}.delete_record", return_value=refused), pytest.raises(ServiceValidationError) as err:
+        await hass.services.async_call(
+            DOMAIN, "delete_record", {"object_type": "Diaper", "object_id": "NOPE"}, blocking=True)
+    assert err.value.translation_key == "delete_failed"
+    assert err.value.translation_placeholders == {
+        "object_type": "Diaper", "object_id": "NOPE", "error": "No Diaper record with ID NOPE"}
+
+
+async def test_undo_and_delete_ask_for_a_debounced_refresh(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    with patch.object(coordinator, "async_request_refresh") as request, \
+         patch.object(coordinator, "async_refresh") as refresh:
+        await hass.services.async_call(DOMAIN, "undo_last", {"baby_name": "Everly"}, blocking=True)
+        await hass.services.async_call(
+            DOMAIN, "delete_record", {"object_type": "Diaper", "object_id": "DIAPER-1"}, blocking=True)
+    assert request.call_count == 2
+    refresh.assert_not_called()

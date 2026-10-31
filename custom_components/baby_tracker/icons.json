@@ -58,7 +58,8 @@
       "start_nursing_left": {"default": "mdi:arrow-left-bold-circle"},
       "start_nursing_right": {"default": "mdi:arrow-right-bold-circle"},
       "end_nursing": {"default": "mdi:stop-circle"},
-      "log_tummy_time": {"default": "mdi:human-baby-changing-table"}
+      "log_tummy_time": {"default": "mdi:human-baby-changing-table"},
+      "undo_last": {"default": "mdi:undo"}
     },
     "number": {
       "bottle_size": {"default": "mdi:cup-water"},
@@ -92,6 +93,8 @@
     "log_sleep": {"service": "mdi:sleep"},
     "log_activity": {"service": "mdi:human-baby-changing-table"},
     "add_solids": {"service": "mdi:food-apple"},
+    "undo_last": {"service": "mdi:undo"},
+    "delete_record": {"service": "mdi:delete-outline"},
     "list_babies": {"service": "mdi:account-child"},
     "sync": {"service": "mdi:sync"},
     "force_resync": {"service": "mdi:database-sync"},

@@ -311,6 +311,9 @@
       },
       "log_tummy_time": {
         "name": "Log Tummy Time"
+      },
+      "undo_last": {
+        "name": "Undo Last Entry"
       }
     },
     "number": {
@@ -357,7 +360,8 @@
               "sleep_start": "Sleep started",
               "sleep_end": "Sleep ended",
               "bath": "Bath",
-              "medicine": "Medicine"
+              "medicine": "Medicine",
+              "undo": "Entry undone"
             }
           }
         }
@@ -400,6 +404,12 @@
     },
     "no_nursing_timer": {
       "message": "No nursing timer is running; press Start Nursing Left or Right first"
+    },
+    "nothing_to_undo": {
+      "message": "Nothing to undo: no entry was logged in the last {hours} hours"
+    },
+    "delete_failed": {
+      "message": "Could not delete {object_type} {object_id}: {error}"
     }
   },
   "issues": {
@@ -892,6 +902,46 @@
         "time": {
           "name": "Time",
           "description": "When it happened (defaults to now)."
+        }
+      }
+    },
+    "undo_last": {
+      "name": "Undo Last Entry",
+      "description": "Deletes a baby's newest record (of any kind) from this and every other device, for when the wrong button was pressed.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "within_hours": {
+          "name": "Within Hours",
+          "description": "Only undo a record from this many hours back (default 24); older entries are left alone."
+        }
+      }
+    },
+    "delete_record": {
+      "name": "Delete Record",
+      "description": "Deletes one record from this and every other device. Find a record's type and ID in the Recent Entries sensor's records attribute.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby, only used to report the deletion on the baby's Activity event."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "object_type": {
+          "name": "Record Type",
+          "description": "The kind of record, as the Recent Entries sensor lists it."
+        },
+        "object_id": {
+          "name": "Record ID",
+          "description": "The record's ID, from the Recent Entries sensor."
         }
       }
     },

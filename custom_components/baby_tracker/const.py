@@ -178,9 +178,18 @@ UPLOADS_PENDING_REFRESHES = 3  # raise the issue once records stay unsent for mo
 EVENT_FEEDING = "baby_tracker_feeding"
 EVENT_DIAPER = "baby_tracker_diaper"
 EVENT_SLEEP = "baby_tracker_sleep"
+EVENT_UNDO = "baby_tracker_undo"
+
+# Records the delete_record service takes (the client's record type names), and how far back Undo Last Entry looks
+DELETABLE_RECORD_TYPES = [
+    "Diaper", "Nursing", "Formula", "Pumped", "OtherFeed", "Sleep", "Temperature", "Medication", "Bath",
+    "Growth", "Milestone", "Vaccine", "OtherActivity", "Joy", "Journal", "DoctorVisit",
+]
+UNDO_WINDOW_HOURS = 24
+NOTHING_TO_UNDO = "Nothing to undo"  # what the client's undo_last reports when there is no record in the window
 
 # What a baby's Activity event entity can report
-ACTIVITY_EVENT_TYPES = ["feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine"]
+ACTIVITY_EVENT_TYPES = ["feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine", "undo"]
 SIGNAL_ACTIVITY = "baby_tracker_activity"  # dispatcher signal, suffixed with the config entry ID
 
 

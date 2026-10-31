@@ -9,7 +9,7 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import BOTTLE_TYPE_PUMPED, DOMAIN, UNIT_SYSTEM_IMPERIAL
+from .const import BOTTLE_TYPE_PUMPED, DOMAIN, UNDO_WINDOW_HOURS, UNIT_SYSTEM_IMPERIAL
 from .entity import baby_device_info, baby_unique_id, system_device_info
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,6 +52,8 @@ async def async_setup_entry(
             BabyTrackerNursingButton(coordinator, baby_name, "start_nursing_right", side="right"),
             BabyTrackerNursingButton(coordinator, baby_name, "end_nursing", side=None),
             BabyTrackerTummyTimeButton(coordinator, baby_name),
+            # Take back the newest record
+            BabyTrackerUndoButton(coordinator, baby_name),
             # Fixed-size bottles and Tylenol, from before the controls above
             BabyTrackerBottleButton(coordinator, baby_name, "3oz", 3),
             BabyTrackerBottleButton(coordinator, baby_name, "4oz", 4),
@@ -244,6 +246,32 @@ class BabyTrackerTummyTimeButton(BabyTrackerButton):
                 "duration": minutes,
                 "note": "Added from Home Assistant"
             },
+            blocking=True
+        )
+
+
+class BabyTrackerUndoButton(BabyTrackerButton):
+    """Button to delete the baby's newest record, from the last day, for when the wrong button was pressed."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the button."""
+        super().__init__(coordinator)
+        self._baby_name = baby_name
+        self._baby_id = coordinator.baby_id_for(baby_name)
+
+        self._attr_has_entity_name = True
+        self._attr_translation_key = "undo_last"
+        self._attr_unique_id = baby_unique_id(coordinator, baby_name, "undo_last")
+        self._attr_device_info = baby_device_info(coordinator, baby_name)
+
+    async def _press(self) -> None:
+        _LOGGER.info(f"Undoing the last entry for {self._baby_name}")
+
+        # Raises ServiceValidationError when there is nothing from the last day to undo
+        await self.hass.services.async_call(
+            DOMAIN,
+            "undo_last",
+            {"baby_name": self._baby_name, "within_hours": UNDO_WINDOW_HOURS},
             blocking=True
         )
 

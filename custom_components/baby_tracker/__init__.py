@@ -377,6 +377,13 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 return baby.object_id
         raise ValueError(f"Unknown baby: {baby_name}")
 
+    def baby_name_for(self, baby_id):
+        """The name of the baby with this ID (None when there isn't one)."""
+        for baby in (self.data or {}).get("babies") or []:
+            if baby.object_id == baby_id:
+                return baby.name
+        return None
+
     def check_babies_changed(self):
         """Reload when the app's babies change, so entities match them."""
         babies = {b.name: b.object_id for b in (self.data or {}).get("babies") or []}
