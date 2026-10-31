@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""
+Get a fresh development Home Assistant ready to use, with no clicking:
+
+  1. finish onboarding with a local user (dev / dev by default);
+  2. add the Baby Tracker integration using the account in .env.
+
+Works against `docker compose up` or `scripts/develop`. Safe to run again:
+steps that are already done are skipped.
+
+    cp .env.example .env    # then fill in your Baby Tracker login
+    scripts/bootstrap
+
+Only uses the standard library, so it runs on the host or in the dev container.
+"""
+import json
+import os
+import pathlib
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+
+def load_env():
+    """Read KEY=value lines from .env without overriding the real environment."""
+    path = ROOT / ".env"
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+load_env()
+HA_URL = os.environ.get("HA_URL", "http://localhost:8123").rstrip("/")
+CLIENT_ID = f"{HA_URL}/"
+REDIRECT_URI = f"{HA_URL}/?auth_callback=1"
+DEV_USER = os.environ.get("HA_DEV_USER", "dev")
+DEV_PASSWORD = os.environ.get("HA_DEV_PASSWORD", "dev")
+
+
+def call(method, path, body=None, token=None, form=False):
+    data = None
+    headers = {}
+    if body is not None:
+        if form:
+            data = urllib.parse.urlencode(body).encode()
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        else:
+            data = json.dumps(body).encode()
+            headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(f"{HA_URL}{path}", data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            text = response.read().decode()
+            return json.loads(text) if text else None
+    except urllib.error.HTTPError as err:
+        raise SystemExit(f"{method} {path} failed: {err.code} {err.read().decode()[:300]}")
+
+
+def wait_for_home_assistant():
+    print(f"Waiting for Home Assistant at {HA_URL} ...")
+    for _ in range(120):
+        try:
+            return call("GET", "/api/onboarding")
+        except (urllib.error.URLError, ConnectionError, SystemExit):
+            time.sleep(2)
+    raise SystemExit("Home Assistant didn't start")
+
+
+def token_from_code(code):
+    return call("POST", "/auth/token", {"grant_type": "authorization_code", "code": code, "client_id": CLIENT_ID},
+                form=True)["access_token"]
+
+
+def onboard(steps):
+    done = {step["step"] for step in steps if step["done"]}
+    if "user" not in done:
+        code = call("POST", "/api/onboarding/users", {
+            "client_id": CLIENT_ID, "name": "Developer", "username": DEV_USER,
+            "password": DEV_PASSWORD, "language": "en",
+        })["auth_code"]
+        token = token_from_code(code)
+        print(f"Created local user {DEV_USER!r}")
+    else:
+        token = login()
+    if "core_config" not in done:
+        call("POST", "/api/onboarding/core_config", {}, token)
+    if "analytics" not in done:
+        call("POST", "/api/onboarding/analytics", {}, token)
+    if "integration" not in done:
+        call("POST", "/api/onboarding/integration", {"client_id": CLIENT_ID, "redirect_uri": REDIRECT_URI}, token)
+    return token
+
+
+def login():
+    flow = call("POST", "/auth/login_flow",
+                {"client_id": CLIENT_ID, "handler": ["homeassistant", None], "redirect_uri": REDIRECT_URI})
+    result = call("POST", f"/auth/login_flow/{flow['flow_id']}",
+                  {"client_id": CLIENT_ID, "username": DEV_USER, "password": DEV_PASSWORD})
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Couldn't log in as {DEV_USER!r}: {result.get('errors')}")
+    return token_from_code(result["result"])
+
+
+def add_baby_tracker(token):
+    entries = call("GET", "/api/config/config_entries/entry?domain=baby_tracker", token=token) or []
+    if entries:
+        print(f"Baby Tracker already added: {entries[0]['title']} ({entries[0]['state']})")
+        return
+    email, password = os.environ.get("BABYTRACKER_EMAIL"), os.environ.get("BABYTRACKER_PASSWORD")
+    if not email or not password:
+        print("Set BABYTRACKER_EMAIL and BABYTRACKER_PASSWORD in .env to add Baby Tracker automatically.")
+        return
+    flow = call("POST", "/api/config/config_entries/flow", {"handler": "baby_tracker"}, token)
+    print("Adding Baby Tracker (joins your account as a new device and downloads its data) ...")
+    result = call("POST", f"/api/config/config_entries/flow/{flow['flow_id']}", {
+        "email": email, "password": password,
+        "scan_interval": int(os.environ.get("BABYTRACKER_SCAN_INTERVAL", 15)),
+        "unit_system": os.environ.get("BABYTRACKER_UNIT_SYSTEM", "imperial"),
+    }, token)
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Adding Baby Tracker failed: {result.get('errors') or result}")
+    print(f"Added {result['title']}")
+
+
+def main():
+    steps = wait_for_home_assistant()
+    token = onboard(steps)
+    add_baby_tracker(token)
+    print(f"Ready: {HA_URL} (log in as {DEV_USER} / {DEV_PASSWORD})")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

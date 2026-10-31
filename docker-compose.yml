@@ -1,0 +1,17 @@
+# Home Assistant for trying the integration end to end:
+#   cp .env.example .env   (fill in your Baby Tracker login)
+#   docker compose up -d && python scripts/bootstrap
+# Then open http://localhost:8123 (dev / dev). Data lives in config/ (git-ignored).
+services:
+  homeassistant:
+    # Keep in step with requirements.txt / requirements_test.txt
+    image: ghcr.io/home-assistant/home-assistant:2026.10.4
+    container_name: baby-tracker-dev
+    ports:
+      - "8123:8123"
+    environment:
+      - TZ=${TZ:-America/Chicago}
+    volumes:
+      - ./config:/config
+      # Loaded straight from the repo; restart the container to pick up changes
+      - ./custom_components/baby_tracker:/config/custom_components/baby_tracker:ro

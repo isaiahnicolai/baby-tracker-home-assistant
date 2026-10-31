@@ -75,6 +75,16 @@ The repo follows Home Assistant's [integration blueprint](https://github.com/lud
 2. `scripts/develop` starts Home Assistant on http://localhost:8123 with this integration loaded from the repo and debug logging on. Its data lives in `config/`, which is git-ignored apart from `configuration.yaml`.
 3. `scripts/test` runs the test suite; `scripts/lint` formats and lints with ruff.
 
+Without VS Code, the same Home Assistant runs from the pinned Docker image, preconfigured:
+
+```bash
+cp .env.example .env              # fill in your Baby Tracker login (.env is git-ignored)
+docker compose up -d
+python scripts/bootstrap          # finishes onboarding (user dev / dev) and adds Baby Tracker
+```
+
+Open http://localhost:8123. The integration is mounted from the repo, so `docker compose restart` picks up code changes. `scripts/bootstrap` also works against `scripts/develop`. It joins your account as a new device, like any other Home Assistant install.
+
 Tests:
 
 - `tests/` covers the sync client against the app's real database schema (`tests/fixtures/app_schema.sql`, no data) with the sync server faked. These need only pytest: `pip install -e . pytest tzdata && pytest tests --ignore=tests/ha` works anywhere, including Windows.
