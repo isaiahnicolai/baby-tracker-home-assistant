@@ -4,10 +4,12 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Tuple 
 
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory, UnitOfTime, UnitOfVolume
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .entity import baby_device_info, baby_unique_id
 from .const import (
@@ -148,6 +150,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             BabyTrackerDailySummarySensor(coordinator, baby_name),
             BabyTrackerFeedingTimerSensor(coordinator, baby_name),
             BabyTrackerBedtimeAnalysisSensor(coordinator, baby_name),
+            BabyTrackerNextFeedSensor(coordinator, baby_name),
+            BabyTrackerFeedIntervalSensor(coordinator, baby_name),
+            BabyTrackerIntakeSensor(coordinator, baby_name),
+            BabyTrackerIntakeStatusSensor(coordinator, baby_name),
+            BabyTrackerDiaperAdequacySensor(coordinator, baby_name),
+            BabyTrackerGrowthPercentileSensor(coordinator, baby_name, "weight"),
+            BabyTrackerGrowthPercentileSensor(coordinator, baby_name, "length"),
+            BabyTrackerGrowthPercentileSensor(coordinator, baby_name, "head"),
+            BabyTrackerWeightGainSensor(coordinator, baby_name),
+            BabyTrackerCorrectedAgeSensor(coordinator, baby_name),
         ]
 
         sensors.extend(baby_sensors)
@@ -1894,3 +1906,215 @@ class BabyTrackerBedtimeAnalysisSensor(BabyTrackerSensor):
             "days_analyzed": analysis.get("days_analyzed"),
             "per_day": analysis.get("per_day", []),
         }
+
+
+# --- Insights: derived from the logged data (see client/insights.py) ---
+
+def _round(value, digits):
+    return round(value, digits) if value is not None else None
+
+
+def _parse_time(value):
+    """An aware datetime from an ISO string, or None."""
+    moment = dt_util.parse_datetime(value) if value else None
+    return moment if moment is not None and moment.tzinfo is not None else None
+
+
+class BabyTrackerInsightSensor(BabyTrackerSensor):
+    """Base for sensors that read one section of a baby's insights."""
+
+    _section = None  # key in the insights dict, e.g. "next_feed"
+    _attribute_keys = ()  # copied from the section into the attributes
+
+    def _get_section(self):
+        """This baby's section of the insights as a dict (empty when missing)."""
+        baby_data = self._get_baby_data() or {}
+        return (baby_data.get("insights") or {}).get(self._section) or {}
+
+    @property
+    def extra_state_attributes(self):
+        section = self._get_section()
+        if not section:
+            return {}
+        return {key: section.get(key) for key in self._attribute_keys}
+
+
+class BabyTrackerNextFeedSensor(BabyTrackerInsightSensor):
+    """When the next feed is expected, from the pattern of recent feeds."""
+
+    _section = "next_feed"
+    _attribute_keys = ("interval_hours", "basis", "sample_count", "bucket", "last_feed_at",
+                       "max_gap_hours", "wake_by", "overdue")
+
+    def __init__(self, coordinator, baby_name):
+        super().__init__(coordinator, baby_name, "next_feed", "Next Feed", None)
+        self._attr_device_class = SensorDeviceClass.TIMESTAMP
+        self._attr_icon = "mdi:baby-bottle"
+
+    @property
+    def native_value(self):
+        return _parse_time(self._get_section().get("predicted_at"))
+
+    @property
+    def extra_state_attributes(self):
+        attrs = super().extra_state_attributes
+        if "interval_hours" in attrs:
+            attrs["interval_hours"] = _round(attrs["interval_hours"], 2)
+        return attrs
+
+
+class BabyTrackerFeedIntervalSensor(BabyTrackerInsightSensor):
+    """The usual time between feeds right now."""
+
+    _section = "next_feed"
+    _attribute_keys = ("basis", "sample_count", "bucket")
+
+    def __init__(self, coordinator, baby_name):
+        super().__init__(coordinator, baby_name, "feed_interval", "Feed Interval", UnitOfTime.HOURS)
+        self._attr_device_class = SensorDeviceClass.DURATION
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self):
+        return _round(self._get_section().get("interval_hours"), 2)
+
+
+class BabyTrackerIntakeSensor(BabyTrackerInsightSensor):
+    """Bottle milk (formula and pumped) in the last 24 hours."""
+
+    _section = "intake"
+    _attribute_keys = ("expected_min_ml", "expected_max_ml", "status", "reason",
+                       "bottle_feeds", "nursing_feeds", "ml_per_kg")
+
+    def __init__(self, coordinator, baby_name):
+        super().__init__(coordinator, baby_name, "intake_24h", "Intake 24h", UnitOfVolume.MILLILITERS)
+        self._attr_device_class = SensorDeviceClass.VOLUME
+        self._attr_icon = "mdi:baby-bottle-outline"
+        if coordinator.unit_system != UNIT_SYSTEM_METRIC:
+            self._attr_suggested_unit_of_measurement = UnitOfVolume.FLUID_OUNCES
+
+    @property
+    def native_value(self):
+        return _round(self._get_section().get("actual_ml"), 1)
+
+    @property
+    def extra_state_attributes(self):
+        attrs = super().extra_state_attributes
+        if "ml_per_kg" in attrs:
+            attrs["ml_per_kg"] = _round(attrs["ml_per_kg"], 1)
+        return attrs
+
+
+class BabyTrackerIntakeStatusSensor(BabyTrackerInsightSensor):
+    """Whether the last 24 hours of bottle milk is low, ok or high for the baby's weight."""
+
+    _section = "intake"
+    _attribute_keys = ("reason",)
+    _STATUSES = ["low", "ok", "high", "unknown"]
+
+    def __init__(self, coordinator, baby_name):
+        super().__init__(coordinator, baby_name, "intake_status", "Intake Status", None)
+        self._attr_device_class = SensorDeviceClass.ENUM
+        self._attr_options = self._STATUSES
+
+    @property
+    def native_value(self):
+        status = self._get_section().get("status")
+        return status if status in self._STATUSES else None
+
+
+class BabyTrackerDiaperAdequacySensor(BabyTrackerInsightSensor):
+    """Whether the last 24 hours of wet and dirty diapers is enough for the baby's age."""
+
+    _section = "diapers"
+    _attribute_keys = ("wet_count", "dirty_count", "expected_min_wet", "note")
+    _STATUSES = ["ok", "low", "unknown"]
+
+    def __init__(self, coordinator, baby_name):
+        super().__init__(coordinator, baby_name, "diaper_adequacy", "Diaper Adequacy", None)
+        self._attr_device_class = SensorDeviceClass.ENUM
+        self._attr_options = self._STATUSES
+        self._attr_icon = "mdi:baby-face-outline"
+
+    @property
+    def native_value(self):
+        status = self._get_section().get("status")
+        return status if status in self._STATUSES else None
+
+
+class BabyTrackerGrowthPercentileSensor(BabyTrackerInsightSensor):
+    """Where the latest weight, length or head measurement sits on the WHO growth standard."""
+
+    _section = "growth"
+    _attribute_keys = ("z", "p3", "p50", "p97", "measured_at", "age_months")
+    _NAMES = {"weight": "Weight Percentile", "length": "Length Percentile", "head": "Head Percentile"}
+    _ICONS = {"weight": "mdi:scale-bathroom", "length": "mdi:human-male-height", "head": "mdi:head"}
+
+    def __init__(self, coordinator, baby_name, kind):
+        super().__init__(coordinator, baby_name, f"{kind}_percentile", self._NAMES[kind], "%")
+        self._kind = kind
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_icon = self._ICONS[kind]
+
+    def _get_section(self):
+        return super()._get_section().get(self._kind) or {}
+
+    @property
+    def native_value(self):
+        return _round(self._get_section().get("percentile"), 1)
+
+    @property
+    def extra_state_attributes(self):
+        attrs = super().extra_state_attributes
+        for key in ("z", "p3", "p50", "p97", "age_months"):
+            if key in attrs:
+                attrs[key] = _round(attrs[key], 2)
+        return attrs
+
+
+class BabyTrackerWeightGainSensor(BabyTrackerInsightSensor):
+    """Weight gain in grams per day between the latest two weights."""
+
+    _section = "weight_velocity"
+    _attribute_keys = ("status", "expected_min", "expected_max", "span_days",
+                       "from_at", "to_at", "reason")
+
+    def __init__(self, coordinator, baby_name):
+        super().__init__(coordinator, baby_name, "weight_gain", "Weight Gain", "g/d")
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_icon = "mdi:trending-up"
+
+    @property
+    def native_value(self):
+        return _round(self._get_section().get("grams_per_day"), 1)
+
+    @property
+    def extra_state_attributes(self):
+        attrs = super().extra_state_attributes
+        if "span_days" in attrs:
+            attrs["span_days"] = _round(attrs["span_days"], 1)
+        return attrs
+
+
+class BabyTrackerCorrectedAgeSensor(BabyTrackerInsightSensor):
+    """Age in days, corrected for prematurity when the baby was born before 37 weeks."""
+
+    _section = "age"
+    _attribute_keys = ("chronological_days", "corrected_months", "premature",
+                       "correction_applied", "gestation_days")
+
+    def __init__(self, coordinator, baby_name):
+        super().__init__(coordinator, baby_name, "corrected_age", "Corrected Age", UnitOfTime.DAYS)
+        self._attr_icon = "mdi:calendar-clock"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self):
+        return self._get_section().get("corrected_days")
+
+    @property
+    def extra_state_attributes(self):
+        attrs = super().extra_state_attributes
+        if "corrected_months" in attrs:
+            attrs["corrected_months"] = _round(attrs["corrected_months"], 2)
+        return attrs

@@ -73,6 +73,9 @@ ALERT_TYPE_NO_POOP = "no_poop"
 ALERT_TYPE_LOW_WET_DIAPERS = "low_wet_diapers"
 ALERT_TYPE_FEVER = "fever"
 ALERT_TYPE_LONG_SLEEP = "long_sleep"
+ALERT_TYPE_INTAKE_LOW = "intake_low"
+ALERT_TYPE_FEED_DUE = "feed_due"
+ALERT_TYPE_WAKE_TO_FEED = "wake_to_feed"
 
 # Alert thresholds - (min_days, max_days, value)
 FEEDING_THRESHOLDS = [

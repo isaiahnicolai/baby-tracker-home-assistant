@@ -19,6 +19,9 @@ from .const import (
     ALERT_TYPE_LOW_WET_DIAPERS,
     ALERT_TYPE_FEVER,
     ALERT_TYPE_LONG_SLEEP,
+    ALERT_TYPE_INTAKE_LOW,
+    ALERT_TYPE_FEED_DUE,
+    ALERT_TYPE_WAKE_TO_FEED,
     FEEDING_THRESHOLDS,
     NO_POOP_THRESHOLDS,
     LONG_SLEEP_THRESHOLDS,
@@ -90,6 +93,9 @@ async def async_setup_entry(
             LowWetDiapersAlert(coordinator, baby_name),
             FeverAlert(coordinator, baby_name),
             LongSleepAlert(coordinator, baby_name),
+            IntakeLowAlert(coordinator, baby_name),
+            FeedDueAlert(coordinator, baby_name),
+            WakeToFeedAlert(coordinator, baby_name),
         ]
         entities.extend(alert_entities)
         entities.append(BabyTrackerNightModeSensor(coordinator, baby_name))
@@ -375,6 +381,76 @@ class LongSleepAlert(BabyTrackerAlert):
             return False
         threshold, _ = self._get_threshold_info()
         return hours >= threshold
+
+
+class InsightAlert(BabyTrackerAlert):
+    """Base for alerts driven by a baby's insights (see client/insights.py)."""
+
+    def _get_insight(self, section):
+        """One part of this baby's insights as a dict (empty when missing)."""
+        baby_data = self._get_baby_data() or {}
+        return (baby_data.get("insights") or {}).get(section) or {}
+
+    @staticmethod
+    def _has_passed(iso_time):
+        """True once the current time is at or past an ISO timestamp (False if missing)."""
+        moment = dt_util.parse_datetime(iso_time) if iso_time else None
+        return moment is not None and moment.tzinfo is not None and dt_util.utcnow() >= moment
+
+
+class IntakeLowAlert(InsightAlert):
+    """Alert when the last 24 hours of bottle milk is under 150 ml/kg."""
+
+    def __init__(self, coordinator, baby_name):
+        super().__init__(
+            coordinator, baby_name, ALERT_TYPE_INTAKE_LOW, "Intake Low"
+        )
+        self._attr_icon = "mdi:baby-bottle-outline"
+
+    def _get_threshold_info(self):
+        return self._get_insight("intake").get("expected_min_ml"), "ml in 24h"
+
+    def _get_current_value(self):
+        actual = self._get_insight("intake").get("actual_ml")
+        return round(actual) if actual is not None else None
+
+    def _evaluate_condition(self):
+        return self._get_insight("intake").get("status") == "low"
+
+
+class FeedDueAlert(InsightAlert):
+    """Alert when the predicted time of the next feed has passed."""
+
+    def __init__(self, coordinator, baby_name):
+        super().__init__(
+            coordinator, baby_name, ALERT_TYPE_FEED_DUE, "Feed Due"
+        )
+        self._attr_icon = "mdi:clock-alert-outline"
+
+    def _get_current_value(self):
+        return self._get_insight("next_feed").get("predicted_at")
+
+    def _evaluate_condition(self):
+        return self._has_passed(self._get_current_value())
+
+
+class WakeToFeedAlert(InsightAlert):
+    """Alert when a baby who should be woken to feed has gone past the longest sensible gap."""
+
+    def __init__(self, coordinator, baby_name):
+        super().__init__(
+            coordinator, baby_name, ALERT_TYPE_WAKE_TO_FEED, "Wake To Feed"
+        )
+        self._attr_icon = "mdi:alarm-bell"
+
+    def _get_threshold_info(self):
+        return self._get_insight("next_feed").get("max_gap_hours"), "hours between feeds"
+
+    def _get_current_value(self):
+        return self._get_insight("next_feed").get("wake_by")
+
+    def _evaluate_condition(self):
+        return self._has_passed(self._get_current_value())
 
 
 class BabyTrackerNightModeSensor(CoordinatorEntity, BinarySensorEntity):
