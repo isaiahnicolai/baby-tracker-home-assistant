@@ -2960,6 +2960,210 @@ class BabyTrackerLocalDatabase:
         finally:
             conn.close()
 
+    # ===== DERIVED QUERIES =====
+    # Answers worked out from stored records (breast side, next dose, upcoming
+    # milestones, milk inventory, calendar). Times are Unix seconds.
+
+    # Android: the pump unit conversion used throughout BTDatabaseImple
+    ML_PER_OZ = 29.5735
+
+    # Pump/Nursing FinishSide: 0 not set, 1 left, 2 right
+    _SIDES = {1: "left", 2: "right"}
+
+    def get_next_breast(self, baby_id: Optional[str] = None) -> Dict:
+        """
+        Which breast to offer next. Follows the app's getLastBreastStateImpleOP:
+        the latest nursing session (not in the future) is compared with the
+        latest pump session (inventory adjustments don't count), and the side
+        the more recent one finished on tells which side is next.
+
+        The app looks at every baby's nursing, since the mother is the same
+        whichever baby is fed; pass baby_id to look at one baby's nursing only.
+
+        :return: {"next_side": "left"|"right"|"unknown", "last_side": same,
+            "last_type": "nursing"|"pump"|None, "last_time": text or None}
+        """
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            now = self._now().timestamp()
+            nursing_sql = "SELECT Time, FinishSide FROM Nursing WHERE Time <= ?"
+            params = [now]
+            if baby_id:
+                nursing_sql += " AND BabyID = ?"
+                params.append(baby_id)
+            cursor.execute(nursing_sql + " ORDER BY Time DESC LIMIT 1", params)
+            nursing = cursor.fetchone()
+            # Records made by this client store "no label" as '', the app's own as NULL
+            cursor.execute("SELECT Time, FinishSide FROM Pump WHERE Time <= ? AND COALESCE(Label, '') = '' "
+                           "ORDER BY Time DESC LIMIT 1", (now,))
+            pump = cursor.fetchone()
+        finally:
+            conn.close()
+
+        # The more recent of the two; the app prefers the pump when they tie
+        if nursing and (not pump or nursing[0] > pump[0]):
+            last_type, last = "nursing", nursing
+        elif pump:
+            last_type, last = "pump", pump
+        else:
+            return {"next_side": "unknown", "last_side": "unknown", "last_type": None, "last_time": None}
+
+        last_side = self._SIDES.get(last[1], "unknown")
+        next_side = {"left": "right", "right": "left"}.get(last_side, "unknown")
+        return {"next_side": next_side, "last_side": last_side, "last_type": last_type,
+                "last_time": self._format_timestamp(last[0])}
+
+    def get_next_medicine_dose(self, baby_id: str) -> Optional[Dict]:
+        """
+        When the baby's most recent medicine can be given again: the time it was
+        given plus the medicine's interval (MedicineSelection.Interval, in minutes).
+
+        :return: None when no medicine has been given, else {"medicine_name", "med_id", "amount", "unit",
+            "last_given" (text), "interval_minutes", "next_dose_at" (ISO UTC text, None without an interval)}
+        """
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT m.Time, m.MedID, m.Amount, ms.Name, ms.Unit, ms.Interval
+                FROM Medicine m LEFT JOIN MedicineSelection ms ON m.MedID = ms.ID
+                WHERE m.BabyID = ? ORDER BY m.Time DESC LIMIT 1
+                """, (baby_id,))
+            row = cursor.fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return None
+        given, med_id, amount, name, unit, interval = row
+        next_dose = None
+        if interval and interval > 0:
+            next_dose = datetime.fromtimestamp(given + interval * 60, timezone.utc).isoformat()
+        return {"medicine_name": name or "Unknown", "med_id": med_id, "amount": amount, "unit": unit or "",
+                "last_given": self._format_timestamp(given), "interval_minutes": interval or 0,
+                "next_dose_at": next_dose}
+
+    def _get_upcoming(self, baby_id: str, selection_table: str, record_table: str, record_column: str,
+                      baby_column: Optional[str]) -> List[Dict]:
+        """Selections the baby hasn't logged yet, youngest ForAge (months) first."""
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            # A milestone can be made for one baby only (BabyID); the rest are for everyone
+            scope = f"AND (s.{baby_column} IS NULL OR s.{baby_column} = '' OR s.{baby_column} = ?)" if baby_column else ""
+            cursor.execute(
+                f"""
+                SELECT s.ID, s.Name, s.Description, s.ForAge FROM {selection_table} s
+                WHERE s.ID NOT IN (SELECT {record_column} FROM {record_table} WHERE BabyID = ?) {scope}
+                ORDER BY s.ForAge ASC, s.Name ASC
+                """, (baby_id, baby_id) if baby_column else (baby_id,))
+            return [{"id": row[0], "name": row[1], "description": row[2] or "", "for_age": row[3] or 0}
+                    for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    def get_upcoming_milestones(self, baby_id: str) -> List[Dict]:
+        """Milestones the baby hasn't logged, by the age (months) they are expected at."""
+        return self._get_upcoming(baby_id, "MilestoneSelection", "Milestone", "MilestoneSelectionID", "BabyID")
+
+    def get_upcoming_vaccines(self, baby_id: str) -> List[Dict]:
+        """Vaccines the baby hasn't had, by the age (months) they are due at."""
+        return self._get_upcoming(baby_id, "VaccineSelection", "Vaccine", "VaccID", None)
+
+    def get_pumped_milk_inventory(self) -> Dict:
+        """
+        Milk in store: everything pumped (including inventory adjustment rows,
+        which carry a Label) minus everything fed from the pump, for the whole
+        account, as the app's getBreastMilkInvertoryImpleOp works it out. A
+        pump row with no total amount counts its left and right amounts.
+
+        :return: {"ml", "pumped_ml", "fed_ml"} (ml may be negative when feeds
+            were logged without the matching pump sessions)
+        """
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT COALESCE(SUM(
+                    CASE WHEN COALESCE(Amount, 0) <> 0 THEN Amount ELSE COALESCE(LeftAmount, 0) + COALESCE(RightAmount, 0) END
+                    * CASE WHEN IsEnglishScale = 1 THEN ? ELSE 1 END), 0)
+                FROM Pump WHERE Time > 0
+                """, (self.ML_PER_OZ,))
+            pumped = cursor.fetchone()[0]
+            cursor.execute(
+                "SELECT COALESCE(SUM(Amount * CASE WHEN IsEnglishScale = 1 THEN ? ELSE 1 END), 0) FROM Pumped WHERE Time > 0",
+                (self.ML_PER_OZ,))
+            fed = cursor.fetchone()[0]
+        finally:
+            conn.close()
+        return {"ml": round(pumped - fed, 1), "pumped_ml": round(pumped, 1), "fed_ml": round(fed, 1)}
+
+    def get_events_between(self, baby_id: str, start: float, end: float) -> List[Dict]:
+        """
+        What happened for one baby in a time range, for the calendar: feeds,
+        sleeps, baths, doctor visits and medicines whose start falls in
+        [start, end) (Unix seconds), oldest first. A sleep that began earlier
+        is included while it runs into the range.
+
+        Each dict has start and end (Unix seconds), summary, description (the
+        note) and kind ("feeding", "sleep", "bath", "doctor" or "medicine").
+        A sleep runs for its duration (minutes) and a sleep in progress up to
+        now; everything else is a 15-minute event.
+        """
+        short = 15 * 60
+        now = self._now().timestamp()
+        events = []
+
+        def add(kind, time, summary, note, length=short):
+            events.append({"start": time, "end": time + length, "summary": summary,
+                           "description": note or "", "kind": kind})
+
+        def amount(value, english):
+            return f"{value:g} oz" if english else f"{value:g} ml"
+
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            window = (baby_id, start, end)
+            cursor.execute("SELECT Time, LeftDuration, RightDuration, BothDuration, Note FROM Nursing "
+                           "WHERE BabyID = ? AND Time >= ? AND Time < ?", window)
+            for time, left, right, both, note in cursor.fetchall():
+                minutes = (left or 0) + (right or 0) or (both or 0)
+                add("feeding", time, f"Nursing ({minutes} min)" if minutes else "Nursing", note)
+            for table, label in (("Formula", "Formula"), ("Pumped", "Pumped milk"), ("OtherFeed", "Feeding")):
+                cursor.execute(f"SELECT Time, Amount, IsEnglishScale, Note FROM {table} "
+                               "WHERE BabyID = ? AND Time >= ? AND Time < ?", window)
+                for time, value, english, note in cursor.fetchall():
+                    add("feeding", time, f"{label} {amount(value, english)}" if value else label, note)
+            # A sleep that began before the range still counts while it runs into it
+            cursor.execute("SELECT Time, Duration, Note FROM Sleep WHERE BabyID = ? AND Time < ? "
+                           "AND (COALESCE(Duration, 0) = 0 OR Time + Duration * 60 > ?)", (baby_id, end, start))
+            for time, minutes, note in cursor.fetchall():
+                if minutes:
+                    add("sleep", time, f"Sleep ({minutes // 60}h {minutes % 60}m)", note, minutes * 60)
+                elif now > start:  # still asleep
+                    add("sleep", time, "Sleep (in progress)", note, max(now - time, short))
+            cursor.execute("SELECT b.Time, d.Name, b.Note FROM Bath b LEFT JOIN BathDesc d ON b.DescID = d.ID "
+                           "WHERE b.BabyID = ? AND b.Time >= ? AND b.Time < ?", window)
+            for time, name, note in cursor.fetchall():
+                add("bath", time, name or "Bath", note)
+            cursor.execute("SELECT Time, IsAppointment, Symptom, Note FROM DoctorVisit "
+                           "WHERE BabyID = ? AND Time >= ? AND Time < ?", window)
+            for time, appointment, symptom, note in cursor.fetchall():
+                summary = "Doctor appointment" if appointment else "Doctor visit"
+                add("doctor", time, f"{summary}: {symptom}" if symptom else summary, note)
+            cursor.execute("SELECT m.Time, s.Name, m.Amount, s.Unit, m.Note FROM Medicine m "
+                           "LEFT JOIN MedicineSelection s ON m.MedID = s.ID "
+                           "WHERE m.BabyID = ? AND m.Time >= ? AND m.Time < ?", window)
+            for time, name, dose, unit, note in cursor.fetchall():
+                summary = f"Medicine: {name or 'Unknown'}"
+                add("medicine", time, f"{summary} {dose:g} {unit or ''}".rstrip() if dose else summary, note)
+        finally:
+            conn.close()
+        return sorted(events, key=lambda event: event["start"])
+
     # Example usage
 
     # ===== SYNC SUPPORT =====
