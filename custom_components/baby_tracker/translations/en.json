@@ -252,7 +252,7 @@
       "message": "That device isn't one of your Baby Tracker babies"
     },
     "baby_not_found": {
-      "message": "Baby '{baby_name}' not found"
+      "message": "Baby {baby_name} not found"
     },
     "no_babies": {
       "message": "No babies found in Baby Tracker"
@@ -261,13 +261,13 @@
       "message": "baby_name is required when there are multiple babies ({names})"
     },
     "medicine_not_found": {
-      "message": "Medicine '{name}' not found"
+      "message": "Medicine {name} not found"
     },
     "milestone_not_found": {
-      "message": "Milestone '{name}' not found"
+      "message": "Milestone {name} not found"
     },
     "vaccine_not_found": {
-      "message": "Vaccine '{name}' not found"
+      "message": "Vaccine {name} not found"
     },
     "action_failed": {
       "message": "Failed to {action}: {error}"
