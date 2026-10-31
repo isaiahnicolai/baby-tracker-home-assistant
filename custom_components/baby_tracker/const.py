@@ -199,6 +199,14 @@ def activity_signal(entry_id):
     return f"{SIGNAL_ACTIVITY}_{entry_id}"
 
 
+SIGNAL_CONTROL = "baby_tracker_control"  # sent when the coordinator changes a baby's control itself
+
+
+def control_signal(entry_id):
+    """The dispatcher signal for a control (a number or select value) the coordinator set itself."""
+    return f"{SIGNAL_CONTROL}_{entry_id}"
+
+
 # Entities worked out from the clock re-evaluate this often between refreshes
 CLOCK_TICK_SECONDS = 60
 

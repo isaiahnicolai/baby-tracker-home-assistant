@@ -405,6 +405,9 @@
     "no_medicine_selected": {
       "message": "This account has no medicines to choose from; add one in the Baby Tracker app"
     },
+    "no_medicine_amount": {
+      "message": "Set the Medicine Amount first; this medicine has no usual amount in the Baby Tracker app"
+    },
     "no_nursing_timer": {
       "message": "No nursing timer is running; press Start Nursing Left or Right first"
     },

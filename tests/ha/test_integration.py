@@ -931,8 +931,10 @@ async def test_controls_follow_the_unit_setting(hass, backend):
     assert size.attributes["mode"] == "box"
     assert hass.states.get("number.ann_marie_bottle_size") is not None  # every baby has the controls
 
-    assert float(hass.states.get("number.everly_medicine_amount").state) == 1
+    # It starts at the usual dose of the first medicine, whose unit it shows
+    assert float(hass.states.get("number.everly_medicine_amount").state) == 3.75
     assert hass.states.get("number.everly_medicine_amount").attributes["step"] == 0.1
+    assert hass.states.get("number.everly_medicine_amount").attributes["unit"] == "ml"
     assert float(hass.states.get("number.everly_tummy_time_minutes").state) == 15
 
     bottle_type = hass.states.get("select.everly_bottle_type")
@@ -981,9 +983,9 @@ async def test_give_medicine_logs_the_selected_medicine_and_amount(hass, backend
     entry = make_entry()
     await setup(hass, entry)
 
-    # Until one is chosen, the first medicine
+    # Until one is chosen, the first medicine and its usual dose
     await press(hass, "button.everly_give_medicine")
-    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-TYLENOL", 1.0)
+    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-TYLENOL", 3.75)
 
     await select_option(hass, "select.everly_medicine", "Vitamin D")
     await set_number(hass, "number.everly_medicine_amount", 2.5)
@@ -998,7 +1000,7 @@ async def test_controls_are_restored_after_a_restart(hass, backend):
         (State("number.everly_bottle_size", "7.5"),
          {"native_max_value": 12, "native_min_value": 1, "native_step": 0.5,
           "native_unit_of_measurement": "oz", "native_value": 7.5}),
-        # Saved in another unit, so meaningless here: the default stands
+        # Saved in another unit, so meaningless here: the medicine's usual dose stands
         (State("number.everly_medicine_amount", "9"),
          {"native_max_value": 100, "native_min_value": 0.1, "native_step": 0.1,
           "native_unit_of_measurement": "mL", "native_value": 9}),
@@ -1008,7 +1010,7 @@ async def test_controls_are_restored_after_a_restart(hass, backend):
     await setup(hass, make_entry())
 
     assert float(hass.states.get("number.everly_bottle_size").state) == 7.5
-    assert float(hass.states.get("number.everly_medicine_amount").state) == 1
+    assert float(hass.states.get("number.everly_medicine_amount").state) == 3.75
     assert hass.states.get("select.everly_bottle_type").state == "pumped"
     assert hass.states.get("select.everly_medicine").state == "Vitamin D"
     await press(hass, "button.everly_add_bottle")
@@ -1542,3 +1544,105 @@ async def test_the_fetch_reads_each_babys_recent_records_in_the_same_job(hass, b
     tracker.get_recent_records.side_effect = ValueError("bad row")
     _, _, _, baby_data, _, _ = REAL_FETCH(coordinator, coordinator.photo_dir)
     assert baby_data["Everly"]["recent_records"] == []
+
+
+# ----- the Medicine Amount follows the selected medicine -----
+
+# Tylenol has a usual dose, Gripe water has none, Iron has no unit either
+MEDICINES_WITH_GAPS = [
+    {"id": "MED-TYLENOL", "name": "Tylenol", "amount_per_time": 3.75, "unit": "ml"},
+    {"id": "MED-GRIPE", "name": "Gripe water", "amount_per_time": 0, "unit": ""},
+    {"id": "MED-IRON", "name": "Iron", "amount_per_time": None, "unit": None},
+]
+
+
+def fetch_with_medicines(medicines):
+    def fetch(self, photo_dir):
+        return (*fake_fetch(self, photo_dir)[:5], medicines)
+    return fetch
+
+
+async def test_selecting_a_medicine_sets_its_usual_amount(hass, backend):
+    await setup(hass, make_entry())
+    amount = "number.everly_medicine_amount"
+    assert float(hass.states.get(amount).state) == 3.75 and hass.states.get(amount).attributes["unit"] == "ml"
+
+    await select_option(hass, "select.everly_medicine", "Vitamin D")
+    assert float(hass.states.get(amount).state) == 1.0  # the number's state moved with the select
+    assert hass.states.get(amount).attributes["unit"] == "ml"
+
+    # A dose set by hand stands until another medicine is chosen
+    await set_number(hass, amount, 2.5)
+    assert float(hass.states.get(amount).state) == 2.5
+    await select_option(hass, "select.everly_medicine", "Tylenol")
+    assert float(hass.states.get(amount).state) == 3.75
+
+    # Each baby has their own
+    assert float(hass.states.get("number.ann_marie_medicine_amount").state) == 3.75
+    await select_option(hass, "select.everly_medicine", "Vitamin D")
+    assert float(hass.states.get("number.ann_marie_medicine_amount").state) == 3.75
+
+
+async def test_a_medicine_with_no_usual_amount_leaves_the_amount_alone(hass, backend):
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with_medicines(MEDICINES_WITH_GAPS)):
+        await setup(hass, make_entry())
+        amount = "number.everly_medicine_amount"
+        await set_number(hass, amount, 2.5)
+
+        for name in ("Gripe water", "Iron"):
+            await select_option(hass, "select.everly_medicine", name)
+            assert float(hass.states.get(amount).state) == 2.5, name
+            assert "unit" not in hass.states.get(amount).attributes  # the medicine has none to show
+
+
+async def test_give_medicine_falls_back_to_the_usual_amount(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+
+    for empty in (0, None):
+        coordinator.set_control("ID-EVERLY", "medicine_amount", empty)
+        allow_another_press(hass, entry)
+        await press(hass, "button.everly_give_medicine")
+        assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-TYLENOL", 3.75)
+
+    await select_option(hass, "select.everly_medicine", "Vitamin D")
+    coordinator.set_control("ID-EVERLY", "medicine_amount", 0)
+    allow_another_press(hass, entry)
+    await press(hass, "button.everly_give_medicine")
+    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-VITD", 1.0)
+
+    # An amount that was set is used as it is
+    await set_number(hass, "number.everly_medicine_amount", 2.5)
+    allow_another_press(hass, entry)
+    await press(hass, "button.everly_give_medicine")
+    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-VITD", 2.5)
+
+
+async def test_give_medicine_with_no_amount_and_no_usual_dose_is_refused(hass, backend):
+    entry = make_entry()
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with_medicines(MEDICINES_WITH_GAPS)):
+        await setup(hass, entry)
+        await select_option(hass, "select.everly_medicine", "Gripe water")
+        coordinator_for(hass, entry).set_control("ID-EVERLY", "medicine_amount", 0)
+        with pytest.raises(ServiceValidationError) as err:
+            await press(hass, "button.everly_give_medicine")
+    assert err.value.translation_key == "no_medicine_amount"
+    assert not [call for call in backend if call[0] == "add_medicine"]
+
+
+async def test_an_amount_set_by_hand_is_restored_and_not_replaced_by_the_selection(hass, backend):
+    mock_restore_cache_with_extra_data(hass, [
+        (State("number.everly_medicine_amount", "2.5"),
+         {"native_max_value": 100, "native_min_value": 0.1, "native_step": 0.1,
+          "native_unit_of_measurement": None, "native_value": 2.5}),
+        (State("select.everly_medicine", "Vitamin D"), {}),
+    ])
+    await setup(hass, make_entry())
+
+    assert hass.states.get("select.everly_medicine").state == "Vitamin D"
+    assert float(hass.states.get("number.everly_medicine_amount").state) == 2.5  # not Vitamin D's 1.0
+    await press(hass, "button.everly_give_medicine")
+    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-VITD", 2.5)

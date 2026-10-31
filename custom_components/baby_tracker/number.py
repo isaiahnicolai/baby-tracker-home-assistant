@@ -4,7 +4,8 @@ import logging
 from homeassistant.components.number import NumberMode, RestoreNumber
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTime
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -15,6 +16,7 @@ from .const import (
     DEFAULT_TUMMY_TIME_MINUTES,
     DOMAIN,
     UNIT_SYSTEM_METRIC,
+    control_signal,
 )
 from .entity import baby_device_info, baby_unique_id
 
@@ -102,6 +104,27 @@ class MedicineAmountNumber(BabyTrackerNumber):
     _attr_native_min_value = 0.1
     _attr_native_max_value = 100
     _attr_native_step = 0.1
+
+    def _configure(self):
+        # Start at the usual dose of the medicine the Medicine select starts on
+        self._default = self.coordinator.medicine_dose(self._baby_id) or DEFAULT_MEDICINE_AMOUNT
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        # Choosing a medicine sets this value (and changes the unit shown) from outside
+        self.async_on_remove(async_dispatcher_connect(
+            self.hass, control_signal(self.coordinator.config_entry.entry_id), self._handle_control))
+
+    @callback
+    def _handle_control(self, baby_id, control) -> None:
+        if baby_id == self._baby_id and control == self._control:
+            self.async_write_ha_state()
+
+    @property
+    def extra_state_attributes(self):
+        """The unit of the selected medicine's amounts (ml, tablet...), when the app has one."""
+        unit = (self.coordinator.selected_medicine_info(self._baby_id) or {}).get("unit")
+        return {"unit": unit} if unit else {}
 
 
 class TummyTimeNumber(BabyTrackerNumber):

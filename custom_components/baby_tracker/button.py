@@ -155,7 +155,10 @@ class BabyTrackerGiveMedicineButton(BabyTrackerButton):
         medicine = self.coordinator.selected_medicine(self._baby_id)
         if not medicine:
             raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_medicine_selected")
-        amount = self.coordinator.control(self._baby_id, "medicine_amount")
+        # An amount of 0 (or none) means the medicine's usual dose
+        amount = self.coordinator.control(self._baby_id, "medicine_amount") or self.coordinator.medicine_dose(self._baby_id)
+        if not amount:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_medicine_amount")
         _LOGGER.info(f"Giving {medicine} ({amount}) to {self._baby_name}")
 
         await self.hass.services.async_call(

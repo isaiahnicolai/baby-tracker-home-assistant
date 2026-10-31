@@ -41,6 +41,7 @@ from .const import (
     RECENT_RECORDS_LIMIT,
     UPLOADS_PENDING_REFRESHES,
     activity_signal,
+    control_signal,
 )
 from .entity import migrate_to_baby_ids, remove_retired_entities
 from .services import async_register_services, async_unregister_services
@@ -246,6 +247,26 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         names = self.medicine_names
         chosen = self.control(baby_id, "medicine")
         return chosen if chosen in names else (names[0] if names else None)
+
+    def selected_medicine_info(self, baby_id):
+        """The account's record of the medicine chosen for a baby (name, amount_per_time, unit...), or None."""
+        name = self.selected_medicine(baby_id)
+        return next((m for m in (self.data or {}).get("medicines") or [] if m.get("name") == name), None)
+
+    def medicine_dose(self, baby_id):
+        """The usual dose of the baby's selected medicine (its amount per time), or None when it has none."""
+        amount = (self.selected_medicine_info(baby_id) or {}).get("amount_per_time")
+        return amount if isinstance(amount, (int, float)) and amount > 0 else None
+
+    def follow_medicine(self, baby_id):
+        """
+        The baby's Medicine was just changed: set the Medicine Amount to that medicine's usual
+        dose, if it has one, and tell the number to show it (and the medicine's unit).
+        """
+        dose = self.medicine_dose(baby_id)
+        if dose is not None:
+            self.set_control(baby_id, "medicine_amount", dose)
+        async_dispatcher_send(self.hass, control_signal(self.config_entry.entry_id), baby_id, "medicine_amount")
 
     # ----- buttons -----
 
