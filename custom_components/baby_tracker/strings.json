@@ -345,6 +345,9 @@
     "image": {
       "baby_photo": {
         "name": "Photo"
+      },
+      "baby_photo_landscape": {
+        "name": "Photo Landscape"
       }
     },
     "calendar": {

@@ -18,10 +18,15 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up an image entity for each baby."""
+    """Set up an image entity for each baby, and a landscape one for each baby that has a landscape photo."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
+    pictures = coordinator.data.get("baby_pictures") or {}
+    babies = coordinator.data.get("babies") or []
+    async_add_entities(BabyTrackerPhoto(hass, coordinator, baby.name) for baby in babies)
     async_add_entities(
-        BabyTrackerPhoto(hass, coordinator, baby.name) for baby in coordinator.data.get("babies") or []
+        BabyTrackerLandscapePhoto(hass, coordinator, baby.name)
+        for baby in babies
+        if (pictures.get(baby.name) or {}).get("landscape")
     )
 
 
@@ -52,11 +57,15 @@ class BabyTrackerPhoto(CoordinatorEntity, ImageEntity):
 
     def _use_photo_from_data(self):
         """Take this baby's current photo (file and modification time) from the coordinator's data."""
-        photo = ((self.coordinator.data or {}).get("baby_pictures") or {}).get(self._baby_name)
+        photo = self._picture(((self.coordinator.data or {}).get("baby_pictures") or {}).get(self._baby_name))
         self._path = photo["path"] if photo else None
         # image_last_updated is what tells the frontend the picture has changed
         self._attr_image_last_updated = photo["updated"] if photo else None
         self._attr_content_type = (mimetypes.guess_type(self._path)[0] if self._path else None) or "image/jpeg"
+
+    def _picture(self, pictures):
+        """Which of the baby's downloaded pictures this entity shows (a {"path", "updated"} dict, or None)."""
+        return pictures if pictures and pictures.get("path") else None
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -71,3 +80,17 @@ class BabyTrackerPhoto(CoordinatorEntity, ImageEntity):
             return await self.hass.async_add_executor_job(_read, self._path)
         except OSError:
             return None
+
+
+class BabyTrackerLandscapePhoto(BabyTrackerPhoto):
+    """The app's landscape version of the baby's photo (the wide crop), when the baby has one."""
+
+    _attr_translation_key = "baby_photo_landscape"
+
+    def __init__(self, hass, coordinator, baby_name):
+        """Initialize the image."""
+        super().__init__(hass, coordinator, baby_name)
+        self._attr_unique_id = baby_unique_id(coordinator, baby_name, "photo_landscape")
+
+    def _picture(self, pictures):
+        return (pictures or {}).get("landscape")

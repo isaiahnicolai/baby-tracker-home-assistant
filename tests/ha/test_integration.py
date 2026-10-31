@@ -672,6 +672,7 @@ async def test_baby_without_a_photo_still_has_an_image_entity(hass, backend):
     await setup(hass, make_entry())
     assert hass.states.get("image.everly_photo").state == "unknown"
     assert hass.states.get("image.ann_marie_photo") is not None
+    assert hass.states.get("image.everly_photo_landscape") is None  # only babies with a landscape photo get one
 
 
 def household_fetch(self, photo_dir):
@@ -1646,3 +1647,67 @@ async def test_an_amount_set_by_hand_is_restored_and_not_replaced_by_the_selecti
     assert float(hass.states.get("number.everly_medicine_amount").state) == 2.5  # not Vitamin D's 1.0
     await press(hass, "button.everly_give_medicine")
     assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-VITD", 2.5)
+
+
+# ----- landscape photo -----
+
+PHOTO_BABY = Baby({"objectID": "ID-EVERLY", "name": "Everly", "dob": "", "dueDay": "", "pictureName": "everly.jpg"})
+
+
+async def setup_with_photos(hass, portrait=True, landscape=True):
+    """Set up with the real coordinator fetch, against a client that downloads these pictures (None: none)."""
+    photo_dir = hass.config.path("baby_tracker")
+
+    def saver(name, content, wanted):
+        def download(self, picture_name, save_dir):
+            assert save_dir == photo_dir
+            if not wanted:
+                return None
+            os.makedirs(save_dir, exist_ok=True)
+            path = os.path.join(save_dir, name)
+            with open(path, "wb") as photo:
+                photo.write(content)
+            return path
+        return download
+
+    with patch(f"{CORE}.authenticate", return_value={"status": "success"}), \
+         patch(f"{CORE}.sync", return_value={"status": "success"}), \
+         patch(f"{CORE}.get_all_babies", return_value=[PHOTO_BABY]), \
+         patch(f"{CORE}.get_baby_info", return_value=PHOTO_BABY), \
+         patch(f"{CORE}.download_baby_picture", saver("everly.jpg", b"portrait-bytes", portrait)), \
+         patch(f"{CORE}.download_baby_landscape_picture", saver("everly_l.jpg", b"landscape-bytes", landscape)):
+        await setup(hass, make_entry())
+
+
+async def test_a_landscape_photo_is_a_second_image_entity(hass, hass_client):
+    await setup_with_photos(hass)
+
+    landscape = hass.states.get("image.everly_photo_landscape")
+    assert landscape is not None
+    client = await hass_client()
+    response = await client.get(landscape.attributes["entity_picture"])
+    assert response.status == 200 and await response.read() == b"landscape-bytes"
+
+    # The portrait is untouched
+    portrait = hass.states.get("image.everly_photo")
+    assert await (await client.get(portrait.attributes["entity_picture"])).read() == b"portrait-bytes"
+    ent_reg = er.async_get(hass)
+    assert ent_reg.async_get("image.everly_photo_landscape").unique_id == f"{DOMAIN}_{EMAIL}_ID-EVERLY_photo_landscape"
+    assert ent_reg.async_get("image.everly_photo").unique_id == f"{DOMAIN}_{EMAIL}_ID-EVERLY_photo"
+
+
+async def test_no_landscape_photo_means_no_landscape_entity(hass, hass_client):
+    await setup_with_photos(hass, landscape=False)
+
+    assert hass.states.get("image.everly_photo") is not None
+    assert hass.states.get("image.everly_photo_landscape") is None
+    assert er.async_get(hass).async_get_entity_id("image", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-EVERLY_photo_landscape") is None
+
+
+async def test_a_landscape_photo_without_a_portrait(hass, hass_client):
+    await setup_with_photos(hass, portrait=False)
+
+    assert hass.states.get("image.everly_photo").state == "unknown"  # nothing to show, but the entity stays
+    landscape = hass.states.get("image.everly_photo_landscape")
+    response = await (await hass_client()).get(landscape.attributes["entity_picture"])
+    assert response.status == 200 and await response.read() == b"landscape-bytes"

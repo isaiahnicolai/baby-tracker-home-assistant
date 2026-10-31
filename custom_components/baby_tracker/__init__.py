@@ -470,12 +470,18 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
             if not baby.picture_name:
                 continue
             saved = tracker.download_baby_picture(baby.picture_name, photo_dir)
-            if saved:
-                # The file may have gained a .jpg extension
+            landscape = tracker.download_baby_landscape_picture(baby.picture_name, photo_dir)
+            if saved or landscape:
+                # The file may have gained a .jpg extension. The landscape variant is optional on the server.
                 baby_pictures[baby.name] = {
                     "path": saved,
-                    "updated": dt_util.utc_from_timestamp(os.path.getmtime(saved)),
+                    "updated": dt_util.utc_from_timestamp(os.path.getmtime(saved)) if saved else None,
                 }
+                if landscape:
+                    baby_pictures[baby.name]["landscape"] = {
+                        "path": landscape,
+                        "updated": dt_util.utc_from_timestamp(os.path.getmtime(landscape)),
+                    }
 
         baby_data = {}
         now = dt_util.utcnow()
