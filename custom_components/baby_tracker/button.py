@@ -7,6 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .entity import baby_device_info, baby_unique_id, system_device_info
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,18 +76,12 @@ class BabyTrackerBottleButton(CoordinatorEntity, ButtonEntity):
         self._size_label = size_label
         self._amount_oz = amount_oz
 
-        safe_baby_name = baby_name.lower().replace(" ", "_")
-        self._attr_name = f"{baby_name} Add {size_label} Bottle"
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_{safe_baby_name}_add_{size_label.lower()}_bottle"
+        self._attr_has_entity_name = True
+        self._attr_name = f"Add {size_label} Bottle"
+        self._attr_unique_id = baby_unique_id(coordinator, baby_name, f"add_{size_label.lower()}_bottle")
         self._attr_icon = "mdi:bottle-tonic-plus"
 
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, f"{coordinator.email}_{safe_baby_name}")},
-            "name": f"Baby Tracker ({baby_name})",
-            "manufacturer": "Baby Tracker",
-            "model": "API Integration",
-            "sw_version": "0.1.0",
-        }
+        self._attr_device_info = baby_device_info(coordinator, baby_name)
 
     async def async_press(self) -> None:
         """Handle button press."""
@@ -117,19 +112,13 @@ class BabyTrackerDiaperButton(CoordinatorEntity, ButtonEntity):
         self._pee = pee
         self._poo = poo
 
-        safe_baby_name = baby_name.lower().replace(" ", "_")
         safe_type = diaper_type.lower()
-        self._attr_name = f"{baby_name} Add {diaper_type} Diaper"
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_{safe_baby_name}_add_{safe_type}_diaper"
+        self._attr_has_entity_name = True
+        self._attr_name = f"Add {diaper_type} Diaper"
+        self._attr_unique_id = baby_unique_id(coordinator, baby_name, f"add_{safe_type}_diaper")
         self._attr_icon = "mdi:baby-carriage"
 
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, f"{coordinator.email}_{safe_baby_name}")},
-            "name": f"Baby Tracker ({baby_name})",
-            "manufacturer": "Baby Tracker",
-            "model": "API Integration",
-            "sw_version": "0.1.0",
-        }
+        self._attr_device_info = baby_device_info(coordinator, baby_name)
 
     async def async_press(self) -> None:
         """Handle button press."""
@@ -158,18 +147,12 @@ class BabyTrackerBathButton(CoordinatorEntity, ButtonEntity):
         self._baby_name = baby_name
         self._label = label
 
-        safe_baby_name = baby_name.lower().replace(" ", "_")
-        self._attr_name = f"{baby_name} Log {label}"
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_{safe_baby_name}_log_bath"
+        self._attr_has_entity_name = True
+        self._attr_name = f"Log {label}"
+        self._attr_unique_id = baby_unique_id(coordinator, baby_name, "log_bath")
         self._attr_icon = "mdi:shower"
 
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, f"{coordinator.email}_{safe_baby_name}")},
-            "name": f"Baby Tracker ({baby_name})",
-            "manufacturer": "Baby Tracker",
-            "model": "API Integration",
-            "sw_version": "0.1.0",
-        }
+        self._attr_device_info = baby_device_info(coordinator, baby_name)
 
     async def async_press(self) -> None:
         """Handle button press."""
@@ -197,19 +180,13 @@ class BabyTrackerSleepButton(CoordinatorEntity, ButtonEntity):
         self._label = label
         self._is_start = is_start
 
-        safe_baby_name = baby_name.lower().replace(" ", "_")
         action = "start" if is_start else "end"
-        self._attr_name = f"{baby_name} {label}"
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_{safe_baby_name}_{action}_sleep"
+        self._attr_has_entity_name = True
+        self._attr_name = label
+        self._attr_unique_id = baby_unique_id(coordinator, baby_name, f"{action}_sleep")
         self._attr_icon = "mdi:sleep" if is_start else "mdi:sleep-off"
 
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, f"{coordinator.email}_{safe_baby_name}")},
-            "name": f"Baby Tracker ({baby_name})",
-            "manufacturer": "Baby Tracker",
-            "model": "API Integration",
-            "sw_version": "0.1.0",
-        }
+        self._attr_device_info = baby_device_info(coordinator, baby_name)
 
     async def async_press(self) -> None:
         """Handle button press."""
@@ -237,19 +214,13 @@ class BabyTrackerMedicineButton(CoordinatorEntity, ButtonEntity):
         self._medicine_name = medicine_name
         self._amount = amount
 
-        safe_baby_name = baby_name.lower().replace(" ", "_")
         safe_medicine = medicine_name.lower().replace(" ", "_")
-        self._attr_name = f"{baby_name} Give {medicine_name}"
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_{safe_baby_name}_give_{safe_medicine}"
+        self._attr_has_entity_name = True
+        self._attr_name = f"Give {medicine_name}"
+        self._attr_unique_id = baby_unique_id(coordinator, baby_name, f"give_{safe_medicine}")
         self._attr_icon = "mdi:medical-bag"
 
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, f"{coordinator.email}_{safe_baby_name}")},
-            "name": f"Baby Tracker ({baby_name})",
-            "manufacturer": "Baby Tracker",
-            "model": "API Integration",
-            "sw_version": "0.1.0",
-        }
+        self._attr_device_info = baby_device_info(coordinator, baby_name)
 
     async def async_press(self) -> None:
         """Handle button press."""
@@ -275,17 +246,12 @@ class BabyTrackerSyncButton(CoordinatorEntity, ButtonEntity):
         """Initialize the button."""
         super().__init__(coordinator)
 
-        self._attr_name = "Baby Tracker Sync Now"
+        self._attr_has_entity_name = True
+        self._attr_name = "Sync Now"
         self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_sync_now"
         self._attr_icon = "mdi:sync"
 
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, f"{coordinator.email}_system")},
-            "name": "Baby Tracker (System)",
-            "manufacturer": "Baby Tracker",
-            "model": "API Integration",
-            "sw_version": "0.1.0",
-        }
+        self._attr_device_info = system_device_info(coordinator)
 
     async def async_press(self) -> None:
         """Handle button press — sync new transactions then refresh data."""
@@ -312,17 +278,12 @@ class BabyTrackerForceResyncButton(CoordinatorEntity, ButtonEntity):
         """Initialize the button."""
         super().__init__(coordinator)
 
-        self._attr_name = "Baby Tracker Force Resync"
+        self._attr_has_entity_name = True
+        self._attr_name = "Force Resync"
         self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_force_resync"
         self._attr_icon = "mdi:database-sync"
 
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, f"{coordinator.email}_system")},
-            "name": "Baby Tracker (System)",
-            "manufacturer": "Baby Tracker",
-            "model": "API Integration",
-            "sw_version": "0.1.0",
-        }
+        self._attr_device_info = system_device_info(coordinator)
 
     async def async_press(self) -> None:
         """Handle button press."""

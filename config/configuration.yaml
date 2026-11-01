@@ -1,0 +1,7 @@
+# Home Assistant config for scripts/develop. Everything else in config/ is git-ignored.
+default_config:
+
+logger:
+  default: info
+  logs:
+    custom_components.baby_tracker: debug

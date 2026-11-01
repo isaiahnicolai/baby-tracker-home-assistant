@@ -1,6 +1,6 @@
 """Baby Tracker core functionality."""
 
-from .api import BabyTrackerAPI
+from .api import AuthenticationError, BabyTrackerAPI
 from .database import BabyTrackerLocalDatabase
 import os
 from datetime import datetime, timezone
@@ -119,6 +119,8 @@ class BabyTracker:
                 "baby_info": baby_info,
                 "in_group": True
             }
+        except AuthenticationError:
+            raise
         except Exception as e:
             _LOGGER.error(f"Authentication failed: {str(e)}")
             return {
@@ -158,6 +160,8 @@ class BabyTracker:
             result["synced_transactions"] = len(transactions)
             result["uploaded_transactions"] = self.api.upload_pending()
             result["status"] = "success"
+        except AuthenticationError:
+            raise
         except Exception as e:
             _LOGGER.error(f"Sync failed: {str(e)}")
             result["status"] = "error"

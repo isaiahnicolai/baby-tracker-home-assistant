@@ -1,0 +1,16 @@
+{
+  "domain": "baby_tracker",
+  "name": "Baby Tracker",
+  "codeowners": [
+    "@isaiahnicolai"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/isaiahnicolai/baby-tracker-home-assistant",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/isaiahnicolai/baby-tracker-home-assistant/issues",
+  "requirements": [
+    "python-dateutil>=2.8.0"
+  ],
+  "version": "0.2.0"
+}

@@ -82,3 +82,7 @@ sync_db.py
 package.json
 BUG_FIX.md
 IMPLEMENTATION_GUIDE.md
+
+# Home Assistant dev instance (scripts/develop); only its configuration is tracked
+config/*
+!config/configuration.yaml

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Run Home Assistant on http://localhost:8123 with this integration loaded
+set -e
+cd "$(dirname "$0")/.."
+
+mkdir -p config
+# Load the integration straight from the repo instead of copying it
+export PYTHONPATH="${PYTHONPATH}:${PWD}/custom_components"
+
+hass --config "${PWD}/config" --debug
