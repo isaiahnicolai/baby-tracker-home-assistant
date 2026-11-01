@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 import homeassistant.helpers.config_validation as cv
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN, CONF_EMAIL, CONF_PASSWORD, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, CONF_DEVICE_UUID,
@@ -142,7 +143,8 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         # Create Baby Tracker instance
         self.baby_tracker = BabyTracker(
             db_path=db_path,
-            time_zone=hass.config.time_zone
+            time_zone=hass.config.time_zone,
+            tz=dt_util.get_default_time_zone(),
         )
         self.email = email
         self.password = password

@@ -129,3 +129,13 @@ def tracker(app_db, server):
     tracker = BabyTracker(db_path=str(app_db), time_zone="America/Chicago")
     assert tracker.authenticate(EMAIL, "pw", OURS)["status"] == "success"
     return tracker
+
+
+@pytest.fixture
+def apply(tracker):
+    """Merge one record (as another device's transaction) into the database."""
+    def run(record, op=0):
+        result = tracker.api.transaction_handler.merge({"SyncID": 1, "OPCode": op, "Transaction": b64(record)})
+        assert result != "error", record
+        return result
+    return run

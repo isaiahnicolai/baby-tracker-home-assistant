@@ -42,6 +42,12 @@ def _measure(record, key) -> Tuple[float, Optional[bool]]:
     return float(value), None
 
 
+def _positive(record, key) -> Tuple[float, Optional[bool]]:
+    """_measure, but a value of zero or less counts as not measured (value 0, no scale)."""
+    value, english = _measure(record, key)
+    return (value, english) if value > 0 else (0.0, None)
+
+
 def _enum(value, names: List[str], default: int) -> int:
     """
     Decode an enum sent as an int (iOS, and HA's own posts) or as a Java enum
@@ -202,7 +208,8 @@ RECORD_TYPES: Dict[str, RecordType] = {
     ], baby=True),
 
     "Sleep": RecordType("Sleep", [
-        ("Duration", lambda r, d: int(r.get("duration") or 0)),
+        # Sleep.putValues clamps a negative duration to zero
+        ("Duration", lambda r, d: max(int(r.get("duration") or 0), 0)),
         ("LocationID", lambda r, d: ""),
         ("DescID", lambda r, d: ""),
     ], baby=True),
@@ -222,6 +229,10 @@ RECORD_TYPES: Dict[str, RecordType] = {
         ("DescID", lambda r, d: ref_id(r, "bathType", "desc", "descID")),
     ], baby=True, embedded=[("bathType", "BathType")]),
 
+    # Plain BabyActivity records: Joy and Journal add no columns of their own
+    "Joy": RecordType("Joy", [], baby=True),
+    "Journal": RecordType("Journal", [], baby=True),
+
     "Milestone": RecordType("Milestone", [
         ("MilestoneSelectionID", lambda r, d: ref_id(r, "milestoneType", "milestoneSelection", "milestoneSelectionID")),
     ], baby=True, embedded=[("milestoneType", "MilestoneSelection")]),
@@ -231,13 +242,15 @@ RECORD_TYPES: Dict[str, RecordType] = {
         ("DocVisitID", lambda r, d: r.get("docVisitID") or "NotUsed"),
     ], baby=True, embedded=[("vaccineType", "VaccineSelection")]),
 
+    # Growth.putValues stores a measure only when it is above zero
     "Growth": RecordType("Growth", [
-        ("Weight", lambda r, d: _measure(r, "weight")[0]),
-        ("Length", lambda r, d: _measure(r, "length")[0]),
-        ("Head", lambda r, d: _measure(r, "head")[0]),
-        ("IsEnglishWeightScale", lambda r, d: int(_bool(_measure(r, "weight")[1], default=True))),
+        ("Weight", lambda r, d: _positive(r, "weight")[0]),
+        ("Length", lambda r, d: _positive(r, "length")[0]),
+        ("Head", lambda r, d: _positive(r, "head")[0]),
+        ("IsEnglishWeightScale", lambda r, d: int(_bool(_positive(r, "weight")[1], default=True))),
+        # The length's scale, else the head's, else English
         ("IsEnglishLengthScale", lambda r, d: int(_bool(
-            _measure(r, "length")[1] if _measure(r, "length")[1] is not None else _measure(r, "head")[1],
+            _positive(r, "length")[1] if _positive(r, "length")[0] else _positive(r, "head")[1],
             default=True))),
     ], baby=True),
 
@@ -282,6 +295,7 @@ RECORD_TYPES: Dict[str, RecordType] = {
 
 # Alternative type names seen in the wild
 ALIASES = {
+    "NursingSession": "Nursing",  # a Nursing subclass in the Android app
     "Medicine": "Medication",
     "MedicineSelection": "MedicationSelection",
     "OtherActivityDesc": "OtherActivityDescription",

@@ -8,7 +8,7 @@ import os
 import logging
 import sqlite3
 import time as _time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 
 from .transaction import TransactionHandler
 
@@ -21,8 +21,8 @@ def _get_local_timezone_offset_seconds(tz_name=None):
     Matches the Android app's TimeZone.getDefault().getRawOffset() / 1000.
 
     Args:
-        tz_name: IANA zone name (e.g. Home Assistant's configured time zone).
-            Falls back to the host's zone when not given.
+        tz_name: IANA zone name (e.g. Home Assistant's configured time zone) or
+            a tzinfo. Falls back to the host's zone when not given.
 
     Returns:
         int: Timezone offset in seconds (e.g., -21600 for CST, -18000 for EST)
@@ -30,7 +30,8 @@ def _get_local_timezone_offset_seconds(tz_name=None):
     if tz_name:
         try:
             from zoneinfo import ZoneInfo
-            now = datetime.now(ZoneInfo(tz_name))
+            zone = tz_name if isinstance(tz_name, tzinfo) else ZoneInfo(tz_name)
+            now = datetime.now(zone)
             return int((now.utcoffset() - now.dst()).total_seconds())
         except Exception as e:
             _LOGGER.warning(f"Unknown time zone {tz_name!r}, using host zone: {e}")
