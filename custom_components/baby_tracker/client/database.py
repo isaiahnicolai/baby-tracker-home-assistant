@@ -4,6 +4,7 @@ from . import records
 from . import dbconn as sqlite3  # sqlite3 with a busy timeout and WAL
 import os
 import logging
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Optional
 from dateutil import parser
@@ -13,6 +14,64 @@ _LOGGER = logging.getLogger(__name__)
 # A sleep with Duration 0 is "in progress" - but only for this long. An older one was never
 # ended (forgotten, or its end was lost) and must not be shown as running forever.
 IN_PROGRESS_SLEEP_SECONDS = 24 * 3600
+
+class _BatchConnection:
+    """
+    The one connection handed out by _connect() inside BabyTrackerLocalDatabase.batch().
+    commit() and close() are no-ops (the batch commits once at the end); item()
+    gives each unit of work a savepoint so it can be discarded on its own.
+    """
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def cursor(self):
+        return self._conn.cursor()
+
+    def execute(self, *args):
+        return self._conn.execute(*args)
+
+    def executemany(self, *args):
+        return self._conn.executemany(*args)
+
+    def commit(self):
+        pass
+
+    def close(self):
+        pass
+
+    def __getattr__(self, name):  # row_factory and the rest
+        return getattr(self._conn, name)
+
+    def __setattr__(self, name, value):
+        if name == "_conn":
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._conn, name, value)
+
+    @contextmanager
+    def item(self):
+        """A savepoint for one unit of work: kept unless discard() is called or it raises."""
+        marker = _BatchItem()
+        self._conn.execute("SAVEPOINT item")
+        try:
+            yield marker
+        except BaseException:
+            self._conn.execute("ROLLBACK TO SAVEPOINT item")
+            self._conn.execute("RELEASE SAVEPOINT item")
+            raise
+        if marker.discarded:
+            self._conn.execute("ROLLBACK TO SAVEPOINT item")
+        self._conn.execute("RELEASE SAVEPOINT item")
+
+
+class _BatchItem:
+    def __init__(self):
+        self.discarded = False
+
+    def discard(self):
+        self.discarded = True
+
 
 class BabyTrackerLocalDatabase:
     """
@@ -28,6 +87,7 @@ class BabyTrackerLocalDatabase:
             (defaults to the system's local zone)
         """
         self.tz = tz  # None: the system's local zone, looked up at use so DST changes are followed
+        self._batch = None  # the shared connection while inside batch()
         # Where activity pictures are kept, once a sync has been told (see BabyTracker.sync).
         # Merging an activity delete removes its files from here, as the app does.
         self.picture_dir = None
@@ -3065,7 +3125,12 @@ class BabyTrackerLocalDatabase:
         given, med_id, amount, name, unit, interval = chosen
         next_dose = None
         if interval and interval > 0:
-            next_dose = datetime.fromtimestamp(given + interval * 60, timezone.utc).isoformat()
+            due_at = given + interval * 60
+            if due_at < now - 24 * 3600:
+                # The course is over (nothing given since a dose that was due a day ago);
+                # a due time days in the past is noise, not a reminder
+                return None
+            next_dose = datetime.fromtimestamp(due_at, timezone.utc).isoformat()
         return {"medicine_name": name or "Unknown", "med_id": med_id, "amount": amount, "unit": unit or "",
                 "last_given": self._format_timestamp(given), "interval_minutes": interval or 0,
                 "next_dose_at": next_dose}
@@ -3204,9 +3269,43 @@ class BabyTrackerLocalDatabase:
     # mirror BTDatabaseImple's merge/TransactionLog behaviour in the Android app.
 
     def _connect(self):
+        if self._batch is not None:
+            return self._batch
         if not os.path.exists(self.db_path):
             raise ValueError("No database loaded")
         return sqlite3.connect(self.db_path)
+
+    @contextmanager
+    def batch(self):
+        """
+        Run every sync-support call inside the block on one connection and
+        commit once at the end, instead of a connection and a commit per call.
+
+        Replaying an account's history is thousands of merges; a commit (and
+        its fsync) for each one is what made the first sync take minutes.
+        Use `with db.batch() as b:` and wrap each independent unit of work in
+        `with b.item() as it:` so a failed unit is rolled back on its own
+        (it.discard()) while the rest of the page is kept.
+        """
+        if self._batch is not None:  # nested: the outer batch owns the commit
+            yield self._batch
+            return
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+        conn = sqlite3.connect(self.db_path, isolation_level=None)  # we manage the transaction
+        batch = _BatchConnection(conn)
+        conn.execute("BEGIN")
+        self._batch = batch
+        try:
+            yield batch
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        else:
+            conn.execute("COMMIT")
+        finally:
+            self._batch = None
+            conn.close()
 
     def _table_exists(self, cursor, table):
         cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,))
@@ -3572,11 +3671,32 @@ class BabyTrackerLocalDatabase:
             conn.close()
 
     def set_account_id(self, account_id) -> None:
+        self.set_sync_state("AccountID", str(account_id))
+
+    def get_sync_state(self, key: str) -> Optional[str]:
+        """A value from the SyncState key/value table, or None."""
+        if not os.path.exists(self.db_path):
+            return None
         conn = self._connect()
         try:
             cursor = conn.cursor()
             self._ensure_sync_tables(cursor)
-            cursor.execute("INSERT OR REPLACE INTO SyncState (Key, Value) VALUES ('AccountID', ?)", (str(account_id),))
+            row = cursor.execute("SELECT Value FROM SyncState WHERE Key = ?", (key,)).fetchone()
+            conn.commit()
+            return row[0] if row else None
+        finally:
+            conn.close()
+
+    def set_sync_state(self, key: str, value: Optional[str]) -> None:
+        """Store a value in SyncState; None removes the key."""
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            self._ensure_sync_tables(cursor)
+            if value is None:
+                cursor.execute("DELETE FROM SyncState WHERE Key = ?", (key,))
+            else:
+                cursor.execute("INSERT OR REPLACE INTO SyncState (Key, Value) VALUES (?, ?)", (key, str(value)))
             conn.commit()
         finally:
             conn.close()

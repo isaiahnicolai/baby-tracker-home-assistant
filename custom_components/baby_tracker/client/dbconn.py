@@ -43,6 +43,10 @@ def connect(database, *args, **kwargs):
     try:
         # Persistent once set; a cheap no-op on later connections
         conn.execute("PRAGMA journal_mode=WAL")
+        # In WAL mode NORMAL still survives an application crash; it only skips
+        # the fsync per commit that makes replaying history crawl on slow disks
+        # and Docker bind mounts. (Per connection, so set it every time.)
+        conn.execute("PRAGMA synchronous=NORMAL")
     except _sqlite3.OperationalError as err:
         _LOGGER.debug("Could not switch %s to WAL mode: %s", database, err)
     return conn

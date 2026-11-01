@@ -50,6 +50,7 @@ def _now_str():
 BASE_URL = "https://prodapp.babytrackers.com"
 REQUEST_TIMEOUT = 30  # seconds
 PAGE_SIZE = 500  # the server returns at most this many transactions per request
+JOIN_PENDING = "JoinPending"  # SyncState key: joined, but the history has not been fully replayed yet
 MAX_MERGE_ATTEMPTS = 3  # syncs to retry a transaction that fails to apply before skipping it
 SEED_DATABASE_NAME = "EasyLog.db"  # the database inside the group seed zip
 MAX_PICTURE_ATTEMPTS = 10  # failed downloads of one picture file before it is dropped
@@ -560,7 +561,7 @@ class BabyTrackerAPI:
         conn.close()
         return device_sync_info
     
-    def join_group(self, email, password, device_uuid=None):
+    def join_group(self, email, password, device_uuid=None, sync_history=True):
         """
         Join an existing Baby Tracker group
 
@@ -568,6 +569,11 @@ class BabyTrackerAPI:
             email: Email address for the group
             password: Password for the group
             device_uuid: Optional device UUID to use
+            sync_history: also replay the account's transaction history now.
+                False leaves that to the next sync_transactions() call (which
+                still runs it as part of the join, without echoes), so a
+                caller that only needs to know the login works, like a setup
+                dialog, is not kept waiting.
 
         Returns:
             dict: Result of the operation with status and message
@@ -627,8 +633,14 @@ class BabyTrackerAPI:
 
             # Step 4: Sync transactions. While joining, merges don't queue
             # conflict/relive/delete echoes for the other devices (isInJoinGroupProcess).
+            # The flag is kept in the database so the join finishes properly even
+            # if the history is replayed later, or after a restart.
+            self.local_db.set_sync_state(JOIN_PENDING, "1")
+            if not sync_history:
+                _LOGGER.info("Joined; the account's history will be replayed by the first sync")
+                return {"status": "success", "message": "Successfully joined group", "baby_info": baby_info}
+
             _LOGGER.info("Syncing transactions")
-            self.transaction_handler.joining = True
             try:
                 transactions = self.sync_transactions()
                 transaction_count = len(transactions) if transactions else 0
@@ -636,9 +648,7 @@ class BabyTrackerAPI:
             except Exception as sync_error:
                 _LOGGER.warning(f"Sync error (non-fatal): {sync_error}")
                 transaction_count = 0
-            finally:
-                self.transaction_handler.joining = False
-            
+
             return {
                 "status": "success",
                 "message": f"Successfully joined group and synced {transaction_count} transactions",
@@ -676,59 +686,85 @@ class BabyTrackerAPI:
         devices = self.get_devices()
         local_sync_info = self.get_local_device_sync_info()
         applied = []
+        # Still finishing a join (history not replayed yet): merge without echoes
+        joining = self.local_db.get_sync_state(JOIN_PENDING) is not None
+        self.transaction_handler.joining = joining
+        # (SyncIDs are not dense per device, so the server's LastSyncID is no count of what is left)
+        behind = [d for d in devices if (d.get("LastSyncID", 0) or 0)
+                  > (local_sync_info.get(d["DeviceUUID"], {}).get("last_sync_id", 0) or 0)]
+        if joining and behind:
+            _LOGGER.info(f"Replaying the account's history from {len(behind)} devices")
+        any_blocked = False
 
-        for device in devices:
-            device_uuid = device["DeviceUUID"]
-            server_last = device.get("LastSyncID", 0)
-            merged = local_sync_info.get(device_uuid, {}).get("last_sync_id", 0) or 0
-            if merged >= server_last:
-                continue
+        try:
+            for device in devices:
+                device_uuid = device["DeviceUUID"]
+                server_last = device.get("LastSyncID", 0)
+                merged = local_sync_info.get(device_uuid, {}).get("last_sync_id", 0) or 0
+                if merged >= server_last:
+                    continue
 
-            page_size = PAGE_SIZE
-            while page_size >= PAGE_SIZE:
-                response = self._request("GET", f"/account/transaction/{device_uuid}/{merged}")
-                if response.status_code not in [200, 201]:
-                    raise Exception(f"Failed to get transactions from {device_uuid}: {response.status_code}")
+                page_size = PAGE_SIZE
+                while page_size >= PAGE_SIZE:
+                    response = self._request("GET", f"/account/transaction/{device_uuid}/{merged}")
+                    if response.status_code not in [200, 201]:
+                        raise Exception(f"Failed to get transactions from {device_uuid}: {response.status_code}")
 
-                page = response.json() or []
-                page_size = len(page)
-                start = merged
-                blocked = False
-                for item in page:
-                    sync_id = int(item.get("SyncID", 0))
-                    if sync_id <= merged:
-                        continue
-                    if self.transaction_handler.process_transaction(
-                            item, own_device=device_uuid == self.device_uuid):
-                        applied.append(item)
-                        merged = sync_id
-                        self._merge_failures.pop((device_uuid, sync_id), None)
-                        continue
+                    page = response.json() or []
+                    page_size = len(page)
+                    start = merged
+                    blocked = False
+                    # One database transaction per page; a failing item is rolled back alone
+                    with self.local_db.batch() as batch:
+                        for item in page:
+                            sync_id = int(item.get("SyncID", 0))
+                            if sync_id <= merged:
+                                continue
+                            with batch.item() as attempt:
+                                ok = self.transaction_handler.process_transaction(
+                                    item, own_device=device_uuid == self.device_uuid)
+                                if not ok:
+                                    attempt.discard()
+                            if ok:
+                                applied.append(item)
+                                merged = sync_id
+                                self._merge_failures.pop((device_uuid, sync_id), None)
+                                continue
 
-                    key = (device_uuid, sync_id)
-                    self._merge_failures[key] = self._merge_failures.get(key, 0) + 1
-                    detail = self._describe(item)
-                    if self._merge_failures[key] < MAX_MERGE_ATTEMPTS:
-                        _LOGGER.warning(
-                            f"Could not apply transaction {sync_id} ({detail}) from device {device_uuid}; "
-                            f"will retry (attempt {self._merge_failures[key]}/{MAX_MERGE_ATTEMPTS})"
-                        )
-                        blocked = True
+                            key = (device_uuid, sync_id)
+                            self._merge_failures[key] = self._merge_failures.get(key, 0) + 1
+                            detail = self._describe(item)
+                            if self._merge_failures[key] < MAX_MERGE_ATTEMPTS:
+                                _LOGGER.warning(
+                                    f"Could not apply transaction {sync_id} ({detail}) from device {device_uuid}; "
+                                    f"will retry (attempt {self._merge_failures[key]}/{MAX_MERGE_ATTEMPTS})"
+                                )
+                                blocked = True
+                                break
+                            _LOGGER.error(
+                                f"Skipping transaction {sync_id} ({detail}) from device {device_uuid} "
+                                f"after {MAX_MERGE_ATTEMPTS} failed attempts"
+                            )
+                            self._merge_failures.pop(key, None)
+                            merged = sync_id
+
+                    if merged > start:
+                        self.update_device_sync_info(device_uuid, merged)
+                        if joining:
+                            _LOGGER.info(f"Replayed {len(applied)} transactions so far "
+                                         f"(device {device_uuid[:8]} up to sync ID {merged} of {server_last})")
+                    if blocked:
+                        any_blocked = True
                         break
-                    _LOGGER.error(
-                        f"Skipping transaction {sync_id} ({detail}) from device {device_uuid} "
-                        f"after {MAX_MERGE_ATTEMPTS} failed attempts"
-                    )
-                    self._merge_failures.pop(key, None)
-                    merged = sync_id
+        finally:
+            self.transaction_handler.joining = False
 
-                if merged > start:
-                    self.update_device_sync_info(device_uuid, merged)
-                if blocked:
-                    break
-
-        if applied:
+        if joining and not any_blocked:
+            self.local_db.set_sync_state(JOIN_PENDING, None)  # the join is complete
+            _LOGGER.info(f"History replayed: {len(applied)} transactions")
+        elif applied:
             _LOGGER.info(f"Synchronized {len(applied)} transactions")
+        if applied:
             self.last_sync_time = datetime.now()
         return applied
     

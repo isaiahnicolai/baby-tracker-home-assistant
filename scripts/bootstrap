@@ -65,12 +65,21 @@ def call(method, path, body=None, token=None, form=False):
         raise SystemExit(f"{method} {path} failed: {err.code} {err.read().decode()[:300]}")
 
 
+ONBOARDING_STEPS = ("user", "core_config", "analytics", "integration")
+
+
 def wait_for_home_assistant():
     print(f"Waiting for Home Assistant at {HA_URL} ...")
     for _ in range(120):
         try:
-            return call("GET", "/api/onboarding")
-        except (urllib.error.URLError, ConnectionError, SystemExit):
+            with urllib.request.urlopen(f"{HA_URL}/api/onboarding", timeout=10) as response:
+                return json.loads(response.read().decode())
+        except urllib.error.HTTPError as err:
+            if err.code == 404:
+                # Onboarding is finished: Home Assistant no longer serves these endpoints
+                return [{"step": step, "done": True} for step in ONBOARDING_STEPS]
+            time.sleep(2)
+        except (urllib.error.URLError, ConnectionError):
             time.sleep(2)
     raise SystemExit("Home Assistant didn't start")
 

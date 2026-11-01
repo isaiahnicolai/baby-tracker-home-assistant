@@ -1,4 +1,5 @@
 """Config flow for Baby Tracker integration."""
+import functools
 import logging
 import os
 import uuid
@@ -55,8 +56,12 @@ async def validate_input(hass: core.HomeAssistant, data):
     baby_tracker = BabyTracker(db_path=db_path, time_zone=hass.config.time_zone)
 
     try:
+        # Sign in, join the group and fetch the seed database only. Replaying the
+        # account's history can take a while, so the first refresh does that once
+        # the entry exists, instead of this dialog appearing to hang.
         result = await hass.async_add_executor_job(
-            baby_tracker.authenticate, data[CONF_EMAIL], data[CONF_PASSWORD], data[CONF_DEVICE_UUID]
+            functools.partial(baby_tracker.authenticate, data[CONF_EMAIL], data[CONF_PASSWORD],
+                              data[CONF_DEVICE_UUID], sync_history=False)
         )
     except AuthenticationError as err:
         raise InvalidAuth(str(err)) from err
