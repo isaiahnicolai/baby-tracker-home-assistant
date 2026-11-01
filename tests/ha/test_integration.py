@@ -2511,3 +2511,247 @@ async def test_options_flow_offers_the_saved_sleep_source_and_can_clear_it(hass,
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert "sleep_sources" not in entry.options
     assert hass.states.get("binary_sensor.everly_sleep_source") is None
+
+
+# ----- Quiet mode: activities a baby is no longer logged for -----
+
+NOW = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+ALL_TRACKED = dict.fromkeys(("feeds", "diapers", "sleep", "pumping", "medicine", "growth", "temperature"), True)
+
+
+def long_ago(days):
+    return (NOW - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S +0000")
+
+
+def toddler_data():
+    """A nearly-two-year-old who is only logged for sleep: the last feed and diaper are months old."""
+    return {
+        "last_feeding": {"time": long_ago(180), "type": "Formula"},
+        "last_diaper": {"time": long_ago(170), "status": "Wet"},
+        "last_sleep": {"time": long_ago(1), "is_sleeping": False},
+        "last_growth": {"time": long_ago(400)},
+    }
+
+
+def test_a_newborn_tracks_everything_even_with_nothing_logged():
+    from custom_components.baby_tracker.tracking import detect_tracking
+
+    newborn = Baby({"objectID": "ID-NEW", "name": "New", "dob": long_ago(3), "dueDay": ""})
+    assert detect_tracking(newborn, {}, NOW) == ALL_TRACKED
+
+
+def test_a_baby_whose_last_feed_is_months_old_has_feeds_off_but_sleep_on():
+    from custom_components.baby_tracker.tracking import detect_tracking
+
+    toddler = Baby({"objectID": "ID-TOD", "name": "Tod", "dob": long_ago(700), "dueDay": ""})
+    tracking = detect_tracking(toddler, toddler_data(), NOW)
+    assert tracking["feeds"] is False and tracking["diapers"] is False and tracking["growth"] is False
+    assert tracking["sleep"] is True
+    assert tracking["pumping"] is False and tracking["medicine"] is False and tracking["temperature"] is False
+
+
+def test_a_record_inside_the_window_counts_and_a_baby_asleep_counts():
+    from custom_components.baby_tracker.tracking import detect_tracking
+
+    toddler = Baby({"objectID": "ID-TOD", "name": "Tod", "dob": long_ago(700), "dueDay": ""})
+    data = {"last_feeding": {"time": long_ago(13)}, "last_diaper": {"time": long_ago(15)},
+            "last_sleep": {"time": long_ago(100), "is_sleeping": True}}
+    tracking = detect_tracking(toddler, data, NOW)
+    assert tracking["feeds"] is True and tracking["diapers"] is False and tracking["sleep"] is True
+
+
+def test_the_override_replaces_detection_and_auto_defers_to_it():
+    from custom_components.baby_tracker.tracking import resolve_tracking
+
+    toddler = Baby({"objectID": "ID-TOD", "name": "Tod", "dob": long_ago(700), "dueDay": ""})
+    detected, mode = resolve_tracking({}, toddler, toddler_data(), NOW)
+    assert mode == "auto" and detected["feeds"] is False
+
+    options = {"tracking": {"ID-TOD": ["feeds", "growth"]}}
+    manual, mode = resolve_tracking(options, toddler, toddler_data(), NOW)
+    assert mode == "manual"
+    assert manual["feeds"] is True and manual["growth"] is True and manual["sleep"] is False  # not detection
+
+    auto, mode = resolve_tracking({"tracking": {"ID-TOD": "auto"}}, toddler, toddler_data(), NOW)
+    assert mode == "auto" and auto == detected
+
+
+async def test_the_coordinator_works_out_tracking_for_each_baby(hass, backend):
+    from unittest.mock import MagicMock
+
+    toddler = Baby({"objectID": "ID-TOD", "name": "Tod", "dob": long_ago(700), "dueDay": ""})
+    entry = make_entry(options={"tracking": {"ID-TOD": ["diapers"]}})
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    tracker = MagicMock()
+    tracker.sync.return_value = {"status": "success"}
+    tracker.get_all_babies.return_value = [toddler]
+    tracker.get_baby_info.return_value = toddler
+    tracker.get_events_between.return_value = []
+    tracker.get_last_feeding.return_value = toddler_data()["last_feeding"]
+    tracker.get_last_sleep.return_value = toddler_data()["last_sleep"]
+    coordinator.baby_tracker = tracker
+
+    _, _, _, baby_data, _, _ = REAL_FETCH(coordinator, coordinator.photo_dir)
+    assert baby_data["Tod"]["tracking_mode"] == "manual"
+    assert baby_data["Tod"]["tracking"]["diapers"] is True and baby_data["Tod"]["tracking"]["sleep"] is False
+
+
+def quiet_fetch(feeds=False, sleep=True, diapers=True):
+    """Ann Marie is tracked and overdue for a feed; Everly is overdue too but her groups are as given."""
+    def fetch(self, photo_dir):
+        babies, info, pictures, data, account, medicines = fake_fetch(self, photo_dir)
+        data["Ann Marie"] = {
+            "baby_info": TWIN, "insights": {"next_feed": {"predicted_at": "2026-03-01T11:15:00+00:00"}},
+            "time_since_last_feeding": {"hours_since_last_feeding": 5.0, "last_feeding_time": "2026-03-01T07:00:00+00:00"},
+        }
+        data["Everly"] = {
+            **data["Everly"],
+            "time_since_last_feeding": {"hours_since_last_feeding": 8.0, "last_feeding_time": "2026-03-01T04:00:00+00:00"},
+            "tracking": {**ALL_TRACKED, "feeds": feeds, "sleep": sleep, "diapers": diapers},
+            "tracking_mode": "auto",
+        }
+        return babies, info, pictures, data, account, medicines
+    return fetch
+
+
+async def test_alerts_of_an_untracked_group_are_off_with_a_reason(hass, backend, freezer):
+    freezer.move_to("2026-03-01 12:40:00+00:00")  # Everly's predicted feed (12:30) has passed
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", quiet_fetch(feeds=False)):
+        await setup(hass, make_entry())
+
+    for alert in ("feeding_overdue", "feed_due", "intake_low", "wake_to_feed"):
+        state = hass.states.get(f"binary_sensor.everly_{alert}")
+        assert state.state == "off", alert
+        assert state.attributes["reason"] == "not_tracked", alert
+    assert hass.states.get("binary_sensor.ann_marie_feeding_overdue").state == "on"  # tracked, 5 h
+    assert "reason" not in hass.states.get("binary_sensor.ann_marie_feeding_overdue").attributes
+
+
+async def test_the_same_alerts_are_on_while_the_group_is_tracked(hass, backend, freezer):
+    freezer.move_to("2026-03-01 12:40:00+00:00")
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", quiet_fetch(feeds=True)):
+        await setup(hass, make_entry())
+    assert hass.states.get("binary_sensor.everly_feeding_overdue").state == "on"
+    assert hass.states.get("binary_sensor.everly_feed_due").state == "on"
+    assert hass.states.get("binary_sensor.everly_intake_low").state == "on"
+    assert "reason" not in hass.states.get("binary_sensor.everly_feeding_overdue").attributes
+
+
+async def test_sleep_and_diaper_alerts_follow_their_own_groups(hass, backend, freezer):
+    freezer.move_to("2026-03-01 14:00:00+00:00")  # Everly asleep since 11:00, expected awake at 12:40
+    entry = make_entry()
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               quiet_fetch(feeds=True, sleep=True)):
+        await setup(hass, entry)
+    assert hass.states.get("binary_sensor.everly_wake_overdue").state == "on"
+
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               quiet_fetch(feeds=True, sleep=False, diapers=False)):
+        await coordinator_for(hass, entry).async_refresh()
+        await hass.async_block_till_done()
+    for alert in ("wake_overdue", "long_sleep", "sleep_due", "no_poop", "low_wet_diapers"):
+        state = hass.states.get(f"binary_sensor.everly_{alert}")
+        assert state.state == "off" and state.attributes["reason"] == "not_tracked", alert
+
+
+async def test_derived_sensors_read_unknown_but_the_facts_stay(hass, backend):
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               quiet_fetch(feeds=False, sleep=False, diapers=False)):
+        await setup(hass, make_entry())
+
+    for sensor in ("next_feed", "feed_interval", "intake_24h", "intake_status", "time_since_last_feeding",
+                   "diaper_adequacy", "next_sleep", "expected_wake", "wake_window"):
+        state = hass.states.get(f"sensor.everly_{sensor}")
+        assert state is not None, sensor
+        assert state.state == "unknown", sensor
+        assert state.attributes["reason"] == "not_tracked", sensor
+
+    # What was logged stays, and so do the counts
+    assert hass.states.get("sensor.everly_last_feeding").state != "unknown"
+    assert hass.states.get("sensor.everly_last_feeding_time").state == "2026-03-01T09:30:00+00:00"
+    assert hass.states.get("sensor.everly_last_diaper").state != "unknown"
+    assert hass.states.get("sensor.everly_last_sleep").state != "unknown"
+    assert hass.states.get("sensor.everly_wet_diapers").state != "unknown"
+
+
+async def test_the_info_sensor_shows_what_is_tracked(hass, backend):
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", quiet_fetch(feeds=False)):
+        await setup(hass, make_entry())
+    info = hass.states.get("sensor.everly_info").attributes
+    assert info["tracking"]["feeds"] is False and info["tracking"]["sleep"] is True
+    assert info["tracking_mode"] == "auto"
+    # Without a verdict in the data (as in the other tests' fake data), nothing is shown as off
+    assert hass.states.get("sensor.ann_marie_info").attributes["tracking"] == {}
+
+
+async def test_household_sensors_only_consider_babies_with_the_group_tracked(hass, backend):
+    def fetch(self, photo_dir):
+        babies, info, pictures, data, account, medicines = household_fetch(self, photo_dir)
+        data["Ann Marie"]["tracking"] = {**ALL_TRACKED, "feeds": False, "sleep": False}  # due first, fed first
+        return babies, info, pictures, data, account, medicines
+
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch):
+        await setup(hass, make_entry(unit_system="metric"))
+
+    assert hass.states.get("sensor.baby_tracker_next_feed_baby").state == "Everly"
+    assert hass.states.get("sensor.baby_tracker_next_feed_due").attributes["predictions"] == {
+        "Everly": "2026-03-01T12:30:00+00:00"}
+    assert hass.states.get("sensor.baby_tracker_last_fed_baby").state == "Everly"
+    asleep = hass.states.get("sensor.baby_tracker_babies_asleep")
+    assert asleep.state == "1" and asleep.attributes["babies"] == ["Everly"]
+    feeds = hass.states.get("sensor.baby_tracker_feeds_today")
+    assert feeds.state == "6" and feeds.attributes["per_baby"] == {"Everly": 6}
+
+
+async def test_assist_says_an_untracked_activity_is_not_tracked(hass, backend, freezer, tmp_path):
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               quiet_fetch(feeds=False, sleep=True, diapers=False)):
+        await start_assist(hass, freezer, tmp_path)
+
+        for intent_type in ("BabyTrackerLastFeed", "BabyTrackerNextFeed", "BabyTrackerIntakeToday"):
+            result = await ask(hass, intent_type, baby="Everly")
+            assert said(result) == "Feeds aren't being tracked for Everly", intent_type
+        assert said(await ask(hass, "BabyTrackerLastDiaper", baby="Everly")) == (
+            "Diapers aren't being tracked for Everly")
+        # Sleep is still tracked, and the other baby is unaffected
+        assert said(await ask(hass, "BabyTrackerSleepStatus", baby="Everly")).startswith("Everly has been asleep")
+        assert said(await ask(hass, "BabyTrackerLastFeed", baby="Ann Marie")) == (
+            "I don't have any feeds logged for Ann Marie.")
+        # The summary leaves out what is not tracked; logging still works
+        summary = said(await ask(hass, "BabyTrackerSummary", baby="Everly"))
+        assert "ate" not in summary and "diaper" not in summary and "asleep" in summary
+        result = await ask(hass, "BabyTrackerLogDiaper", baby="Everly", kind="wet")
+        assert result.response_type is intent.IntentResponseType.ACTION_DONE
+
+
+async def test_options_flow_saves_the_tracked_activities_per_baby(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"scan_interval": 15, "unit_system": "imperial"})
+    assert result["step_id"] == "sleep_source" and result["description_placeholders"] == {"baby": "Ann Marie"}
+    field = next(key for key in result["data_schema"].schema if key == "tracked_activities")
+    assert field.default() == ["auto"]  # offered as auto until set
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"tracked_activities": ["sleep", "feeds"]})  # Ann Marie: by hand
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})  # Everly: auto
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["tracking"] == {"ID-TWIN": ["feeds", "sleep"]}  # auto is simply absent
+    assert "sleep_sources" not in entry.options  # the field is not part of a sleep source
+
+    # Offered back on the next visit, and "auto" (with or without others) resets it
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"scan_interval": 15, "unit_system": "imperial"})
+    field = next(key for key in result["data_schema"].schema if key == "tracked_activities")
+    assert field.default() == ["feeds", "sleep"]
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"tracked_activities": ["auto", "growth"]})
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+    await hass.async_block_till_done()
+    assert "tracking" not in entry.options
