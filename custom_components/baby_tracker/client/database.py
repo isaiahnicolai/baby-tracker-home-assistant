@@ -1,7 +1,7 @@
 #database.py
 from .models import Baby
 from . import records
-import sqlite3
+from . import dbconn as sqlite3  # sqlite3 with a busy timeout and WAL
 import os
 import logging
 from datetime import datetime, timezone, timedelta
@@ -1361,6 +1361,25 @@ class BabyTrackerLocalDatabase:
 
         records = self.get_activity_records(limit=1, baby_id=baby_id)
         return records[0] if records else None
+
+    def get_other_feed_selections(self) -> list[dict]:
+        """
+        Retrieve the foods that can be logged as other feeds (solids and supplements)
+
+        :return: List of dictionaries with id, name, description and is_bottle
+        """
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            rows = conn.execute(
+                "SELECT ID, Name, Description, IsBottle FROM OtherFeedSelection ORDER BY Name"
+            ).fetchall()
+            return [{"id": row[0], "name": row[1], "description": row[2] or "", "is_bottle": bool(row[3])}
+                    for row in rows]
+        finally:
+            conn.close()
 
     def get_medicine_records(self, limit=50, baby_id: Optional[str] = None) -> List[Dict]:
         """

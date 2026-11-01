@@ -5,10 +5,13 @@ from .database import BabyTrackerLocalDatabase
 import os
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-import sqlite3
+import functools
 import logging
+import threading
 
+from . import dbconn as sqlite3  # sqlite3 with a busy timeout and WAL
 from . import insights
+from .dbconn import remove_sidecar_files
 from .models import Baby
 
 _LOGGER = logging.getLogger(__name__)
@@ -54,6 +57,9 @@ class BabyTracker:
         # State tracking
         self.is_authenticated = False
         self.last_sync_time = None
+        # Held by sync and every write (see _serialized, below). Re-entrant: force_resync
+        # authenticates and syncs.
+        self._lock = threading.RLock()
         
         # Create parent directory if it doesn't exist
         if self.db_path:
@@ -249,6 +255,7 @@ class BabyTracker:
             if os.path.exists(self.db_path):
                 try:
                     os.remove(self.db_path)
+                    remove_sidecar_files(self.db_path)
                     _LOGGER.info(f"Deleted database at: {self.db_path}")
                 except Exception as e:
                     _LOGGER.error(f"Failed to delete database: {e}")
@@ -1672,6 +1679,66 @@ class BabyTracker:
             _LOGGER.error(f"Failed to add activity record: {str(e)}")
             return {"status": "error", "message": f"Failed to add activity record: {str(e)}"}
 
+    def get_last_activity(self, baby_id=None):
+        """The most recent other activity (tummy time and the like), or None."""
+        if not self.db:
+            if self.db_path and os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
+                self.api.local_db = self.db
+            else:
+                return None
+
+        return self.db.get_last_activity(baby_id)
+
+    def get_other_feed_selections(self):
+        """The foods that can be logged with add_other_feed, as dicts with id and name."""
+        if not self.db:
+            if self.db_path and os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
+                self.api.local_db = self.db
+            else:
+                return []
+
+        return self.db.get_other_feed_selections()
+
+    def add_other_feed(self, baby_id, time_str=None, feed_type_id=None, amount=0, unit="",
+                       is_english_measure=True, note=""):
+        """
+        Add a solids/supplement feed of one of the account's foods (see
+        get_other_feed_selections) through the API.
+
+        Args:
+            time_str: Time string (optional, defaults to now)
+            feed_type_id: ID of the OtherFeedSelection
+            amount: How much, in the given unit
+            unit: The unit's name, e.g. "tbsp"
+            is_english_measure: Whether the amount is in English units
+            note: Optional note text
+
+        Returns:
+            dict: Result of the operation
+        """
+        if not self.is_authenticated:
+            return {"status": "error", "message": "Not authenticated"}
+
+        if not time_str:
+            time_str = _time_str(datetime.now().astimezone())
+
+        try:
+            response = self.api.post_other_feed(
+                baby_id=baby_id,
+                feed_type_id=feed_type_id,
+                time_str=time_str,
+                amount=amount,
+                unit=unit,
+                is_english_measure=is_english_measure,
+                note=note
+            )
+            return {**response, "message": "Solids feeding record added"}
+        except Exception as e:
+            _LOGGER.error(f"Failed to add solids feeding record: {str(e)}")
+            return {"status": "error", "message": f"Failed to add solids feeding record: {str(e)}"}
+
     # ===== INSIGHTS =====
 
     # How far back feeds are read to learn the baby's rhythm
@@ -1878,3 +1945,18 @@ class BabyTracker:
             "growth": growth or None,
             "weight_velocity": insights.to_dict(velocity) if velocity else None,
         }
+
+# A refresh (sync) and a service call (write) can run in different executor threads at
+# once. Take the tracker's lock around everything that syncs or writes, so their
+# multi-step database and queue work never interleaves. Reads need no lock (WAL).
+def _serialized(method):
+    @functools.wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return locked
+
+
+for _name, _method in list(vars(BabyTracker).items()):
+    if callable(_method) and (_name.startswith(("add_", "log_")) or _name in ("authenticate", "sync", "force_resync")):
+        setattr(BabyTracker, _name, _serialized(_method))

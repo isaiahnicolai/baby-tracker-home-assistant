@@ -17,6 +17,14 @@ DEFAULT_UNIT_SYSTEM = "imperial"  # "imperial" (oz, lbs, F) or "metric" (ml, kg,
 UNIT_SYSTEM_IMPERIAL = "imperial"
 UNIT_SYSTEM_METRIC = "metric"
 
+# Alert settings in the options flow (see binary_sensor.py for how each is used)
+CONF_FEEDING_OVERDUE_HOURS = "feeding_overdue_hours"  # 0 = by the baby's age (FEEDING_THRESHOLDS)
+CONF_LOW_WET_MINIMUM = "low_wet_minimum"
+CONF_NIGHT_START_HOUR = "night_start_hour"
+CONF_NIGHT_END_HOUR = "night_end_hour"
+CONF_FEVER_THRESHOLD = "fever_threshold"  # in the entry's temperature unit (F or C)
+DEFAULT_FEEDING_OVERDUE_HOURS = 0
+
 # Sensor types
 SENSOR_TYPE_LAST_FEEDING = "last_feeding"
 SENSOR_TYPE_LAST_DIAPER = "last_diaper"
@@ -26,6 +34,7 @@ SENSOR_TYPE_LAST_BATH = "last_bath"
 SENSOR_TYPE_LAST_PUMP = "last_pump"
 SENSOR_TYPE_PUMP_SUMMARY = "pump_summary"
 SENSOR_TYPE_LAST_MEDICINE = "last_medicine"
+SENSOR_TYPE_LAST_ACTIVITY = "last_activity"
 SENSOR_TYPE_LAST_GROWTH = "last_growth"
 SENSOR_TYPE_LAST_MILESTONE = "last_milestone"
 SENSOR_TYPE_LAST_DOCTOR_VISIT = "last_doctor_visit"
@@ -105,6 +114,7 @@ LONG_SLEEP_THRESHOLDS = [
 
 # Scalar thresholds
 FEVER_THRESHOLD_F = 100.4
+FEVER_THRESHOLD_C = 38.0
 LOW_WET_THRESHOLD = 4
 LOW_WET_CHECK_HOUR = 20
 LOW_WET_MIN_AGE_DAYS = 3
@@ -125,6 +135,23 @@ SENSOR_TYPE_BEDTIME_ANALYSIS = "bedtime_analysis"
 # Night mode constants
 NIGHT_START_HOUR = 19  # 7 PM
 NIGHT_END_HOUR = 7     # 7 AM
+
+# Per-baby controls (number/select entities) and the buttons that use them
+DEFAULT_BOTTLE_OZ = 4
+DEFAULT_BOTTLE_ML = 120
+DEFAULT_MEDICINE_AMOUNT = 1.0
+DEFAULT_TUMMY_TIME_MINUTES = 15
+BOTTLE_TYPE_FORMULA = "formula"
+BOTTLE_TYPE_PUMPED = "pumped"
+
+# A second press of the same button within this many seconds is ignored
+BUTTON_DEBOUNCE_SECONDS = 3
+
+# Repairs (see strings.json "issues")
+ISSUE_OLD_WWW_FOLDER = "old_www_folder"
+ISSUE_UPLOADS_PENDING = "uploads_pending"
+ISSUE_ACCOUNT_RESET = "account_reset"
+UPLOADS_PENDING_REFRESHES = 3  # raise the issue once records stay unsent for more refreshes than this
 
 # Event names
 EVENT_FEEDING = "baby_tracker_feeding"

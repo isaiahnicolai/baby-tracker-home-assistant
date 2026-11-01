@@ -1,6 +1,7 @@
 """Baby Tracker integration for Home Assistant."""
 import logging
 import os
+import time
 import uuid
 from datetime import datetime, timedelta
 
@@ -8,12 +9,15 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .client import AccountResetError, AuthenticationError, BabyTracker
+from .client.dbconn import remove_sidecar_files
 from .const import (
+    BUTTON_DEBOUNCE_SECONDS,
     CALENDAR_LOOKBACK_DAYS,
     CONF_DEVICE_UUID,
     CONF_EMAIL,
@@ -27,7 +31,11 @@ from .const import (
     EVENT_DIAPER,
     EVENT_FEEDING,
     EVENT_SLEEP,
+    ISSUE_ACCOUNT_RESET,
+    ISSUE_OLD_WWW_FOLDER,
+    ISSUE_UPLOADS_PENDING,
     PHOTO_DIR_NAME,
+    UPLOADS_PENDING_REFRESHES,
     activity_signal,
 )
 from .entity import migrate_to_baby_ids, remove_retired_entities
@@ -37,7 +45,7 @@ _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-PLATFORMS = ["sensor", "button", "binary_sensor", "image", "calendar", "event"]
+PLATFORMS = ["sensor", "button", "binary_sensor", "image", "calendar", "event", "number", "select"]
 
 
 async def async_setup(hass: HomeAssistant, config: dict):
@@ -73,10 +81,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Older versions saved photos under www/, where anyone on the network can fetch them without a login
     legacy_photo_dir = hass.config.path("www", "baby_tracker")
     if await hass.async_add_executor_job(os.path.isdir, legacy_photo_dir):
-        _LOGGER.warning(
-            "Baby photos are now kept privately and shown by the Photo image entities. "
-            "The old copies in %s are still readable at /local/baby_tracker/ without logging in; "
-            "delete that folder to remove them", legacy_photo_dir)
+        _LOGGER.info("Old baby photo copies are still in %s; see Settings > Repairs", legacy_photo_dir)
+        ir.async_create_issue(
+            hass, DOMAIN, ISSUE_OLD_WWW_FOLDER,
+            is_fixable=False, severity=ir.IssueSeverity.WARNING,
+            translation_key=ISSUE_OLD_WWW_FOLDER, translation_placeholders={"folder": legacy_photo_dir},
+        )
+    else:
+        ir.async_delete_issue(hass, DOMAIN, ISSUE_OLD_WWW_FOLDER)
 
     # Raises ConfigEntryNotReady (retry later) or ConfigEntryAuthFailed (re-login)
     await coordinator.async_config_entry_first_refresh()
@@ -145,12 +157,15 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Delete the local database when the integration is removed (not on reload)."""
     db_path = os.path.join(hass.config.path(), "baby_tracker.db")
     await hass.async_add_executor_job(_remove_database, db_path)
+    for issue_id in (ISSUE_OLD_WWW_FOLDER, ISSUE_UPLOADS_PENDING, ISSUE_ACCOUNT_RESET):
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
 def _remove_database(db_path):
     if os.path.exists(db_path):
         try:
             os.remove(db_path)
+            remove_sidecar_files(db_path)
             _LOGGER.info(f"Deleted Baby Tracker database at: {db_path}")
         except OSError as e:
             _LOGGER.error(f"Failed to delete database at {db_path}: {e}")
@@ -191,7 +206,107 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         self.last_sync_result = None  # what the last sync reported, for diagnostics
         self.pending_uploads = None  # records logged here that the server hasn't received yet
         self.fetched_at = None  # when the data was last read, so time-based entities can keep it current
+        self._refreshes_with_pending = 0  # consecutive refreshes that ended with records still unsent
+        # What the number/select entities are set to, by baby ID: bottle_size, bottle_type,
+        # medicine, medicine_amount and tummy_time_minutes. The buttons read them.
+        self.controls = {}
+        # Running nursing timers by baby ID (kept here, not in the app's database)
+        self.nursing_timers = {}
+        self._button_presses = {}  # when each button was last pressed (monotonic seconds)
         _LOGGER.info(f"Initialized Baby Tracker coordinator with database at: {db_path}")
+
+    # ----- per-baby controls -----
+
+    def control(self, baby_id, key, default=None):
+        """The value a baby's number/select control is set to."""
+        return self.controls.get(baby_id, {}).get(key, default)
+
+    def set_control(self, baby_id, key, value):
+        self.controls.setdefault(baby_id, {})[key] = value
+
+    @property
+    def medicine_names(self):
+        """The names of the account's medicines, as the Medicine select offers them."""
+        return [m["name"] for m in (self.data or {}).get("medicines") or [] if m.get("name")]
+
+    def selected_medicine(self, baby_id):
+        """The medicine chosen for a baby, else the first one (None when the account has none)."""
+        names = self.medicine_names
+        chosen = self.control(baby_id, "medicine")
+        return chosen if chosen in names else (names[0] if names else None)
+
+    # ----- buttons -----
+
+    def is_repeat_press(self, key):
+        """
+        True if this button was pressed less than BUTTON_DEBOUNCE_SECONDS ago, so a
+        double tap (or an automation firing twice) doesn't log a record twice.
+        """
+        now = time.monotonic()
+        last = self._button_presses.get(key)
+        if last is not None and now - last < BUTTON_DEBOUNCE_SECONDS:
+            _LOGGER.info("Ignoring a repeat press of %s within %s seconds", key, BUTTON_DEBOUNCE_SECONDS)
+            return True
+        self._button_presses[key] = now
+        return False
+
+    # ----- nursing timer -----
+
+    def start_nursing(self, baby_id, side):
+        """
+        Start timing a nursing session on a side ("left" or "right"). If one is
+        already running on the other side, the time so far is kept and timing
+        carries on with this side.
+        """
+        now = dt_util.utcnow()
+        timer = self.nursing_timers.get(baby_id)
+        if timer is None:
+            self.nursing_timers[baby_id] = {
+                "side": side, "started_at": now, "segment_started_at": now,
+                "seconds": {"left": 0.0, "right": 0.0},
+            }
+        elif timer["side"] != side:
+            timer["seconds"][timer["side"]] += (now - timer["segment_started_at"]).total_seconds()
+            timer.update(side=side, segment_started_at=now)
+        else:
+            return
+        self.async_update_listeners()
+
+    def nursing_totals(self, baby_id):
+        """
+        What a running session has come to, as {"left": minutes, "right": minutes, "side": the
+        side now being timed, "started_at": datetime}, or None when no timer is running.
+        Minutes are whole; a session too short to round up still counts one minute.
+        """
+        timer = self.nursing_timers.get(baby_id)
+        if timer is None:
+            return None
+        seconds = dict(timer["seconds"])
+        seconds[timer["side"]] += (dt_util.utcnow() - timer["segment_started_at"]).total_seconds()
+        minutes = {side: round(value / 60) for side, value in seconds.items()}
+        if not any(minutes.values()):
+            minutes[timer["side"]] = 1
+        return {**minutes, "side": timer["side"], "started_at": timer["started_at"]}
+
+    def clear_nursing(self, baby_id):
+        if self.nursing_timers.pop(baby_id, None) is not None:
+            self.async_update_listeners()
+
+    # ----- repairs -----
+
+    def _track_uploads(self):
+        """Raise a repair when records stay unsent for several refreshes in a row, clear it when they go."""
+        if self.pending_uploads is None:
+            return
+        self._refreshes_with_pending = self._refreshes_with_pending + 1 if self.pending_uploads else 0
+        if self._refreshes_with_pending > UPLOADS_PENDING_REFRESHES:
+            ir.async_create_issue(
+                self.hass, DOMAIN, ISSUE_UPLOADS_PENDING,
+                is_fixable=False, severity=ir.IssueSeverity.WARNING, translation_key=ISSUE_UPLOADS_PENDING,
+                translation_placeholders={"count": str(self.pending_uploads)},
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, ISSUE_UPLOADS_PENDING)
 
     def baby_id_for(self, baby_name):
         """The ID of the baby with this name (entities are created per baby name)."""
@@ -292,6 +407,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 "last_milestone": tracker.get_last_milestone(baby_id),
                 "last_doctor_visit": tracker.get_last_doctor_visit(baby_id),
                 "last_vaccine": tracker.get_last_vaccine(baby_id),
+                "last_activity": tracker.get_last_activity(baby_id),
                 "today_wet_count": tracker.get_today_wet_diaper_count(baby_id),
                 "daily_summary": tracker.get_daily_summary(baby_id),
                 "sleep_analysis": tracker.get_sleep_analysis(baby_id, 14),
@@ -307,7 +423,10 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
             "pumped_milk_inventory": self._derived("Milk inventory", None, tracker.get_pumped_milk_inventory),
             "pending_uploads": self.pending_uploads,
         }
-        return all_babies, baby_info, baby_pictures, baby_data, account
+        # The account's medicines, for the Medicine select (shared by all babies)
+        medicines = tracker.get_medicine_selections()
+
+        return all_babies, baby_info, baby_pictures, baby_data, account, medicines
 
     def _announce(self, activity, baby_name, baby_id, details, bus_event=None):
         """Tell the baby's Activity event entity, and the event bus where an event is named for it."""
@@ -328,10 +447,14 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                     raise UpdateFailed(f"Authentication failed: {auth_result.get('message')}")
                 self.authenticated = True
 
-            all_babies, baby_info, baby_pictures, baby_data, account = await self.hass.async_add_executor_job(
-                self._fetch, self.photo_dir
-            )
+            try:
+                all_babies, baby_info, baby_pictures, baby_data, account, medicines = await self.hass.async_add_executor_job(
+                    self._fetch, self.photo_dir
+                )
+            finally:
+                self._track_uploads()
             self.fetched_at = dt_util.utcnow()
+            ir.async_delete_issue(self.hass, DOMAIN, ISSUE_ACCOUNT_RESET)  # a sync got through
 
             # Fire events for detected changes (skipped on the first refresh,
             # when everything would look new)
@@ -397,6 +520,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                     "baby_data": baby_data,
                     "baby_pictures": baby_pictures,
                     "account": account,
+                    "medicines": medicines,
                     # Backwards compatibility fields (first baby)
                     "baby_info": baby_info,
                     "feeding_summary": first_baby_data.get("feeding_summary"),
@@ -425,6 +549,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                     "baby_data": {},
                     "baby_pictures": {},
                     "account": account,
+                    "medicines": medicines,
                     "baby_info": baby_info
                 }
         except AuthenticationError as err:
@@ -436,6 +561,10 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
             _LOGGER.error(
                 "Baby Tracker account was reset or recreated, so syncing has stopped: %s. "
                 "Press the Force Resync button (or call the force_resync service) to rejoin the group.", err)
+            ir.async_create_issue(
+                self.hass, DOMAIN, ISSUE_ACCOUNT_RESET,
+                is_fixable=False, severity=ir.IssueSeverity.ERROR, translation_key=ISSUE_ACCOUNT_RESET,
+            )
             raise UpdateFailed(f"Account was reset; use Force Resync to rejoin: {err}") from err
         except UpdateFailed:
             raise

@@ -35,9 +35,22 @@
         "title": "Baby Tracker options",
         "data": {
           "scan_interval": "Update interval (minutes)",
-          "unit_system": "Units"
+          "unit_system": "Units",
+          "feeding_overdue_hours": "Feeding overdue after (hours)",
+          "low_wet_minimum": "Wet diapers expected per day",
+          "night_start_hour": "Night starts at (hour, 0-23)",
+          "night_end_hour": "Night ends at (hour, 0-23)",
+          "fever_threshold": "Fever temperature"
+        },
+        "data_description": {
+          "feeding_overdue_hours": "0 uses the baby's age: 3.5 hours for a newborn, up to 6 hours for older babies.",
+          "low_wet_minimum": "Low Wet Diapers turns on after 8 pm when the baby has fewer than this many.",
+          "fever_threshold": "In the unit chosen above. Leave blank for 100.4 F (38.0 C)."
         }
       }
+    },
+    "error": {
+      "invalid_fever_threshold": "That fever temperature isn't sensible for the chosen units (95-110 F or 35-43 C)"
     }
   },
   "entity": {
@@ -89,6 +102,9 @@
       },
       "last_medicine": {
         "name": "Last Medicine"
+      },
+      "last_activity": {
+        "name": "Last Activity"
       },
       "last_milestone": {
         "name": "Last Milestone"
@@ -248,6 +264,9 @@
       },
       "night_mode": {
         "name": "Night Mode"
+      },
+      "nursing": {
+        "name": "Nursing"
       }
     },
     "button": {
@@ -274,6 +293,47 @@
       },
       "force_resync": {
         "name": "Force Resync"
+      },
+      "add_selected_bottle": {
+        "name": "Add Bottle"
+      },
+      "give_selected_medicine": {
+        "name": "Give Medicine"
+      },
+      "start_nursing_left": {
+        "name": "Start Nursing Left"
+      },
+      "start_nursing_right": {
+        "name": "Start Nursing Right"
+      },
+      "end_nursing": {
+        "name": "End Nursing"
+      },
+      "log_tummy_time": {
+        "name": "Log Tummy Time"
+      }
+    },
+    "number": {
+      "bottle_size": {
+        "name": "Bottle Size"
+      },
+      "medicine_amount": {
+        "name": "Medicine Amount"
+      },
+      "tummy_time_minutes": {
+        "name": "Tummy Time Minutes"
+      }
+    },
+    "select": {
+      "bottle_type": {
+        "name": "Bottle Type",
+        "state": {
+          "formula": "Formula",
+          "pumped": "Pumped"
+        }
+      },
+      "medicine": {
+        "name": "Medicine"
       }
     },
     "image": {
@@ -331,6 +391,29 @@
     },
     "action_failed": {
       "message": "Failed to {action}: {error}"
+    },
+    "food_not_found": {
+      "message": "Food {name} not found"
+    },
+    "no_medicine_selected": {
+      "message": "This account has no medicines to choose from; add one in the Baby Tracker app"
+    },
+    "no_nursing_timer": {
+      "message": "No nursing timer is running; press Start Nursing Left or Right first"
+    }
+  },
+  "issues": {
+    "old_www_folder": {
+      "title": "Old baby photos are publicly readable",
+      "description": "Older versions saved baby photos in {folder}, where anyone on your network can open them at /local/baby_tracker/ without logging in. Baby photos are now kept privately and shown by the Photo image entities, so those copies are no longer used. Delete the folder to remove them."
+    },
+    "uploads_pending": {
+      "title": "Baby Tracker records aren't reaching the server",
+      "description": "{count} record(s) logged in Home Assistant have not been uploaded to the Baby Tracker server for several updates in a row. They are kept and will be sent once the server accepts them. Check your internet connection and that the Baby Tracker service is up; the Sync Now button tries again."
+    },
+    "account_reset": {
+      "title": "Baby Tracker account was reset",
+      "description": "The Baby Tracker account was reset or recreated, so the data kept in Home Assistant belongs to the old group and syncing has stopped. Press the Force Resync button (or call the baby_tracker.force_resync service) to rejoin the group. Records that were never uploaded are discarded."
     }
   },
   "services": {
@@ -741,6 +824,74 @@
         "time": {
           "name": "Time",
           "description": "When the baby fell asleep or woke up (defaults to now)."
+        }
+      }
+    },
+    "log_activity": {
+      "name": "Log Activity",
+      "description": "Logs an activity such as tummy time to Baby Tracker.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "activity_name": {
+          "name": "Activity Name",
+          "description": "Name of the activity (defaults to Tummy Time). An activity of that name in the app is reused."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "How long it lasted (minutes)."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it started (defaults to now)."
+        }
+      }
+    },
+    "add_solids": {
+      "name": "Add Solids",
+      "description": "Logs a solids feed (one of the foods in the app's solids list) to Baby Tracker.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "food_name": {
+          "name": "Food Name",
+          "description": "Name of the food, as it is in the app (for example \"Banana\" or \"Rice cereal\")."
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "How much was eaten, in the unit below."
+        },
+        "unit": {
+          "name": "Unit",
+          "description": "The unit of the amount, for example tbsp or g."
+        },
+        "is_english_measure": {
+          "name": "English Measure",
+          "description": "Whether the amount is in English units (on) or metric (off). Defaults to the integration's unit setting."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it happened (defaults to now)."
         }
       }
     },
