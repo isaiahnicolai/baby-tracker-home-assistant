@@ -49,6 +49,7 @@ from .entity import migrate_to_baby_ids, remove_retired_entities
 from .sentences import async_check_sentences
 from .services import async_register_services, async_unregister_services
 from .sleep_source import SleepSourceManager
+from .tracking import resolve_tracking
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -555,6 +556,8 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 "latest_picture": self._derived("Latest picture", None, tracker.get_latest_picture, baby_id),
                 "pictures": self._derived("Recent pictures", [], tracker.get_pictures, baby_id, 10),
             }
+            baby_data[baby.name]["tracking"], baby_data[baby.name]["tracking_mode"] = resolve_tracking(
+                self.config_entry.options, baby, baby_data[baby.name], now)
 
         account = {
             "pumped_milk_inventory": self._derived("Milk inventory", None, tracker.get_pumped_milk_inventory),

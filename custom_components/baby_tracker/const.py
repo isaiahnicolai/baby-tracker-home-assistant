@@ -37,6 +37,14 @@ DEFAULT_SLEEP_GAP_MINUTES = 10
 DEFAULT_SLEEP_MIN_MINUTES = 5
 SLEEP_SOURCE_STORE_VERSION = 1
 
+# Quiet mode: a baby who is no longer logged for an activity stops getting alerts and predictions
+# for it. The option is {baby_id: "auto" | [group, ...]}; "auto" works it out from the records.
+CONF_TRACKING = "tracking"
+TRACKING_AUTO = "auto"
+TRACKING_WINDOW_DAYS = 14  # an activity logged within this long (or a baby this young) counts as tracked
+TRACKING_GROUPS = ("feeds", "diapers", "sleep", "pumping", "medicine", "growth", "temperature")
+REASON_NOT_TRACKED = "not_tracked"
+
 # Sensor types
 SENSOR_TYPE_LAST_FEEDING = "last_feeding"
 SENSOR_TYPE_LAST_DIAPER = "last_diaper"
