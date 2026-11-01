@@ -154,14 +154,24 @@ _MEDICATION_SELECTION = _selection(
 _OTHER_ACTIVITY_DESC = _selection("OtherActivityDesc")
 _BATH_DESC = _selection("BathDesc")
 
+# Selections the Android app only knows by schema (BTSQLiteOpenHelper, EditableSelectionType): they
+# share EditableSelection's name/desc, so they map exactly like the others. The wire names of these
+# types are the table names (as for BathDesc); the aliases below cover the iOS class names.
+_DOCTOR = _selection(
+    "DoctorSelection",
+    ("Address", lambda r, d: r.get("address") or ""),
+    ("ClinicName", lambda r, d: r.get("clinicName") or ""),
+    ("PhoneNumber", lambda r, d: r.get("phoneNumber") or ""),
+)
+
 
 def _bottle(table, *extra):
     return RecordType(table, [
-        ("DescID", lambda r, d: ""),
+        ("DescID", lambda r, d: ref_id(r, "desc", "descID")),
         ("Amount", lambda r, d: _measure(r, "amount")[0]),
         ("IsEnglishScale", lambda r, d: int(_bool(_measure(r, "amount")[1], default=True))),
         *extra,
-    ], baby=True)
+    ], baby=True, embedded=[("desc", "FeedDesc")])
 
 
 RECORD_TYPES: Dict[str, RecordType] = {
@@ -184,12 +194,12 @@ RECORD_TYPES: Dict[str, RecordType] = {
     ], baby=True),
 
     "Nursing": RecordType("Nursing", [
-        ("DescID", lambda r, d: ""),
+        ("DescID", lambda r, d: ref_id(r, "desc", "descID")),
         ("FinishSide", lambda r, d: _enum(r.get("finishSide"), NURSING_FINISH_SIDE, 0)),
         ("LeftDuration", lambda r, d: int(r.get("leftDuration") or 0)),
         ("RightDuration", lambda r, d: int(r.get("rightDuration") or 0)),
         ("BothDuration", lambda r, d: int(r.get("bothDuration") or 0)),
-    ], baby=True),
+    ], baby=True, embedded=[("desc", "FeedDesc")]),
 
     "Formula": _bottle("Formula"),
     "Pumped": _bottle("Pumped", ("PumpID", lambda r, d: "")),
@@ -200,7 +210,7 @@ RECORD_TYPES: Dict[str, RecordType] = {
         ("Amount", lambda r, d: _measure(r, "amount")[0]),
         ("IsEnglishScale", lambda r, d: int(_bool(_measure(r, "amount")[1], default=True))),
         ("Unit", lambda r, d: r.get("unit") or ""),
-    ], baby=True, embedded=[("feedType", "OtherFeedSelection")]),
+    ], baby=True, embedded=[("feedType", "OtherFeedSelection"), ("desc", "FeedDesc")]),
 
     "Temperature": RecordType("Temperature", [
         ("Temp", lambda r, d: _measure(r, "temperature")[0]),
@@ -210,9 +220,10 @@ RECORD_TYPES: Dict[str, RecordType] = {
     "Sleep": RecordType("Sleep", [
         # Sleep.putValues clamps a negative duration to zero
         ("Duration", lambda r, d: max(int(r.get("duration") or 0), 0)),
-        ("LocationID", lambda r, d: ""),
-        ("DescID", lambda r, d: ""),
-    ], baby=True),
+        # The Android app writes both empty; iOS can send a selection or its ID
+        ("LocationID", lambda r, d: ref_id(r, "location", "locationID")),
+        ("DescID", lambda r, d: ref_id(r, "desc", "descID")),
+    ], baby=True, embedded=[("location", "SleepLocationSelection"), ("desc", "SleepDesc")]),
 
     "Medication": RecordType("Medicine", [
         ("MedID", lambda r, d: ref_id(r, "medicationSelection", "medication", "medicine", "medID")),
@@ -221,9 +232,9 @@ RECORD_TYPES: Dict[str, RecordType] = {
 
     "OtherActivity": RecordType("OtherActivity", [
         ("DescID", lambda r, d: ref_id(r, "desc", "descID")),
-        ("LocationID", lambda r, d: r.get("locationID") or ""),
+        ("LocationID", lambda r, d: ref_id(r, "location", "locationID")),
         ("Duration", lambda r, d: int(r.get("duration") or 0)),
-    ], baby=True, embedded=[("desc", "OtherActivityDescription")]),
+    ], baby=True, embedded=[("desc", "OtherActivityDescription"), ("location", "OtherActivityLocationSelection")]),
 
     "Bath": RecordType("Bath", [
         ("DescID", lambda r, d: ref_id(r, "bathType", "desc", "descID")),
@@ -278,7 +289,13 @@ RECORD_TYPES: Dict[str, RecordType] = {
         ("Symptom", lambda r, d: r.get("symptom") or ""),
         ("GrowthID", lambda r, d: r.get("growthID") or ""),
         ("SickID", lambda r, d: r.get("sickID") or ""),
-    ], baby=True),
+    ], baby=True, embedded=[("doctor", "DoctorSelection")]),
+
+    # A join record: which medicines were prescribed at a visit
+    "DoctorVisitMedicine": RecordType("DoctorVisitMedicine", [
+        ("DoctorVisitID", lambda r, d: ref_id(r, "doctorVisit", "doctorVisitID", "docVisitID")),
+        ("MedID", lambda r, d: ref_id(r, "medicationSelection", "medication", "medicine", "medID")),
+    ], activity=False, embedded=[("medicationSelection", "MedicationSelection")]),
 
     "MedicationSelection": _MEDICATION_SELECTION,
     "OtherFeedSelection": _selection(
@@ -291,6 +308,13 @@ RECORD_TYPES: Dict[str, RecordType] = {
     ),
     "VaccineSelection": _selection("VaccineSelection", ("ForAge", lambda r, d: int(r.get("forAge") or 0))),
     "BathType": _BATH_DESC,
+    "FeedDesc": _selection("FeedDesc"),
+    "SleepDesc": _selection("SleepDesc"),
+    "SleepLocationSelection": _selection("SleepLocationSelection"),
+    "SickDesc": _selection("SickDesc"),
+    "AllergenSourceSelection": _selection("AllergenSourceSelection"),
+    "OtherActivityLocationSelection": _selection("OtherActivityLocationSelection"),
+    "DoctorSelection": _DOCTOR,
 }
 
 # Alternative type names seen in the wild
@@ -300,6 +324,13 @@ ALIASES = {
     "MedicineSelection": "MedicationSelection",
     "OtherActivityDesc": "OtherActivityDescription",
     "BathDesc": "BathType",
+    "FeedDescription": "FeedDesc",
+    "SleepDescription": "SleepDesc",
+    "SleepLocation": "SleepLocationSelection",
+    "SickDescription": "SickDesc",
+    "AllergenSource": "AllergenSourceSelection",
+    "OtherActivityLocation": "OtherActivityLocationSelection",
+    "Doctor": "DoctorSelection",
 }
 
 # Where each selection is used (BTDatabaseImple.selectionUsed), for in-use
@@ -311,7 +342,16 @@ SELECTION_USAGE = {
     "VaccineSelection": [("Vaccine", "VaccID")],
     "OtherFeedSelection": [("OtherFeed", "TypeID")],
     "BathType": [("Bath", "DescID")],
+    "FeedDesc": [("Nursing", "DescID"), ("Formula", "DescID"), ("Pumped", "DescID"), ("OtherFeed", "DescID")],
+    "SleepDesc": [("Sleep", "DescID")],
+    "SleepLocationSelection": [("Sleep", "LocationID")],
+    "SickDesc": [],  # the Sick table has no description column to point at it
+    "AllergenSourceSelection": [("Allergen", "SourceID")],
+    "OtherActivityLocationSelection": [("OtherActivity", "LocationID")],
+    "DoctorSelection": [("DoctorVisit", "DoctorID")],
 }
+# A medicine selection is also named by the medicines prescribed at a visit
+SELECTION_USAGE["MedicationSelection"].append(("DoctorVisitMedicine", "MedID"))
 
 # Tables with a BabyID, re-pointed when two babies are merged
 # (BTDatabaseImple.updateBabyReference). Pump has no BabyID.
@@ -394,6 +434,9 @@ def named_wire(object_type: str, row: Dict[str, Any]) -> Dict[str, Any]:
                      "unit": row["Unit"] or "", "interval": row["Interval"] or 0})
     elif object_type == "OtherFeedSelection":
         wire["bottle"] = bool(row["IsBottle"])
+    elif object_type == "DoctorSelection":
+        wire.update({"address": row["Address"] or "", "clinicName": row["ClinicName"] or "",
+                     "phoneNumber": row["PhoneNumber"] or ""})
     elif object_type in ("MilestoneSelection", "VaccineSelection"):
         wire["forAge"] = row["ForAge"] or 0
         if object_type == "MilestoneSelection" and row["BabyID"]:
@@ -409,6 +452,11 @@ SELECTION_REFERENCES = {
     "Bath": ("DescID", "BathType", "bathType"),
     "Milestone": ("MilestoneSelectionID", "MilestoneSelection", "milestoneType"),
     "Vaccine": ("VaccID", "VaccineSelection", "vaccineType"),
+    "Sleep": ("DescID", "SleepDesc", "desc"),
+    "Nursing": ("DescID", "FeedDesc", "desc"),
+    "Formula": ("DescID", "FeedDesc", "desc"),
+    "Pumped": ("DescID", "FeedDesc", "desc"),
+    "DoctorVisit": ("DoctorID", "DoctorSelection", "doctor"),
 }
 
 
@@ -462,6 +510,8 @@ def record_wire(object_type: str, row: Dict[str, Any], baby: Optional[Dict[str, 
         wire["temperature"] = _measure_wire(row["Temp"], row["IsEnglishScale"], "TemperatureMeasure")
     elif object_type == "Sleep":
         wire["duration"] = row["Duration"] or 0
+        if row["LocationID"]:
+            wire["locationID"] = row["LocationID"]
     elif object_type == "Medication":
         wire["amount"] = row["Amount"] or 0
     elif object_type == "OtherActivity":
