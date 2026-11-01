@@ -1813,6 +1813,30 @@ class BabyTracker:
             return []
         return db.get_recent_records(baby_id, limit=limit, within_hours=within_hours)
 
+    def get_pictures(self, baby_id, limit=10, picture_dir=None):
+        """
+        The newest pictures attached to one baby's entries, newest first.
+
+        Each item is {"picture_id", "path", "thumbnail_path", "time", "object_type",
+        "object_id", "kind", "note"}: path and thumbnail_path are absolute (None until the
+        sync has downloaded the file), time is the entry's time as ISO 8601 with the
+        tracker's zone, and object_type, object_id, kind and note are the entry's, as
+        get_recent_records gives them. Videos are not listed.
+
+        Args:
+            limit: Most pictures to return
+            picture_dir: Where the pictures are kept (default: the directory the last sync used)
+        """
+        db = self._open_db()
+        if db is None:
+            return []
+        return db.get_pictures(baby_id, limit=limit, picture_dir=picture_dir)
+
+    def get_latest_picture(self, baby_id, picture_dir=None):
+        """The newest picture of one baby (see get_pictures for its keys), or None if there is none."""
+        pictures = self.get_pictures(baby_id, limit=1, picture_dir=picture_dir)
+        return pictures[0] if pictures else None
+
     def delete_record(self, object_type, object_id):
         """
         Delete one record and queue the delete for the other devices.
