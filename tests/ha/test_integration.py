@@ -21,6 +21,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 from pytest_homeassistant_custom_component.components.diagnostics import get_diagnostics_for_config_entry
 
+from custom_components.baby_tracker import BabyTrackerDataCoordinator
 from custom_components.baby_tracker.client import AccountResetError, AuthenticationError
 from custom_components.baby_tracker.client.models import Baby
 from custom_components.baby_tracker.const import DOMAIN
@@ -29,6 +30,7 @@ EMAIL = "me@example.com"
 EVERLY = Baby({"objectID": "ID-EVERLY", "name": "Everly", "dob": "", "dueDay": ""})
 TWIN = Baby({"objectID": "ID-TWIN", "name": "Ann Marie", "dob": "", "dueDay": ""})
 CORE = "custom_components.baby_tracker.client.core.BabyTracker"
+REAL_FETCH = BabyTrackerDataCoordinator._fetch  # the `backend` fixture swaps it out while a test runs
 
 
 def make_entry(unit_system="imperial", options=None):
@@ -287,6 +289,64 @@ async def test_setup_flow_gives_the_integration_its_own_device_id(hass):
             result["flow_id"], {"email": EMAIL, "password": "pw", "scan_interval": 15, "unit_system": "metric"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"]["device_uuid"]
+
+
+async def test_migration_leaves_account_level_entities_alone(hass):
+    from custom_components.baby_tracker.const import ACCOUNT_ENTITY_KEYS
+    from custom_components.baby_tracker.entity import migrate_to_baby_ids
+    from custom_components.baby_tracker.sensor import HOUSEHOLD_SENSORS
+
+    # The list the migration trusts matches the entities the integration really creates
+    assert ACCOUNT_ENTITY_KEYS == {"sync_now", "force_resync"} | {f"system_{c._sensor_type}" for c in HOUSEHOLD_SENSORS}
+
+    entry = make_entry()
+    entry.add_to_hass(hass)
+    ent_reg = er.async_get(hass)
+    account = {}
+    for domain, key in (("sensor", "system_next_feed_due"), ("button", "sync_now"), ("button", "force_resync")):
+        unique_id = f"{DOMAIN}_{EMAIL}_{key}"
+        account[unique_id] = ent_reg.async_get_or_create(domain, DOMAIN, unique_id, config_entry=entry).entity_id
+    # A baby-level entity from before babies were keyed by ID: this one does migrate
+    ent_reg.async_get_or_create("sensor", DOMAIN, f"{DOMAIN}_{EMAIL}_system_last_feeding", config_entry=entry)
+
+    # Babies whose names look like the start of an account-level entity's ID
+    babies = [Baby({"objectID": f"ID-{name.upper()}", "name": name, "dob": "", "dueDay": ""})
+              for name in ("System", "Sync", "Force")]
+    migrate_to_baby_ids(hass, entry, EMAIL, babies)
+
+    for unique_id, entity_id in account.items():
+        assert ent_reg.async_get(entity_id).unique_id == unique_id
+    assert ent_reg.async_get_entity_id("sensor", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-SYSTEM_last_feeding")
+
+
+async def test_a_bad_row_in_the_diaper_or_medicine_reads_does_not_fail_the_refresh(hass, backend):
+    from unittest.mock import MagicMock
+
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    tracker = MagicMock()
+    tracker.sync.return_value = {"status": "success"}
+    tracker.get_all_babies.return_value = [EVERLY]
+    tracker.get_baby_info.return_value = EVERLY
+    tracker.get_events_between.return_value = []
+    tracker.get_diaper_summary.side_effect = ValueError("bad row")
+    tracker.get_medicine_selections.side_effect = ValueError("bad row")
+    coordinator.baby_tracker = tracker
+
+    # The real _fetch (the fixture replaced it on the class)
+    _, _, _, baby_data, _, medicines = REAL_FETCH(coordinator, coordinator.photo_dir)
+
+    assert baby_data["Everly"]["diaper_summary"] is None
+    assert medicines == []
+
+
+async def test_a_second_account_cannot_be_added(hass):
+    # Every entry shares one local database, so the manifest allows a single entry
+    make_entry().add_to_hass(hass)
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "single_instance_allowed"
 
 
 async def test_options_flow(hass):
@@ -1096,14 +1156,43 @@ async def test_feeding_overdue_turns_on_after_two_hours_when_set_to_two(hass, ba
     assert hass.states.get("binary_sensor.everly_feeding_overdue").state == "off"
 
 
-async def test_fever_threshold_is_in_the_entrys_unit(hass, backend):
-    # Everly's last reading was 99.1 F (37.3 C)
+async def test_fever_threshold_is_in_the_entrys_unit(hass, backend, freezer):
+    # Everly's last reading was 99.1 F (37.3 C), taken at 06:00
+    freezer.move_to("2026-03-01 08:00:00+00:00")
     await setup(hass, make_entry(options={"fever_threshold": 99.0}))
     fever = hass.states.get("binary_sensor.everly_fever")
     assert fever.state == "on" and fever.attributes["threshold"] == 99.0
 
 
-async def test_fever_threshold_in_celsius(hass, backend):
+async def test_an_old_temperature_reading_no_longer_raises_the_fever_alert(hass, backend, freezer):
+    freezer.move_to("2026-03-01 08:00:00+00:00")
+    await setup(hass, make_entry(options={"fever_threshold": 99.0}))
+    assert hass.states.get("binary_sensor.everly_fever").state == "on"
+
+    # 24 hours after the 06:00 reading it stops counting, with no new refresh
+    freezer.move_to("2026-03-02 06:01:00+00:00")
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    fever = hass.states.get("binary_sensor.everly_fever")
+    assert fever.state == "off" and fever.attributes["current_value"] is None
+
+
+async def test_long_sleep_follows_the_clock_between_refreshes(hass, backend, freezer):
+    # Everly fell asleep at 11:00; for a baby of unknown age the limit is 4 hours
+    freezer.move_to("2026-03-01 12:00:00+00:00")
+    await setup(hass, make_entry())
+    sleep = hass.states.get("binary_sensor.everly_long_sleep")
+    assert sleep.state == "off" and sleep.attributes["current_value"] == 1.0
+
+    freezer.move_to("2026-03-01 15:30:00+00:00")
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    sleep = hass.states.get("binary_sensor.everly_long_sleep")
+    assert sleep.state == "on" and sleep.attributes["current_value"] == 4.5
+
+
+async def test_fever_threshold_in_celsius(hass, backend, freezer):
+    freezer.move_to("2026-03-01 08:00:00+00:00")
     await setup(hass, make_entry(unit_system="metric", options={"fever_threshold": 37.0}))
     fever = hass.states.get("binary_sensor.everly_fever")
     assert fever.state == "on" and fever.attributes["current_value"] == 37.3
@@ -1196,3 +1285,64 @@ async def test_a_reset_account_raises_a_repair_until_a_sync_succeeds(hass, backe
     await coordinator.async_refresh()  # a sync that works again (the fixture's fetch)
     assert coordinator.last_update_success
     assert registry.async_get_issue(DOMAIN, "account_reset") is None
+
+
+# ----- review fixes -----
+
+async def test_a_running_nursing_timer_survives_a_reload(hass, backend, freezer):
+    entry = make_entry()
+    await setup(hass, entry)
+    started = dt_util.utcnow()
+    await press(hass, "button.everly_start_nursing_left")
+    freezer.tick(timedelta(minutes=8))
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    timer = hass.states.get("binary_sensor.everly_nursing")
+    assert timer.state == "on"
+    assert timer.attributes["side"] == "left" and timer.attributes["started_at"] == started.isoformat()
+    freezer.tick(timedelta(minutes=4))
+    await press(hass, "button.everly_end_nursing")
+    assert backend[-1] == ("add_nursing", "ID-EVERLY", started.strftime("%Y-%m-%d %H:%M:%S +0000"), 12, 0, 1)
+    assert hass.states.get("binary_sensor.everly_nursing").state == "off"
+
+
+async def test_an_ended_nursing_timer_does_not_come_back_after_a_reload(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    await press(hass, "button.everly_start_nursing_left")
+    await press(hass, "button.everly_end_nursing")
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.everly_nursing").state == "off"
+
+
+async def test_a_forgotten_nursing_timer_is_dropped_when_loaded(hass, backend, hass_storage):
+    entry = make_entry()
+    entry.add_to_hass(hass)
+    long_ago = (dt_util.utcnow() - timedelta(days=3)).isoformat()
+    key = f"{DOMAIN}.{entry.entry_id}.nursing"
+    hass_storage[key] = {
+        "version": 1, "minor_version": 1, "key": key,
+        "data": {"ID-EVERLY": {"side": "left", "started_at": long_ago, "segment_started_at": long_ago,
+                               "seconds": {"left": 0.0, "right": 0.0}}},
+    }
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.everly_nursing").state == "off"
+
+
+async def test_a_failed_press_can_be_tried_again_at_once(hass, backend):
+    await setup(hass, make_entry())
+    with patch(f"{CORE}.add_diaper", return_value={"status": "error", "message": "offline"}), \
+         pytest.raises(HomeAssistantError):
+        await press(hass, "button.everly_add_wet_diaper")
+
+    await press(hass, "button.everly_add_wet_diaper")  # not swallowed by the debounce
+    assert backend[-1][:2] == ("add_diaper", "ID-EVERLY")
+
+    # A press that worked is still debounced
+    logged = len(backend)
+    await press(hass, "button.everly_add_wet_diaper")
+    assert len(backend) == logged

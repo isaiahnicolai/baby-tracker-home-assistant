@@ -87,6 +87,33 @@ def test_next_dose_follows_the_most_recent_medicine(apply, tracker):
     assert (dose["medicine_name"], dose["next_dose_at"]) == ("Motrin", "2026-10-01T15:00:00+00:00")
 
 
+def test_next_dose_is_the_soonest_across_the_medicines_given_recently(apply, tracker):
+    now = datetime.now(UTC).replace(microsecond=0)
+
+    def ago(hours):
+        return (now - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+
+    apply(medicine("M1", ago(5), "TYLENOL", "Tylenol", 360))      # next dose in 1 hour
+    apply(medicine("M2", ago(1), "MOTRIN", "Motrin", 480))        # next dose in 7 hours (the latest given)
+    apply(medicine("M3", ago(60), "OLD", "Old one", 240))         # outside the 48 hours before the latest dose
+
+    dose = tracker.get_next_medicine_dose(EVERLY)
+
+    assert dose["medicine_name"] == "Tylenol"
+    assert dose["next_dose_at"] == (now + timedelta(hours=1)).isoformat()
+
+
+def test_next_dose_skips_medicines_that_can_already_be_given(apply, tracker):
+    now = datetime.now(UTC).replace(microsecond=0)
+
+    def ago(hours):
+        return (now - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+
+    apply(medicine("M1", ago(10), "TYLENOL", "Tylenol", 240))     # could be given again 6 hours ago
+    apply(medicine("M2", ago(1), "MOTRIN", "Motrin", 480))        # next dose in 7 hours
+    assert tracker.get_next_medicine_dose(EVERLY)["medicine_name"] == "Motrin"
+
+
 def test_medicine_without_an_interval_has_no_next_dose(apply, tracker):
     apply(medicine("M1", "2026-10-01 08:00:00", "VITD", "Vitamin D", 0))
     dose = tracker.get_next_medicine_dose(EVERLY)
@@ -205,3 +232,64 @@ def test_a_sleep_in_progress_runs_until_now(apply, tracker):
     events = tracker.get_events_between(EVERLY, start - timedelta(hours=1), start + timedelta(days=1))
     assert [e["summary"] for e in events] == ["Sleep (in progress)"]
     assert events[0]["end"] - events[0]["start"] >= timedelta(hours=2)
+
+
+def test_an_old_unended_sleep_is_not_shown_as_in_progress(apply, tracker):
+    stray = datetime.now(UTC) - timedelta(days=5)
+    apply(record("Sleep", "STRAY", stray.strftime("%Y-%m-%d %H:%M:%S"), duration=0))
+    # A range after it started: not carried forward as an ever-running event
+    assert tracker.get_events_between(EVERLY, stray + timedelta(hours=1), datetime.now(UTC) + timedelta(days=1)) == []
+    # In its own range it is just a short event
+    events = tracker.get_events_between(EVERLY, stray - timedelta(hours=1), stray + timedelta(hours=1))
+    assert [e["summary"] for e in events] == ["Sleep (never ended)"]
+    assert events[0]["end"] - events[0]["start"] == timedelta(minutes=1)
+
+
+# --- Pump summary ---
+
+def hours_ago(hours):
+    return (datetime.now(UTC) - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def test_pump_summary_adds_oz_and_ml_sessions_in_millilitres(apply, tracker):
+    apply(record("Pump", "P-OZ", hours_ago(30), amount=volume(4, english=True)))
+    apply(record("Pump", "P-ML", hours_ago(10), amount=volume(100)))
+    apply(record("Pump", "P-ADJ", hours_ago(5), label="InventoryAdjustment", amount=volume(500)))
+
+    summary = tracker.get_pump_summary(7)
+
+    assert summary["unit"] == "ml"
+    assert summary["total_sessions"] == 2  # the inventory adjustment is not a session
+    assert summary["total_amount"] == pytest.approx(4 * 29.5735 + 100, abs=0.1)
+    assert summary["avg_amount_per_session"] == pytest.approx((4 * 29.5735 + 100) / 2, abs=0.1)
+
+
+def test_a_pump_session_logged_per_side_counts_both_sides(apply, tracker):
+    apply(record("Pump", "P-SIDES", hours_ago(2), leftAmount=volume(60), rightAmount=volume(50)))
+    last = tracker.get_last_pump()
+    assert last["total_amount"] == 110 and last["unit"] == "ml"
+    assert tracker.get_pump_summary(7)["total_amount"] == 110
+
+
+def test_the_last_pump_session_is_never_an_inventory_adjustment(apply, tracker):
+    apply(record("Pump", "P1", hours_ago(10), amount=volume(90)))
+    apply(record("Pump", "ADJ", hours_ago(1), label="InventoryAdjustment", amount=volume(500)))
+    assert tracker.get_last_pump()["id"] == "P1"
+    assert [r["id"] for r in tracker.get_pump_records()] == ["P1"]
+
+
+# --- Diapers by day ---
+
+def test_diapers_by_day_ends_with_today(apply, tracker):
+    now = datetime.now(UTC)
+    apply(record("Diaper", "D-NOW", now.strftime("%Y-%m-%d %H:%M:%S"), status="Wet", amount="Normal"))
+    apply(record("Diaper", "D-OLD", (now - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S"),
+                 status="Dirty", amount="Normal"))
+
+    by_day = tracker.get_diaper_summary(7, EVERLY)["diapers_by_day"]
+
+    today = now.astimezone(tracker.tz).strftime("%Y-%m-%d")
+    three_days_ago = (now - timedelta(days=3)).astimezone(tracker.tz).strftime("%Y-%m-%d")
+    assert len(by_day) == 7 and list(by_day)[-1] == today
+    assert by_day[today] == 1 and by_day[three_days_ago] == 1
+    assert sum(by_day.values()) == 2

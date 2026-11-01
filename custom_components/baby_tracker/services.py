@@ -718,6 +718,9 @@ async def async_register_services(hass: HomeAssistant):
             coordinator.password,
             coordinator.device_uuid
         )
+        if not coordinator.baby_tracker.is_authenticated:
+            # The database is gone and the rejoin failed: the next refresh must sign in again
+            coordinator.authenticated = False
         _check(result, "force resync")
 
         _LOGGER.info("Force resync completed successfully")

@@ -33,6 +33,20 @@ def test_growth_is_read_per_baby(apply, tracker):
     assert [r["id"] for r in tracker.get_growth_records(baby_id=TWIN)] == ["G-T"]
 
 
+def test_a_head_only_visit_does_not_blank_the_other_measures(apply, tracker):
+    apply(baby_record(EVERLY, "Growth", "G1", "2026-09-01 10:00:00", weight={"value": 9.0, "englishMeasure": True},
+                      length={"value": 21, "englishMeasure": True}))
+    apply(baby_record(EVERLY, "Growth", "G2", "2026-10-01 10:00:00", head={"value": 36, "englishMeasure": False}))
+
+    growth = tracker.get_last_growth(EVERLY)
+
+    assert growth["id"] == "G2"
+    assert (growth["weight"], growth["weight_unit"], growth["weight_time"]) == (9.0, "lbs", at("2026-09-01 10:00:00"))
+    assert (growth["length"], growth["length_unit"], growth["length_time"]) == (21, "in", at("2026-09-01 10:00:00"))
+    assert (growth["head"], growth["head_unit"], growth["head_time"]) == (36, "cm", at("2026-10-01 10:00:00"))
+    assert growth["time"] == at("2026-10-01 10:00:00")
+
+
 def test_baby_without_growth_has_none(apply, tracker):
     apply(baby_record(EVERLY, "Growth", "G-E", "2026-10-01 10:00:00", weight={"value": 12.5, "englishMeasure": True}))
     assert tracker.get_last_growth(TWIN) is None
