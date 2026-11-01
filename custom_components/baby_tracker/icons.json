@@ -74,6 +74,9 @@
     "calendar": {
       "activity_calendar": {"default": "mdi:calendar-heart"}
     },
+    "image": {
+      "latest_photo": {"default": "mdi:image-multiple"}
+    },
     "event": {
       "activity": {"default": "mdi:baby-face-outline"}
     }

@@ -9,6 +9,13 @@ version may contain breaking changes).
 
 ### Added
 
+- **Latest Photo** image entity for each baby: the newest picture attached to
+  any entry (a joy, diaper, bath, activity...), served full size to logged-in
+  users only. Attributes: `kind`, `time`, `note`, `object_type`, `object_id`,
+  `picture_id` and a `recent` list of the last ten pictures.
+- A `photo` event type on the baby's Activity event entity when a new picture
+  arrives.
+- Blueprint **New photo notification**: sends the picture to a phone.
 - **More of the app's selections sync.** Sleep descriptions and locations, feed
   descriptions, sick descriptions, allergen sources, other-activity locations
   and doctors created on the phone after setup now arrive (they were skipped

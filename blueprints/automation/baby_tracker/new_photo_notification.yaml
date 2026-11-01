@@ -1,0 +1,73 @@
+blueprint:
+  name: Baby Tracker - New photo notification
+  description: >
+    Sends a notification to a phone running the Home Assistant app, with the
+    picture attached, when a baby gets a new photo in the Baby Tracker app
+    (on a joy, diaper, bath, activity or any other entry). Use {baby} in the
+    message for the baby's name and {kind} for what the photo is attached to.
+  domain: automation
+  source_url: https://github.com/isaiahnicolai/baby-tracker-home-assistant/blob/main/blueprints/automation/baby_tracker/new_photo_notification.yaml
+  author: Baby Tracker for Home Assistant
+  input:
+    activity_event:
+      name: Activity event
+      description: The baby's Activity event entity (for example event.everly_activity).
+      selector:
+        entity:
+          filter:
+            - integration: baby_tracker
+              domain: event
+    latest_photo:
+      name: Latest Photo
+      description: The same baby's Latest Photo image entity (for example image.everly_latest_photo).
+      selector:
+        entity:
+          filter:
+            - integration: baby_tracker
+              domain: image
+    notify_device:
+      name: Phone to notify
+      description: A device with the Home Assistant companion app.
+      selector:
+        device:
+          filter:
+            - integration: mobile_app
+    title:
+      name: Title
+      default: New photo
+      selector:
+        text:
+    message:
+      name: Message
+      description: "{baby} is replaced with the baby's name, {kind} with what the photo is of (joy, bath...)."
+      default: "New {kind} photo of {baby}"
+      selector:
+        text:
+
+mode: queued
+max_exceeded: silent
+
+variables:
+  photo: !input latest_photo
+  message_template: !input message
+
+triggers:
+  - trigger: state
+    entity_id: !input activity_event
+
+conditions:
+  - alias: Only photo events
+    condition: template
+    value_template: "{{ trigger.to_state is not none and trigger.to_state.attributes.event_type == 'photo' }}"
+
+actions:
+  - alias: Send the picture to the phone
+    domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: !input title
+    message: >
+      {% set baby = trigger.to_state.attributes.baby_name or state_attr(photo, 'friendly_name') %}
+      {{ message_template | replace('{baby}', baby) | replace('{kind}', trigger.to_state.attributes.kind or 'new') }}
+    data:
+      image: "{{ state_attr(photo, 'entity_picture') }}"

@@ -843,13 +843,135 @@ async def test_activity_event_fires_when_something_new_is_found(hass, backend, c
     state = hass.states.get("event.everly_activity")
     assert state.attributes["event_type"] == event_type
     assert state.attributes["event_types"] == [
-        "feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine", "undo"]
+        "feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine", "photo", "undo"]
     assert state.attributes["baby_name"] == "Everly"
     assert state.attributes["time"] == next(iter(changes.values()))["time"]
     assert hass.states.get("event.ann_marie_activity").state == "unknown"  # only Everly's changed
 
     # The bus events are still fired for feedings, diapers and sleeps
     assert len(bus_events) == (0 if event_type in ("bath", "medicine") else 1)
+
+
+# ----- latest photo -----
+
+def picture(path, picture_id="PIC1", time="2026-03-01 12:00:00 +0000", **more):
+    return {"picture_id": picture_id, "path": path, "thumbnail_path": None, "time": time,
+            "object_type": "Joy", "object_id": "JOY1", "kind": "joy", "note": "Smiling", **more}
+
+
+def write_picture(hass, name, content):
+    path = hass.config.path("baby_tracker", "pictures", name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(content)
+    return path
+
+
+async def test_latest_photo_serves_the_newest_picture_with_its_details(hass, hass_client, backend):
+    path = write_picture(hass, "pic1.jpg", b"joy-bytes")
+    pictures = [picture(path), picture(None, "PIC0", "2026-02-28 12:00:00 +0000", kind="bath")]
+    entry = make_entry()
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with(latest_picture=pictures[0], pictures=pictures)):
+        await setup(hass, entry)
+
+    state = hass.states.get("image.everly_latest_photo")
+    assert state is not None and state.state != "unknown"
+    assert state.attributes["kind"] == "joy"
+    assert state.attributes["note"] == "Smiling"
+    assert state.attributes["object_type"] == "Joy"
+    assert state.attributes["object_id"] == "JOY1"
+    assert state.attributes["picture_id"] == "PIC1"
+    assert state.attributes["time"] == "2026-03-01 12:00:00 +0000"
+    assert state.attributes["recent"] == [
+        {"picture_id": "PIC1", "kind": "joy", "time": "2026-03-01 12:00:00 +0000"},
+        {"picture_id": "PIC0", "kind": "bath", "time": "2026-02-28 12:00:00 +0000"},
+    ]
+    assert str(path) not in str(state.attributes)  # file paths stay internal
+
+    response = await (await hass_client()).get(state.attributes["entity_picture"])
+    assert response.status == 200
+    assert await response.read() == b"joy-bytes"
+    unique_id = er.async_get(hass).async_get("image.everly_latest_photo").unique_id
+    assert unique_id == f"{DOMAIN}_{EMAIL}_ID-EVERLY_latest_photo"
+
+
+async def test_latest_photo_is_unknown_without_a_picture(hass, backend):
+    await setup(hass, make_entry())
+    assert hass.states.get("image.everly_latest_photo").state == "unknown"
+    assert hass.states.get("image.ann_marie_latest_photo").state == "unknown"
+
+
+async def test_latest_photo_timestamp_changes_with_a_new_picture(hass, backend):
+    first = write_picture(hass, "pic1.jpg", b"one")
+    second = write_picture(hass, "pic2.jpg", b"two")
+    entry = make_entry()
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with(latest_picture=picture(first))):
+        await setup(hass, entry)
+    before = hass.states.get("image.everly_latest_photo").state
+
+    newer = picture(second, "PIC2", "2026-03-01 13:00:00 +0000")
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with(latest_picture=newer)):
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=5))
+        await hass.data[DOMAIN][entry.entry_id].async_refresh()
+        await hass.async_block_till_done()
+    after = hass.states.get("image.everly_latest_photo")
+    assert after.state != before
+    assert after.attributes["picture_id"] == "PIC2"
+
+
+async def test_photo_event_fires_once_for_a_new_picture(hass, backend):
+    first = picture("/x/pic1.jpg")
+    entry = make_entry()
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with(latest_picture=first)):
+        await setup(hass, entry)
+    assert hass.states.get("event.everly_activity").state == "unknown"  # the first refresh announces nothing
+
+    newer = picture("/x/pic2.jpg", "PIC2", "2026-03-01 13:00:00 +0000", kind="bath", object_type="Bath",
+                    object_id="BATH1")
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with(latest_picture=newer)):
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        state = hass.states.get("event.everly_activity")
+        assert state.attributes["event_type"] == "photo"
+        assert state.attributes["kind"] == "bath"
+        assert state.attributes["time"] == "2026-03-01 13:00:00 +0000"
+        assert state.attributes["object_type"] == "Bath"
+        assert state.attributes["object_id"] == "BATH1"
+        assert state.attributes["picture_id"] == "PIC2"
+        fired_at = state.state
+
+        # The same picture again is not new
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        assert hass.states.get("event.everly_activity").state == fired_at
+
+
+async def test_an_older_picture_becoming_the_latest_is_not_announced(hass, backend):
+    entry = make_entry()
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with(latest_picture=picture("/x/pic2.jpg", "PIC2", "2026-03-01 13:00:00 +0000"))):
+        await setup(hass, entry)
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with(latest_picture=picture("/x/pic1.jpg", "PIC1", "2026-03-01 12:00:00 +0000"))):
+        await hass.data[DOMAIN][entry.entry_id].async_refresh()
+        await hass.async_block_till_done()
+    assert hass.states.get("event.everly_activity").state == "unknown"
+
+
+async def test_diagnostics_are_unaffected_by_pictures(hass, hass_client, backend):
+    entry = make_entry()
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with(latest_picture=picture("/secret/pic1.jpg"), pictures=[picture("/secret/pic1.jpg")])):
+        await setup(hass, entry)
+    diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+    assert "/secret/" not in str(diagnostics)
+    assert diagnostics["insights"]["ID-EVERLY"]["intake"]["status"] == "low"
 
 
 async def test_unchanged_data_fires_no_activity_event(hass, backend):

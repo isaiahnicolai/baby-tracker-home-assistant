@@ -218,6 +218,7 @@ These are totals over a rolling 7 days (the `window_days` attribute says so), up
 - **Nursing** (`binary_sensor`): on while a [nursing timer](#nursing-timer) is running
 - **Info** (diagnostic sensor): the baby's age, with date of birth and other details in attributes
 - **Photo** and **Photo Landscape** (`image`): the baby's photo from the app, and its wide version when the app has one. See [Photos](#photos)
+- **Latest Photo** (`image`): the newest picture attached to any entry (a joy, diaper, bath, activity...), with `kind`, `time`, `note`, `object_type`, `object_id` and `picture_id` attributes and a `recent` list of the last ten pictures. Unknown until a picture exists
 - **Recent Entries** (diagnostic sensor): the baby's newest records, with the type and ID that `delete_record` takes. See [Undoing a mistake](#undoing-a-mistake)
 - **Sync Now** and **Force Resync** (configuration buttons on the *Baby Tracker* device)
 - **Buttons** for quick logging: wet/dirty/mixed diapers, bath, start/end sleep, and the [controls and buttons](#controls-and-buttons) below (bottle, medicine, nursing timer, tummy time)
@@ -365,7 +366,7 @@ Each baby has a calendar (for example `calendar.baby_name_calendar`) showing the
 
 ## Event entities
 
-Each baby has an **Activity** event entity (`event.baby_name_activity`). It fires when a refresh finds something new, with one of these event types: `feeding`, `diaper`, `sleep_start`, `sleep_end`, `bath`, `medicine` or `undo` (an entry was deleted with Undo Last Entry or the `undo_last` service). The details (type, time, medicine name and so on) are attributes of the event. In an automation:
+Each baby has an **Activity** event entity (`event.baby_name_activity`). It fires when a refresh finds something new, with one of these event types: `feeding`, `diaper`, `sleep_start`, `sleep_end`, `bath`, `medicine`, `photo` (a new picture on any entry; `kind`, `time`, `object_type`, `object_id` and `picture_id` in the event) or `undo` (an entry was deleted with Undo Last Entry or the `undo_last` service). The details (type, time, medicine name and so on) are attributes of the event. In an automation:
 
 ```yaml
 triggers:
@@ -386,6 +387,7 @@ Ready-made automations in [`blueprints/automation/baby_tracker`](blueprints/auto
 | Feed due notification | Notifies a phone when a baby's Feed Due turns on, with the baby's name in the message | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fisaiahnicolai%2Fbaby-tracker-home-assistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbaby_tracker%2Ffeed_due_notification.yaml) |
 | Wake to feed | Notifies a phone when a baby should be woken to eat | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fisaiahnicolai%2Fbaby-tracker-home-assistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbaby_tracker%2Fwake_to_feed.yaml) |
 | Daily intake summary | At a time you choose, sends how much milk the baby has had in 24 hours (by default only when it is low) | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fisaiahnicolai%2Fbaby-tracker-home-assistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbaby_tracker%2Flow_intake_daily.yaml) |
+| New photo notification | Notifies a phone with the picture attached when a baby gets a new photo (uses the Activity event and Latest Photo entities) | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fisaiahnicolai%2Fbaby-tracker-home-assistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbaby_tracker%2Fnew_photo_notification.yaml) |
 
 The address pattern is `https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=<URL-encoded address of the blueprint file on GitHub>`. Each blueprint asks which baby's sensor to watch and which phone (a device with the Home Assistant app) to notify; create one automation per baby.
 
