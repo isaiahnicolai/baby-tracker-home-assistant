@@ -1,5 +1,6 @@
 """The integration inside Home Assistant: setup, entity migration, services, and config flows."""
 import os
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -2281,3 +2282,232 @@ def test_the_shipped_sentences_are_understood_by_assist():
         assert result.intent.name == intent_type, text
         got = {name: entity.value for name, entity in result.entities.items()}
         assert got == slots, text  # 120.0 == 120
+
+
+# ----- sleep taken from another entity -----
+
+SNOO = "binary_sensor.snoo_asleep"
+SNOO_SOURCES = {"sleep_sources": {"ID-EVERLY": {"sleep_source_entity": SNOO}}}
+NIGHT = datetime(2026, 3, 1, 22, 0, tzinfo=UTC)
+# Everly is awake as far as Baby Tracker knows (the shared test data has her asleep)
+AWAKE = {"last_sleep": {"time": "2026-03-01 18:00:00 +0000", "is_sleeping": False, "duration": 60,
+                        "current_duration": 0, "status": "awake"}}
+
+
+@contextmanager
+def logged_sleeps(**changes):
+    """Everly's sleep as Baby Tracker has it (awake unless changed), with log_sleep_event recorded."""
+    fetch = fetch_with(**{**AWAKE, **changes})
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch), \
+         patch(f"{CORE}.log_sleep_event", return_value={"status": "success"}) as log_sleep:
+        yield log_sleep
+
+
+def set_snoo(hass, state):
+    hass.states.async_set(SNOO, state, {"friendly_name": "Snoo"})
+
+
+async def start_snoo(hass, freezer, state="off", options=None):
+    """Set up the integration with a Snoo-like entity as Everly's sleep source, at 22:00."""
+    freezer.move_to(NIGHT)
+    set_snoo(hass, state)
+    entry = make_entry(options=options or SNOO_SOURCES)
+    await setup(hass, entry)
+    return entry
+
+
+async def advance(hass, freezer, **delta):
+    freezer.tick(timedelta(**delta))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+
+def starts_and_ends(log_sleep):
+    """The is_start flag of each sleep written, in order."""
+    return [call.args[1] for call in log_sleep.call_args_list]
+
+
+async def test_the_sleep_start_is_logged_after_the_minimum_back_dated(hass, backend, freezer):
+    with logged_sleeps() as log_sleep:
+        await start_snoo(hass, freezer)
+        assert hass.states.get("binary_sensor.everly_sleep_source").state == "off"
+        assert hass.states.get("binary_sensor.ann_marie_sleep_source") is None  # only babies with a source
+
+        set_snoo(hass, "on")
+        await advance(hass, freezer, minutes=4)
+        log_sleep.assert_not_called()  # 5 minutes is the default minimum
+        assert hass.states.get("binary_sensor.everly_sleep_source").state == "on"
+
+        await advance(hass, freezer, minutes=1)
+        log_sleep.assert_called_once_with("ID-EVERLY", True, "From Snoo", NIGHT)  # dated when she dropped off
+
+        source = hass.states.get("binary_sensor.everly_sleep_source")
+        assert source.attributes["source_entity"] == SNOO
+        assert source.attributes["since"] == NIGHT.isoformat()
+        assert source.attributes["pending_end"] is None
+
+
+async def test_a_short_wake_inside_the_gap_does_not_end_the_sleep(hass, backend, freezer):
+    with logged_sleeps() as log_sleep:
+        await start_snoo(hass, freezer, state="on")
+        await advance(hass, freezer, minutes=20)
+        set_snoo(hass, "off")
+        await advance(hass, freezer, minutes=5)
+        assert hass.states.get("binary_sensor.everly_sleep_source").attributes["pending_end"]
+
+        set_snoo(hass, "on")  # back down before the 10 minutes are up
+        await advance(hass, freezer, minutes=30)
+
+        assert starts_and_ends(log_sleep) == [True]  # no end
+        source = hass.states.get("binary_sensor.everly_sleep_source")
+        assert source.state == "on" and source.attributes["pending_end"] is None
+        assert source.attributes["since"] == NIGHT.isoformat()
+
+
+async def test_a_wake_longer_than_the_gap_ends_the_sleep_at_the_wake_time(hass, backend, freezer):
+    with logged_sleeps() as log_sleep:
+        await start_snoo(hass, freezer, state="on")
+        await advance(hass, freezer, minutes=20)
+        woke = dt_util.utcnow()
+        set_snoo(hass, "off")
+        await advance(hass, freezer, minutes=9)
+        assert starts_and_ends(log_sleep) == [True]  # only the start so far
+
+        await advance(hass, freezer, minutes=1)
+        assert log_sleep.call_args_list[-1].args == ("ID-EVERLY", False, "From Snoo", woke)  # not 10 minutes later
+        assert hass.states.get("binary_sensor.everly_sleep_source").state == "off"
+
+
+async def test_a_sleep_shorter_than_the_minimum_is_never_logged(hass, backend, freezer):
+    with logged_sleeps() as log_sleep:
+        await start_snoo(hass, freezer, state="on")
+        await advance(hass, freezer, minutes=3)
+        set_snoo(hass, "off")
+        await advance(hass, freezer, minutes=30)
+        log_sleep.assert_not_called()
+        assert hass.states.get("binary_sensor.everly_sleep_source").state == "off"
+
+
+async def test_an_unavailable_source_is_neither_a_start_nor_an_end(hass, backend, freezer):
+    with logged_sleeps() as log_sleep:
+        await start_snoo(hass, freezer, state="on")
+        await advance(hass, freezer, minutes=2)
+        set_snoo(hass, "unavailable")
+        await advance(hass, freezer, minutes=3)
+        assert starts_and_ends(log_sleep) == [True]  # the minimum still counted
+
+        await advance(hass, freezer, minutes=60)
+        set_snoo(hass, "unknown")
+        await advance(hass, freezer, minutes=60)
+        assert starts_and_ends(log_sleep) == [True]  # never ended
+        assert hass.states.get("binary_sensor.everly_sleep_source").state == "on"
+
+
+async def test_a_sleep_started_by_hand_is_not_started_twice(hass, backend, freezer):
+    sleeping = {"last_sleep": {"time": "2026-03-01 21:58:00 +0000", "is_sleeping": True, "duration": 0,
+                               "current_duration": 2, "status": "sleeping"}}
+    with logged_sleeps(**sleeping) as log_sleep:
+        await start_snoo(hass, freezer, state="on")
+        await advance(hass, freezer, minutes=6)
+        log_sleep.assert_not_called()  # Baby Tracker already has one in progress
+
+        set_snoo(hass, "off")
+        await advance(hass, freezer, minutes=10)
+        assert starts_and_ends(log_sleep) == [False]  # the end still goes to that sleep
+
+
+async def test_a_failed_end_is_dropped_quietly(hass, backend, freezer):
+    with logged_sleeps() as log_sleep:
+        await start_snoo(hass, freezer, state="on")
+        await advance(hass, freezer, minutes=10)
+        log_sleep.return_value = {"status": "error", "message": "No active sleep session found"}  # ended by hand
+        set_snoo(hass, "off")
+        await advance(hass, freezer, minutes=10)
+        assert hass.states.get("binary_sensor.everly_sleep_source").state == "off"
+
+
+async def test_a_sleep_in_progress_survives_a_restart(hass, backend, freezer, hass_storage):
+    with logged_sleeps() as log_sleep:
+        entry = await start_snoo(hass, freezer, state="on")
+        await advance(hass, freezer, minutes=10)
+        assert starts_and_ends(log_sleep) == [True]
+
+        await advance(hass, freezer, minutes=8)
+        await hass.config_entries.async_reload(entry.entry_id)  # a restart: the entity is still asleep
+        await hass.async_block_till_done()
+        source = hass.states.get("binary_sensor.everly_sleep_source")
+        assert source.state == "on"
+        assert source.attributes["since"] == NIGHT.isoformat()  # not 22:18, when HA came back
+        assert starts_and_ends(log_sleep) == [True]  # and not started a second time
+
+        woke = dt_util.utcnow()
+        set_snoo(hass, "off")
+        await advance(hass, freezer, minutes=10)
+        assert log_sleep.call_args_list[-1].args == ("ID-EVERLY", False, "From Snoo", woke)
+
+
+async def test_a_wake_during_a_restart_ends_the_sleep_from_when_it_was_noticed(hass, backend, freezer, hass_storage):
+    with logged_sleeps() as log_sleep:
+        entry = await start_snoo(hass, freezer, state="on")
+        await advance(hass, freezer, minutes=10)
+
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        set_snoo(hass, "off")
+        await advance(hass, freezer, minutes=20)
+        noticed = dt_util.utcnow()
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        await advance(hass, freezer, minutes=10)
+
+        assert log_sleep.call_args_list[-1].args == ("ID-EVERLY", False, "From Snoo", noticed)
+
+
+async def test_no_sleep_source_means_no_sleep_source_entity(hass, backend):
+    await setup(hass, make_entry())
+    assert hass.states.get("binary_sensor.everly_sleep_source") is None
+
+
+async def test_options_flow_saves_a_sleep_source_per_baby(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"scan_interval": 15, "unit_system": "imperial"})
+    assert result["step_id"] == "sleep_source"
+    assert result["description_placeholders"] == {"baby": "Ann Marie"}
+
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})  # no source for her
+    assert result["step_id"] == "sleep_source"
+    assert result["description_placeholders"] == {"baby": "Everly"}
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"sleep_source_entity": SNOO, "sleep_source_asleep_states": []})
+    assert result["errors"] == {"sleep_source_asleep_states": "no_asleep_states"}
+
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {
+        "sleep_source_entity": SNOO, "sleep_source_asleep_states": ["asleep", "weaning"],
+        "sleep_gap_minutes": 15, "sleep_min_minutes": 3})
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["sleep_sources"] == {"ID-EVERLY": {
+        "sleep_source_entity": SNOO, "sleep_source_asleep_states": ["asleep", "weaning"],
+        "sleep_gap_minutes": 15, "sleep_min_minutes": 3}}
+    assert entry.options["unit_system"] == "imperial"
+    assert hass.states.get("binary_sensor.everly_sleep_source")  # the reload created it
+
+
+async def test_options_flow_offers_the_saved_sleep_source_and_can_clear_it(hass, backend):
+    entry = make_entry(options=SNOO_SOURCES)
+    await setup(hass, entry)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"scan_interval": 15, "unit_system": "imperial"})
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})  # Ann Marie
+    entity_field = next(key for key in result["data_schema"].schema if key == "sleep_source_entity")
+    assert entity_field.description == {"suggested_value": SNOO}
+
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})  # blank clears it
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert "sleep_sources" not in entry.options
+    assert hass.states.get("binary_sensor.everly_sleep_source") is None
