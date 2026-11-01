@@ -1482,7 +1482,7 @@ For issues and feature requests, please submit them through the GitHub repositor
 
 ## Credits
 
-This integration provides a local interface to the [Baby Tracker](https://www.baby-tracker.com/) app by Nighp Software, available for [Android](https://play.google.com/store/apps/details?id=com.nighp.babytracker_android) and iOS. All trademarks, including the Baby Tracker name and logo, belong to their respective owners. It is an independent project and is not affiliated with or endorsed by the makers of Baby Tracker.
+This integration provides a local interface to the [Baby Tracker](https://www.baby-tracker.com/) app by Nighp Software, available for [Android](https://play.google.com/store/apps/details?id=com.nighp.babytracker_android) and [iOS](https://apps.apple.com/us/app/baby-tracker-newborn-log/id779656557). All trademarks, including the Baby Tracker name and logo, belong to their respective owners. It is an independent project and is not affiliated with or endorsed by the makers of Baby Tracker.
 
 You need the app, with its sync feature set up, to use this integration: the account it signs in to is created in the app, and the records it reads and writes are your own. It does not unlock, replace or work around any feature of the app, paid or otherwise; it is another device on an account you already have.
 
