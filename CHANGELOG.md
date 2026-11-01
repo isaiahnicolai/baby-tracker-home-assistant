@@ -38,6 +38,17 @@ version may contain breaking changes).
   log (5 minutes). The start is back-dated to when the entity went to sleep,
   the end is dated when it woke, and a restart mid-sleep loses nothing. A
   **Sleep Source** diagnostic binary sensor shows what the integration thinks.
+- **Quiet mode for activities a baby has outgrown.** A baby counts as tracked
+  for an activity (feeds, diapers, sleep, pumping, medicine, growth,
+  temperature) when something in it was logged in the last 14 days, and every
+  baby under 14 days old tracks everything. For a group that is not tracked,
+  its alerts stay off and its predictions and rates (Next Feed, Time Since Last
+  Feeding, Diaper Adequacy, Next Sleep...) read unknown, each with the
+  attribute `reason: not_tracked`; the household sensors skip that baby, and
+  Assist says "Feeds aren't being tracked for Everly" instead of answering.
+  What was logged (Last Feeding, the counts) stays. The per-baby options step
+  has a **Tracked activities** field to override it (`tracking` option; auto
+  by default), and the Info sensor shows `tracking` and `tracking_mode`.
 
 ## [0.3.1] - 2026-11-01
 

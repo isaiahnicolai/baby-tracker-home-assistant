@@ -315,6 +315,21 @@ A sleep logged this way is an ordinary sleep: you can still end it with **End Sl
 
 The settings are saved in the `sleep_sources` option, keyed by baby ID, with `sleep_source_entity`, `sleep_source_asleep_states`, `sleep_gap_minutes` and `sleep_min_minutes` for each baby.
 
+### When a baby outgrows the app
+
+Once a child is no longer logged for feeds or diapers, the questions about them stop making sense: Feeding Overdue would stay on for months and Time Since Last Feeding would count up forever. So the integration works out, for each baby, which activities are still **tracked**: feeds, diapers, sleep, pumping, medicine, growth and temperature. An activity is tracked when something in it was logged in the last 14 days. A baby under 14 days old tracks everything, since nothing logged yet does not mean it stopped.
+
+For an activity that is not tracked:
+
+- its alerts (for feeds: Feeding Overdue, Feed Due, Wake To Feed, Intake Low; for diapers: No Poop, Low Wet Diapers; for sleep: Long Sleep, Sleep Due, Nap Running Long; for temperature: Fever) are off, with the attribute `reason: not_tracked`;
+- its predictions and rates (Next Feed, Feed Interval, Intake, Intake Status, Time Since Last Feeding, Feeding Timer, Diaper Adequacy, Next Sleep, Expected Wake, Wake Window) read unknown, with the same attribute;
+- the household sensors (Next Feed Baby, Last Fed Baby, Babies Asleep, Feeds Today) leave that baby out;
+- Assist answers "Feeds aren't being tracked for Everly" to questions about it.
+
+What was logged is kept: Last Feeding, Last Diaper and Last Sleep still show their old values, and the counts for today stay. Logging something again (by hand, button or voice) makes the activity tracked again at the next refresh. The baby's Info sensor shows the verdict in its `tracking` attribute, and `tracking_mode` says whether it is `auto` or `manual`.
+
+To override the automatic choice, open **Configure**; the step for each baby has a **Tracked activities** field. Leave it on **Auto**, or pick the activities that should count (a baby set by hand stays that way until you set it back to Auto). It is saved in the `tracking` option as `{baby_id: [groups]}`; a baby left on auto is not listed. The other way to quiet a child entirely is to disable that baby's device in Home Assistant, which turns off all of its entities.
+
 ## Repairs
 
 Problems you can act on show up on *Settings > Repairs*:
