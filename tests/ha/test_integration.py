@@ -463,10 +463,10 @@ async def test_sensors_have_numeric_states_and_device_classes(hass, backend):
     assert attrs["sleeping"] is True
     check("sensor.everly_last_nursing", "12", "min", "duration", "measurement")
     check("sensor.everly_nursing_minutes", "90", "min", "duration", "measurement")
-    # Sizes, not meter readings: no device class (HA allows only total classes for "volume")
-    check("sensor.everly_last_pump", "118.3", "mL", None, "measurement")  # recorded as 4 oz
-    check("sensor.everly_pump_summary", "354.9", "mL", None, "measurement")
-    check("sensor.everly_bottle_volume", "500.0", "mL", None, "measurement")
+    # Amounts, not meter readings: volume_storage (HA allows only total classes for "volume")
+    check("sensor.everly_last_pump", "118.3", "mL", "volume_storage", "measurement")  # recorded as 4 oz
+    check("sensor.everly_pump_summary", "354.9", "mL", "volume_storage", "measurement")
+    check("sensor.everly_bottle_volume", "500.0", "mL", "volume_storage", "measurement")
     check("sensor.everly_weight", "4.536", "kg", "weight", "measurement")  # recorded as 10 lb
     check("sensor.everly_length", "50.8", "cm", "distance", "measurement")  # recorded as 20 in
     check("sensor.everly_head_circumference", "35.6", "cm", "distance", "measurement")

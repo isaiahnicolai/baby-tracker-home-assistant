@@ -554,8 +554,9 @@ class BabyTrackerBottleVolumeSensor(BabyTrackerSensor):
     _sensor_type = SENSOR_TYPE_BOTTLE_VOLUME
     _data_key = "feeding_summary"
     _imperial_unit = UnitOfVolume.FLUID_OUNCES
-    # No device class: Home Assistant only allows total state classes for 'volume', and
-    # this is a size to average and graph, not a meter reading (the unit is converted here)
+    # volume_storage, not volume: Home Assistant only allows total state classes for
+    # 'volume', and this is an amount to average and graph, not a meter reading
+    _attr_device_class = SensorDeviceClass.VOLUME_STORAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfVolume.MILLILITERS
     _attr_suggested_display_precision = 1
@@ -637,8 +638,9 @@ class BabyTrackerLastPumpSensor(BabyTrackerSensor):
     _sensor_type = SENSOR_TYPE_LAST_PUMP
     _data_key = "last_pump"
     _imperial_unit = UnitOfVolume.FLUID_OUNCES
-    # No device class: Home Assistant only allows total state classes for 'volume', and
-    # this is a size to average and graph, not a meter reading (the unit is converted here)
+    # volume_storage, not volume: Home Assistant only allows total state classes for
+    # 'volume', and this is an amount to average and graph, not a meter reading
+    _attr_device_class = SensorDeviceClass.VOLUME_STORAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfVolume.MILLILITERS
     _attr_suggested_display_precision = 1
@@ -667,8 +669,9 @@ class BabyTrackerPumpSummarySensor(BabyTrackerSensor):
     _data_key = "pump_summary"
     _imperial_unit = UnitOfVolume.FLUID_OUNCES
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    # No device class: Home Assistant only allows total state classes for 'volume', and
-    # this is a size to average and graph, not a meter reading (the unit is converted here)
+    # volume_storage, not volume: Home Assistant only allows total state classes for
+    # 'volume', and this is an amount to average and graph, not a meter reading
+    _attr_device_class = SensorDeviceClass.VOLUME_STORAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfVolume.MILLILITERS
     _attr_suggested_display_precision = 1

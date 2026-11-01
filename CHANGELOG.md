@@ -22,10 +22,10 @@ Fixes from the first run against a real account with two babies.
   record is rolled back on its own), and connections use WAL with
   `synchronous=NORMAL`. 3,000 records took 14 seconds where they took 12
   minutes.
-- Bottle Volume, Last Pump and Pump Summary no longer carry the `volume`
-  device class, which Home Assistant 2025.11+ only allows with a total state
-  class; they keep the `measurement` class and their unit. Pumped Milk
-  Inventory is `volume_storage`. Numeric sensors have a display precision,
+- Bottle Volume, Last Pump, Pump Summary and Pumped Milk Inventory use the
+  `volume_storage` device class: Home Assistant 2025.11+ only allows a total
+  state class with `volume`, and these are amounts to average and graph.
+  Numeric sensors have a display precision,
   so the UI shows `0.4 fl. oz.` rather than `0.405768272422116`.
 - Next Medicine Dose is unknown once the due time is more than a day in the
   past (the course is over) instead of showing a date days ago.
