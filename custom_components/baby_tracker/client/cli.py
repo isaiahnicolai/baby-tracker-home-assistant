@@ -4,9 +4,15 @@ Command line interface for the Baby Tracker sync client.
     babytracker babies
     babytracker last diaper --baby Everly
     babytracker add-diaper --baby Everly wet
+    babytracker add-bottle --baby Everly --amount 4 --unit oz
+    babytracker add-nursing --baby Everly --left 10 --right 8
+    babytracker insights --baby Everly
+    babytracker next
+    babytracker calendar --baby Everly --days 2
+    babytracker inventory
     babytracker raw <device-uuid> --since 120
 
-Credentials come from BABYTRACKER_EMAIL / BABYTRACKER_PASSWORD or are asked
+Every command prints JSON. Credentials come from BABYTRACKER_EMAIL / BABYTRACKER_PASSWORD or are asked
 for; the password is never stored. The CLI keeps its own device ID and local
 database in --state-dir (default ~/.babytracker), so it appears as its own
 device in the app, separate from Home Assistant.
@@ -18,6 +24,7 @@ import json
 import os
 import sys
 import uuid
+from datetime import datetime, timedelta
 
 from .api import AccountResetError, AuthenticationError
 from .core import BabyTracker
@@ -35,6 +42,8 @@ LAST = {
     "milestone": "get_last_milestone",
     "vaccine": "get_last_vaccine",
 }
+
+NURSING_SIDES = {"left": 1, "right": 2}  # the app's NursingFinishSide
 
 DIAPER_KINDS = {"wet": (True, False), "dirty": (False, True), "mixed": (True, True), "dry": (False, False)}
 
@@ -88,8 +97,12 @@ def _baby_id(tracker, name):
     raise SystemExit(f"--baby is required: {', '.join(b.name for b in babies)}")
 
 
+def _json_default(value):
+    return value.isoformat() if isinstance(value, datetime) else str(value)
+
+
 def _print(value):
-    print(json.dumps(value, indent=2, default=str))
+    print(json.dumps(value, indent=2, default=_json_default))
 
 
 def cmd_babies(tracker, args):
@@ -117,6 +130,56 @@ def cmd_add_diaper(tracker, args):
     _print(tracker.add_diaper(_baby_id(tracker, args.baby), None, pee=pee, poo=poo, note=args.note))
 
 
+def cmd_add_bottle(tracker, args):
+    add = tracker.add_pumped if args.type == "pumped" else tracker.add_formula
+    _print(add(_baby_id(tracker, args.baby), None, amount=args.amount, is_english_measure=args.unit == "oz",
+               note=args.note))
+
+
+def cmd_add_nursing(tracker, args):
+    if args.left <= 0 and args.right <= 0:
+        raise SystemExit("Give --left and/or --right minutes")
+    # The side the session ended on: as given, else the right side if it was used
+    finish = args.finish_side or ("right" if args.right > 0 else "left")
+    _print(tracker.add_nursing(_baby_id(tracker, args.baby), None, left_duration=args.left,
+                               right_duration=args.right, finish_side=NURSING_SIDES[finish], note=args.note))
+
+
+def cmd_insights(tracker, args):
+    """One baby's insights with --baby, else every baby's (a list)."""
+    if args.baby or len(tracker.get_all_babies()) == 1:
+        _print(tracker.get_insights(_baby_id(tracker, args.baby)))
+    else:
+        _print([tracker.get_insights(baby.object_id) for baby in tracker.get_all_babies()])
+
+
+def cmd_next(tracker, args):
+    """Each baby's predicted next feed, soonest first, and who is due first."""
+    babies = []
+    for baby in tracker.get_all_babies():
+        feed = (tracker.get_insights(baby.object_id) or {}).get("next_feed") or {}
+        babies.append({"baby": baby.name, "predicted_at": feed.get("predicted_at"),
+                       "overdue": feed.get("overdue"), "last_feed_at": feed.get("last_feed_at"),
+                       "interval_hours": feed.get("interval_hours")})
+    # Babies with no prediction (nothing logged yet) go last
+    babies.sort(key=lambda b: (b["predicted_at"] is None, datetime.fromisoformat(b["predicted_at"])
+                               if b["predicted_at"] else datetime.max))
+    first = babies[0] if babies and babies[0]["predicted_at"] else None
+    _print({"due_first": {"baby": first["baby"], "predicted_at": first["predicted_at"]} if first else None,
+            "babies": babies})
+
+
+def cmd_calendar(tracker, args):
+    """Feeds, sleeps, baths, doctor visits and medicines from N days ago until tomorrow."""
+    baby_id = _baby_id(tracker, args.baby)
+    now = datetime.now(tracker._local_tz())
+    _print(tracker.get_events_between(baby_id, now - timedelta(days=args.days), now + timedelta(days=1)))
+
+
+def cmd_inventory(tracker, args):
+    _print(tracker.get_pumped_milk_inventory())
+
+
 def cmd_devices(tracker, args):
     _print(tracker.api.get_devices())
 
@@ -129,6 +192,16 @@ def cmd_raw(tracker, args):
     for item in items[: args.limit]:
         decoded = json.loads(base64.b64decode(item["Transaction"]).decode("utf-8"))
         _print({"SyncID": item.get("SyncID"), "OPCode": item.get("OPCode"), "record": decoded})
+
+
+def _positive_number(text):
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a number") from None
+    if value <= 0:
+        raise argparse.ArgumentTypeError("must be more than zero")
+    return value
 
 
 def main(argv=None):
@@ -156,6 +229,37 @@ def main(argv=None):
     diaper.add_argument("--baby")
     diaper.add_argument("--note", default="")
     diaper.set_defaults(func=cmd_add_diaper)
+
+    bottle = sub.add_parser("add-bottle", help="log a bottle feed")
+    bottle.add_argument("--baby")
+    bottle.add_argument("--amount", type=_positive_number, required=True)
+    bottle.add_argument("--unit", choices=["oz", "ml"], default="oz", help="unit of --amount (default: oz)")
+    bottle.add_argument("--type", choices=["formula", "pumped"], default="formula",
+                        help="what was in the bottle (default: formula)")
+    bottle.add_argument("--note", default="")
+    bottle.set_defaults(func=cmd_add_bottle)
+
+    nursing = sub.add_parser("add-nursing", help="log a nursing session")
+    nursing.add_argument("--baby")
+    nursing.add_argument("--left", type=int, default=0, metavar="MIN", help="minutes on the left side")
+    nursing.add_argument("--right", type=int, default=0, metavar="MIN", help="minutes on the right side")
+    nursing.add_argument("--finish-side", choices=list(NURSING_SIDES),
+                         help="side the session ended on (default: right if --right is given, else left)")
+    nursing.add_argument("--note", default="")
+    nursing.set_defaults(func=cmd_add_nursing)
+
+    insights = sub.add_parser("insights", help="age, next feed, intake, diapers and growth percentiles")
+    insights.add_argument("--baby", help="one baby (default: every baby)")
+    insights.set_defaults(func=cmd_insights)
+
+    sub.add_parser("next", help="each baby's predicted next feed and who is due first").set_defaults(func=cmd_next)
+
+    calendar = sub.add_parser("calendar", help="a baby's feeds, sleeps, baths, visits and medicines")
+    calendar.add_argument("--baby")
+    calendar.add_argument("--days", type=int, default=1, help="how many days back to show (default: 1)")
+    calendar.set_defaults(func=cmd_calendar)
+
+    sub.add_parser("inventory", help="pumped milk in store").set_defaults(func=cmd_inventory)
 
     raw = sub.add_parser("raw", help="print a device's raw transactions from the server")
     raw.add_argument("device", help="device UUID (see `devices`)")
