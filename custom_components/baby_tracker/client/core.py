@@ -1975,7 +1975,7 @@ class BabyTracker:
 
     def get_insights(self, baby_id=None, now=None):
         """
-        Derived insights for one baby: age, next feed, 24-hour intake, diaper
+        Derived insights for one baby: age, next feed, next sleep, 24-hour intake, diaper
         adequacy, growth percentiles and weight velocity (see insights.py).
 
         Args:
@@ -1984,7 +1984,7 @@ class BabyTracker:
 
         Returns:
             dict: {"baby_id", "name", "generated_at", "age", "next_feed",
-            "intake", "diapers", "growth", "weight_velocity"}; each part is a
+            "next_sleep" (see insights.SleepPrediction), "intake", "diapers", "growth", "weight_velocity"}; each part is a
             plain dict, or None when the data it needs is missing. Empty when
             the baby isn't found.
         """
@@ -2037,6 +2037,13 @@ class BabyTracker:
             )
             for row in self.db.get_insight_feeds(baby_id, stamp - self._INSIGHT_FEED_DAYS * 86400)
         ]
+        sleeps = [
+            insights.Sleep(
+                start=at(row["time"]),
+                end=None if row["in_progress"] else at(row["time"] + row["duration"] * 60),
+            )
+            for row in self.db.get_insight_sleeps(baby_id, stamp - self._INSIGHT_FEED_DAYS * 86400, stamp)
+        ]
         day_ago = now - timedelta(hours=24)
 
         next_feed = insights.predict_next_feed(
@@ -2072,6 +2079,7 @@ class BabyTracker:
             "generated_at": now.isoformat(),
             "age": insights.to_dict(age) if age else None,
             "next_feed": insights.to_dict(next_feed),
+            "next_sleep": insights.to_dict(insights.predict_next_sleep(sleeps, now, corrected_days)),
             "intake": insights.to_dict(intake),
             "diapers": insights.to_dict(diapers) if diapers else None,
             "growth": growth or None,

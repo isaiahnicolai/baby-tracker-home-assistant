@@ -5,6 +5,26 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) (while it is below 1.0, a minor
 version may contain breaking changes).
 
+## [0.4.0] - unreleased
+
+### Added
+
+- **More of the app's selections sync.** Sleep descriptions and locations, feed
+  descriptions, sick descriptions, allergen sources, other-activity locations
+  and doctors created on the phone after setup now arrive (they were skipped
+  as unsupported), as do the medicines prescribed at a doctor visit. Records
+  keep the description or location they point at, and a selection that is in
+  use is protected from deletion like the others.
+- **The latest picture of each baby.** `BabyTracker.get_latest_picture(baby_id)`
+  and `get_pictures(baby_id, limit)` give the newest pictures attached to
+  entries, with the file paths on disk, the entry they belong to, its time,
+  kind and note.
+- **Next nap prediction.** `get_insights` has a `next_sleep` section (and
+  `babytracker next` a nap line): when a sleeping baby is expected to wake, or
+  when an awake one will probably need sleep, from the baby's own recent wake
+  windows within the typical range for their corrected age (35 minutes at
+  birth up to 5-6 hours at two years).
+
 ## [0.3.1] - 2026-11-01
 
 Fixes from the first run against a real account with two babies.

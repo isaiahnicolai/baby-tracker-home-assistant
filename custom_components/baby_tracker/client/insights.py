@@ -332,6 +332,155 @@ def predict_next_feed(feeds: Sequence[Feed], now: datetime, age_days: float | No
 
 
 # --------------------------------------------------------------------------
+# 2b. Next sleep
+# --------------------------------------------------------------------------
+
+class Sleep(NamedTuple):
+    """One sleep. ``end`` is None while the baby is still asleep (a sleep with no duration yet)."""
+
+    start: datetime
+    end: datetime | None
+
+
+# Typical awake time between sleeps ("wake windows") by age, as hours (minimum, maximum).
+# Basis: the ranges commonly published in pediatric sleep guidance for parents (they differ a
+# little between sources; these are a middle ground). They are by corrected age, so a baby born
+# early is judged by their due date, and they describe what is typical, not what is required.
+# Each row is (age below which it applies, in months; window minimum; window maximum).
+# The first row is 0-4 weeks (28 days / 30.4375 days per month).
+WAKE_WINDOWS_HOURS = (
+    (28 / DAYS_PER_MONTH, 35 / 60, 60 / 60),   # 0-4 weeks: 35-60 min
+    (3, 60 / 60, 90 / 60),                     # 1-2 months: 60-90 min
+    (5, 75 / 60, 120 / 60),                    # 3-4 months: 75-120 min
+    (7, 2.0, 3.0),                             # 5-6 months: 2-3 h
+    (10, 2.5, 3.5),                            # 7-9 months: 2.5-3.5 h
+    (13, 3.0, 4.0),                            # 10-12 months: 3-4 h
+    (19, 4.0, 6.0),                            # 13-18 months: 4-6 h
+    (25, 5.0, 6.0),                            # 19-24 months: 5-6 h
+    (math.inf, 5.0, 6.0),                      # beyond: 5-6 h
+)
+UNKNOWN_AGE_WINDOW_HOURS = (0.5, 6.0)  # without a date of birth the whole range is possible
+
+# Typical length of a sleep to assume with too little history, by age: (age below which it
+# applies, in months; nap minutes; night-time stretch hours). Naps run 45-120 minutes.
+DEFAULT_SLEEP_LENGTHS = (
+    (3, 60, 4.0),
+    (6, 75, 6.0),
+    (12, 90, 10.0),
+    (math.inf, 105, 10.0),
+)
+
+MAX_USABLE_WAKE_WINDOW_HOURS = 8.0  # a longer gap is a logging gap (or a night), not a wake window
+SLEEPS_PER_BUCKET = 6
+MIN_SLEEP_SAMPLES = 3
+
+
+@dataclass(frozen=True)
+class SleepPrediction:
+    is_asleep: bool
+    asleep_since: datetime | None       # when the sleep in progress started
+    expected_wake_at: datetime | None   # asleep_since + the usual length of such a sleep
+    awake_since: datetime | None        # end of the last sleep, when awake
+    wake_window_hours: float | None     # how long this baby usually stays awake (None while asleep)
+    window_min_hours: float             # the typical range for the age
+    window_max_hours: float
+    next_sleep_at: datetime | None      # awake_since + wake_window_hours; None while asleep
+    overdue: bool                       # awake and past next_sleep_at (asleep: past expected_wake_at)
+    max_awake_hours: float              # the top of the age range: longest awake stretch before overtired
+    basis: str                          # "history" or "age_default"
+    sample_count: int                   # wake windows (awake) or sleeps (asleep) the estimate came from
+    bucket: str                         # "day" (07:00-19:00) or "night", of now (awake) or the sleep (asleep)
+
+
+def wake_window_range(age_days: float | None) -> tuple[float, float]:
+    """(minimum, maximum) typical wake window in hours for a corrected age; wide when the age is unknown."""
+    if age_days is None:
+        return UNKNOWN_AGE_WINDOW_HOURS
+    months = age_days / DAYS_PER_MONTH
+    for below, low, high in WAKE_WINDOWS_HOURS:
+        if months < below:
+            return low, high
+    return WAKE_WINDOWS_HOURS[-1][1:]
+
+
+def default_sleep_length_hours(age_days: float | None, night: bool = False) -> float:
+    """Typical nap length (or night stretch) in hours for an age; the 6-12 month figure without an age."""
+    months = 9.0 if age_days is None else age_days / DAYS_PER_MONTH
+    for below, nap_minutes, night_hours in DEFAULT_SLEEP_LENGTHS:
+        if months < below:
+            return night_hours if night else nap_minutes / 60
+    return DEFAULT_SLEEP_LENGTHS[-1][2] if night else DEFAULT_SLEEP_LENGTHS[-1][1] / 60
+
+
+def predict_next_sleep(sleeps: Sequence[Sleep], now: datetime, age_days: float | None) -> SleepPrediction:
+    """When the baby is likely to need sleep next, or when a sleep in progress will probably end.
+
+    ``sleeps`` are ``(start, end)`` sorted ascending; ``end`` is None while the baby is asleep.
+    ``age_days`` is the corrected age. A sleep that started before ``now`` and has no end, or ends
+    after ``now``, is in progress; sleeps starting after ``now`` are ignored.
+
+    Asleep: ``expected_wake_at`` is the start plus the median length of the last 6 completed sleeps
+    of the same part of the day (day is 07:00-19:00 in ``now``'s timezone, judged by the start),
+    or a typical length for the age when there are fewer than 3.
+
+    Awake: ``awake_since`` is the end of the last sleep. The wake window is the median of the last
+    6 observed ones, the gap from a sleep's end to the start of the next sleep when that sleep
+    starts in the daytime, ignoring gaps over 8 hours; with fewer than 3 it is the middle of the
+    age's typical range. Either way it is clamped to that range. ``next_sleep_at`` is
+    ``awake_since`` plus the window. At night (``now`` outside 07:00-19:00) the baby is simply
+    expected to go back to sleep as soon as they can, so ``next_sleep_at`` is never in the past
+    and ``overdue`` stays False. ``max_awake_hours`` is the top of the typical range.
+    """
+    tz = now.tzinfo or UTC
+    low, high = wake_window_range(age_days)
+    ordered = sorted((s for s in sleeps if s.start <= now), key=lambda s: s.start)
+    completed = [s for s in ordered if s.end is not None and s.end <= now and s.end > s.start]
+    current = next((s for s in reversed(ordered) if s.end is None or s.end > now), None)
+
+    if current is not None:
+        night = not _is_day(current.start, tz)
+        lengths = [
+            (s.end - s.start).total_seconds() / 3600 for s in completed if _is_day(s.start, tz) != night
+        ][-SLEEPS_PER_BUCKET:]
+        if current.end is not None:
+            expected, basis, count = current.end, "history", 0   # the end is already logged
+        elif len(lengths) >= MIN_SLEEP_SAMPLES:
+            expected = current.start + timedelta(hours=statistics.median(lengths))
+            basis, count = "history", len(lengths)
+        else:
+            expected = current.start + timedelta(hours=default_sleep_length_hours(age_days, night))
+            basis, count = "age_default", len(lengths)
+        return SleepPrediction(
+            is_asleep=True, asleep_since=current.start, expected_wake_at=expected, awake_since=None,
+            wake_window_hours=None, window_min_hours=low, window_max_hours=high, next_sleep_at=None,
+            overdue=expected < now, max_awake_hours=high, basis=basis, sample_count=count,
+            bucket="night" if night else "day")
+
+    windows = [
+        (later.start - earlier.end).total_seconds() / 3600
+        for earlier, later in pairwise(completed)
+        if _is_day(later.start, tz)
+    ]
+    windows = [w for w in windows if 0 < w <= MAX_USABLE_WAKE_WINDOW_HOURS][-SLEEPS_PER_BUCKET:]
+    if len(windows) >= MIN_SLEEP_SAMPLES:
+        window, basis = statistics.median(windows), "history"
+    else:
+        window, basis = (low + high) / 2, "age_default"
+    window = min(high, max(low, window))
+
+    awake_since = completed[-1].end if completed else None
+    next_sleep = awake_since + timedelta(hours=window) if awake_since else None
+    night = not _is_day(now, tz)
+    if next_sleep is not None and night:
+        next_sleep = max(now, next_sleep)
+    return SleepPrediction(
+        is_asleep=False, asleep_since=None, expected_wake_at=None, awake_since=awake_since,
+        wake_window_hours=window, window_min_hours=low, window_max_hours=high, next_sleep_at=next_sleep,
+        overdue=next_sleep is not None and not night and next_sleep < now, max_awake_hours=high,
+        basis=basis, sample_count=len(windows), bucket="night" if night else "day")
+
+
+# --------------------------------------------------------------------------
 # 3. Intake
 # --------------------------------------------------------------------------
 

@@ -594,3 +594,170 @@ def test_get_insights_for_a_baby_without_a_date_of_birth(tracker, app_db):
     assert result["diapers"] is None
     assert result["next_feed"]["max_gap_hours"] is None  # not "4.5 hours, as for a newborn"
     assert result["intake"]["status"] == "unknown"
+
+
+# ----- next sleep -----
+
+def nap(day, hour, minute=0, minutes=None):
+    """A sleep starting at that Chicago time; ``minutes`` None means still asleep."""
+    start = at(day, hour, minute)
+    return insights.Sleep(start, None if minutes is None else start + timedelta(minutes=minutes))
+
+
+@pytest.mark.parametrize("age_days, window", [
+    (0, (35 / 60, 1.0)), (27, (35 / 60, 1.0)),
+    (30, (1.0, 1.5)), (80, (1.0, 1.5)),
+    (100, (1.25, 2.0)), (140, (1.25, 2.0)),
+    (160, (2.0, 3.0)), (200, (2.0, 3.0)),
+    (230, (2.5, 3.5)), (280, (2.5, 3.5)),
+    (320, (3.0, 4.0)), (380, (3.0, 4.0)),
+    (420, (4.0, 6.0)), (560, (4.0, 6.0)),
+    (600, (5.0, 6.0)), (730, (5.0, 6.0)), (2000, (5.0, 6.0)),
+    (None, (0.5, 6.0)),
+])
+def test_wake_window_range_follows_the_age_table(age_days, window):
+    assert insights.wake_window_range(age_days) == pytest.approx(window)
+
+
+def test_no_sleeps_gives_the_age_default_and_no_time():
+    result = insights.predict_next_sleep([], at(10, 12), age_days=100)
+    assert (result.is_asleep, result.next_sleep_at, result.awake_since) == (False, None, None)
+    assert result.wake_window_hours == pytest.approx(1.625)   # middle of 75-120 minutes
+    assert (result.basis, result.sample_count, result.overdue) == ("age_default", 0, False)
+    assert (result.window_min_hours, result.window_max_hours, result.max_awake_hours) == (1.25, 2.0, 2.0)
+
+
+def test_one_sleep_uses_the_age_default_window():
+    sleeps = [nap(10, 9, 0, 45)]
+    soon = insights.predict_next_sleep(sleeps, at(10, 10), age_days=100)
+    assert soon.awake_since == at(10, 9, 45)
+    assert soon.next_sleep_at == at(10, 9, 45) + timedelta(hours=1.625)
+    assert (soon.basis, soon.overdue, soon.bucket) == ("age_default", False, "day")
+    late = insights.predict_next_sleep(sleeps, at(10, 12), age_days=100)
+    assert late.overdue is True and late.next_sleep_at == soon.next_sleep_at
+
+
+def test_the_wake_window_is_the_median_of_the_observed_ones():
+    # 1.5 h awake between naps, the last nap ended at 15:30
+    sleeps = [nap(10, 7, 0, 60), nap(10, 9, 30, 60), nap(10, 12, 0, 60), nap(10, 14, 30, 60)]
+    result = insights.predict_next_sleep(sleeps, at(10, 16), age_days=100)
+    assert (result.basis, result.sample_count) == ("history", 3)
+    assert result.wake_window_hours == pytest.approx(1.5)
+    assert result.awake_since == at(10, 15, 30)
+    assert result.next_sleep_at == at(10, 17)
+    assert result.overdue is False
+
+
+def test_history_is_clamped_to_the_age_range():
+    # 3 h awake between naps is more than a 3 month old's range allows: no more than 2 h
+    sleeps = [nap(10, 7, 0, 30), nap(10, 10, 30, 30), nap(10, 14, 0, 30), nap(10, 17, 30, 30)]
+    result = insights.predict_next_sleep(sleeps, at(10, 18, 30), age_days=100)
+    assert result.wake_window_hours == pytest.approx(2.0)
+    too_short = [nap(10, 7, 0, 10), nap(10, 7, 20, 10), nap(10, 7, 40, 10), nap(10, 8, 0, 10)]
+    assert insights.predict_next_sleep(too_short, at(10, 8, 30), age_days=100).wake_window_hours == pytest.approx(1.25)
+
+
+def test_gaps_over_eight_hours_and_night_sleeps_are_not_wake_windows():
+    sleeps = [nap(9, 7, 0, 30), nap(9, 18, 0, 30),         # 10.5 h gap: a logging gap
+              nap(10, 7, 0, 30), nap(10, 8, 30, 30),      # 1 h
+              nap(10, 10, 0, 30), nap(10, 11, 30, 30)]   # 1 h, 1 h
+    result = insights.predict_next_sleep(sleeps, at(10, 12), age_days=100)
+    assert result.sample_count == 3
+    # the window before the 18:00 sleep (10.5 h) is excluded, the one before 07:00 next day counts as 6.5 h
+    assert result.wake_window_hours == pytest.approx(1.25)
+
+
+def test_the_window_before_a_night_sleep_is_not_a_daytime_wake_window():
+    sleeps = [nap(9, 7, 0, 30), nap(9, 18, 30, 30), nap(9, 20, 0, 600),   # the 20:00 sleep starts at night
+              nap(10, 7, 0, 30)]
+    # gaps: 07:30 -> 18:30 (11 h, dropped); 19:00 -> 20:00 night (not counted); 06:00 -> 07:00 day: 1 h
+    result = insights.predict_next_sleep(sleeps, at(10, 8), age_days=100)
+    assert result.sample_count == 1
+
+
+def test_asleep_with_too_little_history_uses_a_typical_nap():
+    result = insights.predict_next_sleep([nap(10, 13, 0)], at(10, 13, 20), age_days=100)
+    assert result.is_asleep and result.asleep_since == at(10, 13)
+    assert result.expected_wake_at == at(10, 14, 15)     # 75 minutes at 3 months
+    assert (result.next_sleep_at, result.awake_since, result.wake_window_hours) == (None, None, None)
+    assert (result.basis, result.overdue, result.bucket) == ("age_default", False, "day")
+    assert insights.predict_next_sleep([nap(10, 13, 0)], at(10, 14, 30), age_days=100).overdue is True
+
+
+def test_asleep_uses_the_median_nap_of_the_same_part_of_the_day():
+    sleeps = [nap(9, 7, 0, 40), nap(9, 10, 0, 50), nap(9, 13, 0, 45),   # naps
+              nap(9, 20, 0, 600),                                       # a night sleep must not count
+              nap(10, 13, 0)]
+    result = insights.predict_next_sleep(sleeps, at(10, 13, 10), age_days=100)
+    assert (result.basis, result.sample_count) == ("history", 3)
+    assert result.expected_wake_at == at(10, 13, 45)
+    night = insights.predict_next_sleep(sleeps[:-1] + [nap(10, 20, 0)], at(10, 21), age_days=100)
+    assert night.bucket == "night" and night.basis == "age_default"
+    assert night.expected_wake_at == at(10, 20) + timedelta(hours=6)
+
+
+def test_a_sleep_whose_logged_end_is_still_ahead_is_in_progress():
+    result = insights.predict_next_sleep([nap(10, 13, 0, 90)], at(10, 13, 30), age_days=100)
+    assert result.is_asleep and result.expected_wake_at == at(10, 14, 30)
+    assert insights.predict_next_sleep([nap(10, 13, 0, 90)], at(10, 15), age_days=100).is_asleep is False
+
+
+def test_sleeps_after_now_are_ignored():
+    result = insights.predict_next_sleep([nap(10, 9, 0, 30), nap(10, 15, 0, 30)], at(10, 10), age_days=100)
+    assert not result.is_asleep and result.awake_since == at(10, 9, 30)
+
+
+def test_awake_at_night_expects_sleep_as_soon_as_possible():
+    result = insights.predict_next_sleep([nap(10, 19, 0, 30)], at(10, 22), age_days=100)
+    assert result.bucket == "night"
+    assert result.next_sleep_at == at(10, 22) and result.overdue is False
+
+
+def test_unknown_age_still_predicts_from_history():
+    sleeps = [nap(10, 7, 0, 60), nap(10, 10, 0, 60), nap(10, 13, 0, 60), nap(10, 16, 0, 60)]
+    result = insights.predict_next_sleep(sleeps, at(10, 17), age_days=None)
+    assert result.wake_window_hours == pytest.approx(2.0) and result.next_sleep_at == at(10, 19)
+    assert result.window_max_hours == 6.0
+
+
+def test_next_sleep_prediction_serialises():
+    out = insights.to_dict(insights.predict_next_sleep([nap(10, 9, 0, 45)], at(10, 10), age_days=100))
+    json.dumps(out)
+    assert out["next_sleep_at"].startswith("2026-06-10T")
+
+
+def test_get_insights_predicts_the_next_sleep(tracker, app_db):
+    seed(app_db)
+    chicago = lambda hour, minute=0: datetime(2026, 10, 30, hour, minute, tzinfo=CHICAGO)  # noqa: E731
+    conn = sqlite3.connect(app_db)
+    insert = "INSERT INTO Sleep (ID, Time, BabyID, Duration) VALUES (?,?,?,?)"
+    for i, (hour, minute) in enumerate([(8, 0), (9, 30), (11, 0), (12, 0)]):   # 30 minute naps, 1 h awake between
+        conn.execute(insert, (f"S{i}", chicago(hour, minute).timestamp(), EVERLY, 30))
+    conn.execute(insert, ("OLD", chicago(1).timestamp() - 3 * 86400, EVERLY, 0))   # never ended: not in progress
+    conn.commit()
+    conn.close()
+
+    awake = tracker.get_insights(EVERLY, now=chicago(13))["next_sleep"]
+    json.dumps(awake)
+    assert awake["is_asleep"] is False and awake["basis"] == "history" and awake["sample_count"] == 3
+    assert datetime.fromisoformat(awake["awake_since"]) == chicago(12, 30)
+    assert awake["wake_window_hours"] == 1.0
+    assert datetime.fromisoformat(awake["next_sleep_at"]) == chicago(13, 30)
+    assert (awake["window_min_hours"], awake["window_max_hours"], awake["max_awake_hours"]) == (1.0, 1.5, 1.5)
+    assert tracker.get_insights(EVERLY, now=chicago(14))["next_sleep"]["overdue"] is True
+
+    conn = sqlite3.connect(app_db)
+    conn.execute(insert, ("NOW", chicago(13, 5).timestamp(), EVERLY, 0))   # started, no duration yet
+    conn.commit()
+    conn.close()
+    asleep = tracker.get_insights(EVERLY, now=chicago(13, 15))["next_sleep"]
+    assert asleep["is_asleep"] is True and asleep["next_sleep_at"] is None
+    assert datetime.fromisoformat(asleep["asleep_since"]) == chicago(13, 5)
+    assert datetime.fromisoformat(asleep["expected_wake_at"]) == chicago(13, 35)   # the usual 30 minutes
+
+    assert tracker.get_insights(TWIN, now=chicago(13))["next_sleep"]["next_sleep_at"] is None
+
+
+def test_get_insights_without_sleeps_has_no_next_sleep(tracker, app_db):
+    result = tracker.get_insights(EVERLY, now=NOW)["next_sleep"]
+    assert result["is_asleep"] is False and result["next_sleep_at"] is None and result["awake_since"] is None

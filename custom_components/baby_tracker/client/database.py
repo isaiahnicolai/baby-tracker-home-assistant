@@ -2989,6 +2989,30 @@ class BabyTrackerLocalDatabase:
         finally:
             conn.close()
 
+    def get_insight_sleeps(self, baby_id: str, since: float, now: Optional[float] = None) -> List[Dict]:
+        """
+        Sleeps that started since a time, oldest first, for one baby.
+
+        Each dict has time (start), duration (minutes) and in_progress: a sleep with no duration
+        yet that started less than IN_PROGRESS_SLEEP_SECONDS before `now` (default: the current time;
+        older ones never ended and are left out, as get_recent_records labels them).
+        """
+        conn = self._connect()
+        try:
+            now = self._now().timestamp() if now is None else now
+            rows = conn.execute("SELECT Time, Duration FROM Sleep WHERE BabyID = ? AND Time >= ? ORDER BY Time",
+                                (baby_id, since)).fetchall()
+            sleeps = []
+            for time, duration in rows:
+                duration = duration or 0
+                if duration > 0:
+                    sleeps.append({"time": time, "duration": duration, "in_progress": False})
+                elif 0 <= now - time < IN_PROGRESS_SLEEP_SECONDS:
+                    sleeps.append({"time": time, "duration": 0, "in_progress": True})
+            return sleeps
+        finally:
+            conn.close()
+
     def get_insight_growth(self, baby_id: str) -> List[Dict]:
         """
         Every growth measurement for one baby, oldest first, in kg and cm.
