@@ -26,6 +26,16 @@ version may contain breaking changes).
   and `get_pictures(baby_id, limit)` give the newest pictures attached to
   entries, with the file paths on disk, the entry they belong to, its time,
   kind and note.
+- **Photos from Home Assistant.** `baby_tracker.log_joy` logs a joy, optionally with a
+  photo, and `baby_tracker.attach_photo` adds a photo to an existing entry, from a
+  file in the `baby_tracker`, `www` or `media` folder or from a camera or image
+  entity snapshot. They appear on the phone like photos taken in the app. In the
+  client: `BabyTracker.add_joy(baby_id, note, time_str, photo_path)` and
+  `attach_photo(object_type, object_id, photo_path)` (they store a JPEG and
+  thumbnail, upload the files before the entry, and keep them queued for the next
+  sync if the server is unreachable), plus `babytracker add-joy` and
+  `attach-photo`. Needs Pillow (`pip install 'babytracker-client[photos]'`; Home
+  Assistant already has it).
 - **Next nap prediction.** `get_insights` has a `next_sleep` section (and
   `babytracker next` a nap line): when a sleeping baby is expected to wake, or
   when an awake one will probably need sleep, from the baby's own recent wake

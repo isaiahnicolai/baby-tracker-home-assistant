@@ -438,6 +438,21 @@
     },
     "delete_failed": {
       "message": "Could not delete {object_type} {object_id}: {error}"
+    },
+    "photo_one_source": {
+      "message": "Give only one of photo, image_entity and camera_entity"
+    },
+    "photo_required": {
+      "message": "Give a photo, an image_entity or a camera_entity to attach"
+    },
+    "photo_path_not_allowed": {
+      "message": "{path} can't be attached: photos must be in the baby_tracker folder of the configuration folder, or in www or media (which must be allowed paths)"
+    },
+    "photo_not_found": {
+      "message": "There is no photo file at {path}"
+    },
+    "photo_snapshot_failed": {
+      "message": "Could not get a picture from {entity_id}: {error}"
     }
   },
   "issues": {
@@ -987,6 +1002,74 @@
         "object_id": {
           "name": "Record ID",
           "description": "The record's ID, from the Recent Entries sensor."
+        }
+      }
+    },
+    "log_joy": {
+      "name": "Log Joy",
+      "description": "Logs a joy to Baby Tracker, optionally with a photo that then shows on the phone app.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "note": {
+          "name": "Note",
+          "description": "What happened (for example \"First smile\")."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it happened (defaults to now)."
+        },
+        "photo": {
+          "name": "Photo File",
+          "description": "A picture file to attach. It must be in the baby_tracker folder of your configuration folder, or in www or media (those two also need to be allowed paths)."
+        },
+        "image_entity": {
+          "name": "Image Entity",
+          "description": "Attach the current picture of an image entity instead of a file."
+        },
+        "camera_entity": {
+          "name": "Camera",
+          "description": "Attach a snapshot of a camera instead of a file."
+        }
+      }
+    },
+    "attach_photo": {
+      "name": "Attach Photo",
+      "description": "Adds a photo to an entry that is already logged (a diaper, a joy, a bath...), so it shows on every device.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (not needed; the entry is found by its type and ID)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (not needed)."
+        },
+        "object_type": {
+          "name": "Entry Type",
+          "description": "The kind of entry, as the Recent Entries sensor lists it."
+        },
+        "object_id": {
+          "name": "Entry ID",
+          "description": "The entry's ID, from the Recent Entries sensor."
+        },
+        "photo": {
+          "name": "Photo File",
+          "description": "A picture file to attach. It must be in the baby_tracker folder of your configuration folder, or in www or media (those two also need to be allowed paths)."
+        },
+        "image_entity": {
+          "name": "Image Entity",
+          "description": "Attach the current picture of an image entity instead of a file."
+        },
+        "camera_entity": {
+          "name": "Camera",
+          "description": "Attach a snapshot of a camera instead of a file."
         }
       }
     },

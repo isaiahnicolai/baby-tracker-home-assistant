@@ -81,6 +81,8 @@ babytracker last diaper --baby Everly
 babytracker add-diaper wet --baby Everly
 babytracker add-bottle --baby Everly --amount 4 --unit oz --type formula   # or --unit ml, --type pumped
 babytracker add-nursing --baby Everly --left 10 --right 8                  # minutes per side
+babytracker add-joy --baby Everly --note "First smile" --photo smile.jpg    # needs Pillow: pip install 'babytracker-client[photos]'
+babytracker attach-photo Diaper <object-id> bath.png                        # add a photo to an existing entry
 babytracker insights --baby Everly          # next feed, 24 hour intake, diapers, growth percentiles
 babytracker next                            # each baby's predicted next feed, and who is due first
 babytracker calendar --baby Everly --days 2 # feeds, sleeps, baths, visits and medicines
@@ -227,6 +229,33 @@ These are totals over a rolling 7 days (the `window_days` attribute says so), up
 ### Photos
 
 Each baby's photo is shown by its **Photo** image entity (for example `image.everly_photo`), for dashboards and picture cards. If the app also has a landscape (wide) version of the photo, the baby gets a **Photo Landscape** entity (`image.everly_photo_landscape`) too, which suits banner cards; it is created when the integration is set up, so reload it after adding a landscape photo in the app. The files are kept in a private `baby_tracker` folder in your Home Assistant configuration directory (photos attached to activities go in its `pictures` subfolder) and are only served through the image entity, which needs a login or the entity's access token. They are **not** under `www`, so nobody can fetch them without logging in.
+
+#### Photos from Home Assistant
+
+You can put photos on entries from Home Assistant, and they show on the phone app like any photo taken there. `baby_tracker.log_joy` logs a joy (the app's entry for a happy moment) and `baby_tracker.attach_photo` adds a photo to an entry that already exists (a diaper, a bath, an activity...; take its type and ID from the Recent Entries sensor). Both take the picture from one of:
+
+- `photo`: a file path. It must be in the `baby_tracker` folder of your configuration folder, or in `www` or `media` (Home Assistant has to allow those two as external paths, which it does by default). Any other path is refused, so these services can't be used to send other files off your machine.
+- `camera_entity`: a snapshot of a camera, taken when the service runs.
+- `image_entity`: the current picture of an image entity.
+
+The photo is stored as a JPEG with a thumbnail, uploaded to Baby Tracker before the entry is, and kept in the `pictures` subfolder. If the server can't be reached, the entry and its photo wait and go up on a later sync. Snapshots are written to a short-lived file in the private folder and deleted right away.
+
+```yaml
+automation:
+  - alias: "Photo of the baby when the nursery door opens"
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.nursery_door
+        to: "on"
+    actions:
+      - action: baby_tracker.log_joy
+        data:
+          baby_name: "Everly"
+          note: "Good morning!"
+          camera_entity: camera.nursery
+```
+
+To add a snapshot to the diaper you just logged, find its ID in the Recent Entries sensor and call `baby_tracker.attach_photo` with `object_type: Diaper`, that `object_id` and a `camera_entity`. The Latest Photo entity and the Activity event's `photo` type then report it like any other new picture.
 
 Earlier versions saved photos in `www/baby_tracker`, where anyone who could reach Home Assistant could fetch them without logging in. Those old copies are not deleted for you: remove the `www/baby_tracker` folder. Home Assistant shows a [repair](#repairs) on *Settings > Repairs* while it exists.
 
@@ -615,6 +644,26 @@ data:
 ```
 
 Deletes one record by type and ID. It fails with an error message if there is no such record.
+
+#### Log Joy and Attach Photo
+
+```yaml
+service: baby_tracker.log_joy
+data:
+  baby_name: "Your Baby Name" # Optional if you have only one baby (or pick the baby's device)
+  note: "First smile"
+  camera_entity: camera.nursery # Optional photo: or photo: /config/baby_tracker/smile.jpg, or image_entity
+```
+
+```yaml
+service: baby_tracker.attach_photo
+data:
+  object_type: Diaper # Any type delete_record takes except DoctorVisit
+  object_id: "0B1C2D3E-..." # From the Recent Entries sensor's records attribute
+  photo: /config/media/bath.jpg # Or camera_entity / image_entity (one of the three is required)
+```
+
+See [Photos from Home Assistant](#photos-from-home-assistant) for where a photo file may be.
 
 #### List All Babies
 

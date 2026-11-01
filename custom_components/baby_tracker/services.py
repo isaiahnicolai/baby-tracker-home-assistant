@@ -1,5 +1,8 @@
 """Services for Baby Tracker integration."""
+import contextlib
 import logging
+import os
+import uuid
 
 import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -19,6 +22,7 @@ from .const import (
     ALERT_TYPE_SLEEP_DUE,
     ALERT_TYPE_WAKE_OVERDUE,
     ALERT_TYPE_WAKE_TO_FEED,
+    ATTACHABLE_RECORD_TYPES,
     DEFAULT_UNIT_SYSTEM,
     DELETABLE_RECORD_TYPES,
     DOMAIN,
@@ -199,6 +203,30 @@ DELETE_RECORD_SCHEMA = vol.Schema({
     vol.Required("object_id"): cv.string,
 })
 
+# Where a photo comes from: a file, or a snapshot of an image or camera entity (at most one)
+PHOTO_FIELDS = {
+    vol.Optional("photo"): cv.string,
+    vol.Optional("image_entity"): cv.entity_domain("image"),
+    vol.Optional("camera_entity"): cv.entity_domain("camera"),
+}
+
+LOG_JOY_SCHEMA = vol.Schema({
+    **RECORD_FIELDS,
+    vol.Optional("note", default=""): cv.string,
+    **PHOTO_FIELDS,
+})
+
+ATTACH_PHOTO_SCHEMA = vol.Schema({
+    # Only used to say which baby's data to refresh; the entry is found by its type and ID
+    vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
+    vol.Required("object_type"): vol.In(ATTACHABLE_RECORD_TYPES),
+    vol.Required("object_id"): cv.string,
+    **PHOTO_FIELDS,
+})
+
+SNAPSHOT_DIR_NAME = "snapshots"  # under the integration's private folder; snapshots only live there briefly
+
 
 # Android NursingFinishSide: NotSet=0, Left=1, Right=2 ("Both" has no finish side)
 NURSING_FINISH_SIDES = {"Both": 0, "Left": 1, "Right": 2}
@@ -300,6 +328,120 @@ async def async_end_nursing(hass, coordinator, baby_id, note=""):
     # Only once it is logged; if that failed, the timer keeps running so it can be ended again
     coordinator.clear_nursing(baby_id)
     return totals
+
+
+def _is_under(path, folder):
+    return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+def _checked_photo_path(hass, coordinator, path):
+    """
+    A photo file the caller may use, as a real path. Blocking: runs in the executor.
+
+    Only the integration's own folder (config/baby_tracker), www and media qualify, and www and
+    media must also be in Home Assistant's allowed paths; anything else could be used to send
+    any file on the machine to the Baby Tracker server.
+    """
+    real = os.path.realpath(path)
+    own = os.path.realpath(coordinator.photo_dir)
+    shared = [os.path.realpath(hass.config.path(name)) for name in ("www", "media")]
+    allowed = _is_under(real, own) or (
+        any(_is_under(real, folder) for folder in shared) and hass.config.is_allowed_path(real))
+    if not allowed:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN, translation_key="photo_path_not_allowed",
+            translation_placeholders={"path": path})
+    if not os.path.isfile(real):
+        raise ServiceValidationError(
+            translation_domain=DOMAIN, translation_key="photo_not_found", translation_placeholders={"path": path})
+    return real
+
+
+async def _entity_snapshot(hass, data):
+    """The bytes of an image entity's current picture or a camera's snapshot."""
+    # Imported here: they pull in the web server and are only needed for snapshots
+    from homeassistant.components import camera
+
+    if data.get("camera_entity"):
+        entity_id = data["camera_entity"]
+        try:
+            return (await camera.async_get_image(hass, entity_id)).content
+        except (HomeAssistantError, TimeoutError) as err:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="photo_snapshot_failed",
+                translation_placeholders={"entity_id": entity_id, "error": str(err) or type(err).__name__},
+            ) from err
+    entity_id = data["image_entity"]
+    component = hass.data.get("image")
+    entity = component.get_entity(entity_id) if component else None
+    content = None
+    if entity is not None:
+        try:
+            content = await entity.async_image()
+        except (HomeAssistantError, TimeoutError):
+            content = None
+    if not content:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN, translation_key="photo_snapshot_failed",
+            translation_placeholders={"entity_id": entity_id, "error": "no image available"})
+    return content
+
+
+@contextlib.asynccontextmanager
+async def async_photo_file(hass, coordinator, data, *, required=False):
+    """
+    Yield the path of the photo a service call names (None if it names none): its `photo` file
+    after the path checks, or a snapshot of its `image_entity` or `camera_entity` written to a
+    short-lived file in the integration's private folder.
+    """
+    sources = [key for key in ("photo", "image_entity", "camera_entity") if data.get(key)]
+    if len(sources) > 1:
+        raise ServiceValidationError(translation_domain=DOMAIN, translation_key="photo_one_source")
+    if not sources:
+        if required:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="photo_required")
+        yield None
+        return
+    if sources[0] == "photo":
+        yield await hass.async_add_executor_job(_checked_photo_path, hass, coordinator, data["photo"])
+        return
+
+    content = await _entity_snapshot(hass, data)
+    snapshot = os.path.join(coordinator.photo_dir, SNAPSHOT_DIR_NAME, f"{uuid.uuid4().hex}.img")
+
+    def write():
+        os.makedirs(os.path.dirname(snapshot), exist_ok=True)
+        with open(snapshot, "wb") as handle:
+            handle.write(content)
+
+    await hass.async_add_executor_job(write)
+    try:
+        yield snapshot
+    finally:
+        await hass.async_add_executor_job(_remove_quietly, snapshot)
+
+
+def _remove_quietly(path):
+    with contextlib.suppress(OSError):
+        os.remove(path)
+
+
+async def async_log_joy(hass, coordinator, baby_id, *, note="", time_str=None, photo_path=None):
+    """Log a joy, with a photo if a file is given."""
+    result = await hass.async_add_executor_job(
+        coordinator.baby_tracker.add_joy, baby_id, note, time_str, photo_path, coordinator.picture_dir,
+    )
+    check_result(result, "add joy")
+    await coordinator.async_request_refresh()
+
+
+async def async_attach_photo(hass, coordinator, object_type, object_id, photo_path):
+    """Add a photo to an entry that is already logged."""
+    result = await hass.async_add_executor_job(
+        coordinator.baby_tracker.attach_photo, object_type, object_id, photo_path, coordinator.picture_dir,
+    )
+    check_result(result, "attach photo")
+    await coordinator.async_request_refresh()
 
 
 async def async_register_services(hass: HomeAssistant):
@@ -779,6 +921,26 @@ async def async_register_services(hass: HomeAssistant):
             }, EVENT_UNDO)
         await coordinator.async_request_refresh()
 
+    async def log_joy(call: ServiceCall):
+        """Log a joy, optionally with a photo (a file, or a snapshot of an image or camera entity)."""
+        data = call.data
+        coordinator = _get_coordinator(hass)
+        baby_id = await _get_baby_id(coordinator, data)
+
+        async with async_photo_file(hass, coordinator, data) as photo_path:
+            await async_log_joy(
+                hass, coordinator, baby_id, note=data.get("note", ""), time_str=_time_str(data),
+                photo_path=photo_path,
+            )
+
+    async def attach_photo(call: ServiceCall):
+        """Add a photo to an entry that is already logged, by its type and ID."""
+        data = call.data
+        coordinator = _get_coordinator(hass)
+
+        async with async_photo_file(hass, coordinator, data, required=True) as photo_path:
+            await async_attach_photo(hass, coordinator, data["object_type"], data["object_id"], photo_path)
+
     async def list_babies(call: ServiceCall):
         """List all babies in the database."""
         coordinator = _get_coordinator(hass)
@@ -911,6 +1073,12 @@ async def async_register_services(hass: HomeAssistant):
     )
     hass.services.async_register(
         DOMAIN, "delete_record", delete_record, schema=DELETE_RECORD_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "log_joy", log_joy, schema=LOG_JOY_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "attach_photo", attach_photo, schema=ATTACH_PHOTO_SCHEMA
     )
     hass.services.async_register(
         DOMAIN, "list_babies", list_babies, schema=LIST_BABIES_SCHEMA, supports_response="only"
@@ -1066,6 +1234,8 @@ async def async_unregister_services(hass: HomeAssistant):
         "add_solids",
         "undo_last",
         "delete_record",
+        "log_joy",
+        "attach_photo",
         "list_babies",
         "sync",
         "force_resync",

@@ -191,6 +191,8 @@ DELETABLE_RECORD_TYPES = [
     "Diaper", "Nursing", "Formula", "Pumped", "OtherFeed", "Sleep", "Temperature", "Medication", "Bath",
     "Growth", "Milestone", "Vaccine", "OtherActivity", "Joy", "Journal", "DoctorVisit",
 ]
+# Records the attach_photo service takes: the deletable ones that are synced (doctor visits are kept here only)
+ATTACHABLE_RECORD_TYPES = [record_type for record_type in DELETABLE_RECORD_TYPES if record_type != "DoctorVisit"]
 UNDO_WINDOW_HOURS = 24
 RECENT_RECORDS_LIMIT = 10  # how many records the Recent Entries sensor lists
 NOTHING_TO_UNDO = "Nothing to undo"  # what the client's undo_last reports when there is no record in the window

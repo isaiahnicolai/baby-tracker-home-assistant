@@ -392,6 +392,26 @@ def picture_entries(record) -> List[Dict[str, Any]]:
     return entries
 
 
+def picture_wire(object_id: str, file_name: str, activity_id: str, timestamp, media_type: int = 0,
+                 new: bool = False) -> Dict[str, Any]:
+    """
+    One entry of an activity's pictureNote as the Android app sends it (a Gson-serialised
+    Picture: the BCObject fields plus activityID, attached, deleted, fileName, mediaType).
+    `timestamp` is an API date string.
+    """
+    return {
+        "BCObjectType": "Picture",
+        "objectID": object_id,
+        "timestamp": timestamp,
+        "newFlage": new,
+        "activityID": activity_id,
+        "attached": True,
+        "deleted": False,
+        "fileName": file_name,
+        "mediaType": MEDIA_TYPES[media_type],
+    }
+
+
 def media_files(file_name: str, media_type: int) -> Tuple[str, str]:
     """(file, thumbnail) names on the server for a Picture (Picture.getFileFullName/getThumbnailFullName)."""
     extension = {0: ".jpg", 1: ".mp4"}.get(media_type, "")

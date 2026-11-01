@@ -97,6 +97,8 @@
     "log_medicine": {"service": "mdi:pill"},
     "log_growth": {"service": "mdi:human-male-height"},
     "log_milestone": {"service": "mdi:star-circle"},
+    "log_joy": {"service": "mdi:emoticon-happy"},
+    "attach_photo": {"service": "mdi:image-plus"},
     "log_doctor_visit": {"service": "mdi:doctor"},
     "log_vaccine": {"service": "mdi:needle"},
     "log_sleep": {"service": "mdi:sleep"},
