@@ -215,6 +215,9 @@
       "upcoming_vaccines": {
         "name": "Upcoming Vaccines"
       },
+      "recent_entries": {
+        "name": "Recent Entries"
+      },
       "next_feed_due": {
         "name": "Next Feed Due"
       },
@@ -311,6 +314,9 @@
       },
       "log_tummy_time": {
         "name": "Log Tummy Time"
+      },
+      "undo_last": {
+        "name": "Undo Last Entry"
       }
     },
     "number": {
@@ -339,6 +345,9 @@
     "image": {
       "baby_photo": {
         "name": "Photo"
+      },
+      "baby_photo_landscape": {
+        "name": "Photo Landscape"
       }
     },
     "calendar": {
@@ -357,7 +366,8 @@
               "sleep_start": "Sleep started",
               "sleep_end": "Sleep ended",
               "bath": "Bath",
-              "medicine": "Medicine"
+              "medicine": "Medicine",
+              "undo": "Entry undone"
             }
           }
         }
@@ -398,8 +408,17 @@
     "no_medicine_selected": {
       "message": "This account has no medicines to choose from; add one in the Baby Tracker app"
     },
+    "no_medicine_amount": {
+      "message": "Set the Medicine Amount first; this medicine has no usual amount in the Baby Tracker app"
+    },
     "no_nursing_timer": {
       "message": "No nursing timer is running; press Start Nursing Left or Right first"
+    },
+    "nothing_to_undo": {
+      "message": "Nothing to undo: no entry was logged in the last {hours} hours"
+    },
+    "delete_failed": {
+      "message": "Could not delete {object_type} {object_id}: {error}"
     }
   },
   "issues": {
@@ -414,6 +433,23 @@
     "account_reset": {
       "title": "Baby Tracker account was reset",
       "description": "The Baby Tracker account was reset or recreated, so the data kept in Home Assistant belongs to the old group and syncing has stopped. Press the Force Resync button (or call the baby_tracker.force_resync service) to rejoin the group. Records that were never uploaded are discarded."
+    },
+    "custom_sentences": {
+      "title": "Install the Baby Tracker voice commands",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Install the Baby Tracker voice commands",
+            "description": "Home Assistant only reads Assist sentences from {folder}. Select Submit to write the Baby Tracker sentence file there, with your babies' names filled in, so you can say things like \"Everly had a wet diaper\" or \"when did Everly last eat\". An existing baby_tracker.yaml in that folder is replaced.\n\nThe conversation agent is asked to reload the sentences. If a command is not recognised straight away, restart Home Assistant."
+          }
+        },
+        "error": {
+          "write_failed": "The sentence file could not be written. Check the Home Assistant log, and that the configuration folder is writable."
+        },
+        "abort": {
+          "no_entry": "No Baby Tracker account is set up"
+        }
+      }
     }
   },
   "services": {
@@ -892,6 +928,46 @@
         "time": {
           "name": "Time",
           "description": "When it happened (defaults to now)."
+        }
+      }
+    },
+    "undo_last": {
+      "name": "Undo Last Entry",
+      "description": "Deletes a baby's newest record (of any kind) from this and every other device, for when the wrong button was pressed.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "within_hours": {
+          "name": "Within Hours",
+          "description": "Only undo a record from this many hours back (default 24); older entries are left alone."
+        }
+      }
+    },
+    "delete_record": {
+      "name": "Delete Record",
+      "description": "Deletes one record from this and every other device. Find a record's type and ID in the Recent Entries sensor's records attribute.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby, only used to report the deletion on the baby's Activity event."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "object_type": {
+          "name": "Record Type",
+          "description": "The kind of record, as the Recent Entries sensor lists it."
+        },
+        "object_id": {
+          "name": "Record ID",
+          "description": "The record's ID, from the Recent Entries sensor."
         }
       }
     },

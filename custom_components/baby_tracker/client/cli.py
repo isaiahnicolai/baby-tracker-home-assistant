@@ -6,6 +6,9 @@ Command line interface for the Baby Tracker sync client.
     babytracker add-diaper --baby Everly wet
     babytracker add-bottle --baby Everly --amount 4 --unit oz
     babytracker add-nursing --baby Everly --left 10 --right 8
+    babytracker recent --baby Everly
+    babytracker delete Diaper <object-id> --yes
+    babytracker undo --baby Everly --yes
     babytracker insights --baby Everly
     babytracker next
     babytracker calendar --baby Everly --days 2
@@ -145,6 +148,33 @@ def cmd_add_nursing(tracker, args):
                                right_duration=args.right, finish_side=NURSING_SIDES[finish], note=args.note))
 
 
+def cmd_recent(tracker, args):
+    """A baby's newest records, with the type and ID that `delete` takes."""
+    _print(tracker.get_recent_records(_baby_id(tracker, args.baby), limit=args.limit))
+
+
+def cmd_delete(tracker, args):
+    if not args.yes:
+        raise SystemExit(f"This deletes {args.object_type} {args.object_id} on every device. Add --yes to confirm.")
+    result = tracker.delete_record(args.object_type, args.object_id)
+    _print(result)
+    if result.get("status") != "success":
+        raise SystemExit(1)
+
+
+def cmd_undo(tracker, args):
+    """Delete a baby's newest record (from the last day unless --hours says otherwise)."""
+    baby_id = _baby_id(tracker, args.baby)
+    if not args.yes:
+        latest = tracker.get_recent_records(baby_id, limit=1, within_hours=args.hours)
+        _print({"would_delete": latest[0] if latest else None})
+        raise SystemExit("Add --yes to delete it." if latest else "Nothing to undo.")
+    result = tracker.undo_last(baby_id, within_hours=args.hours)
+    _print(result)
+    if result.get("status") != "success":
+        raise SystemExit(1)
+
+
 def cmd_insights(tracker, args):
     """One baby's insights with --baby, else every baby's (a list)."""
     if args.baby or len(tracker.get_all_babies()) == 1:
@@ -247,6 +277,23 @@ def main(argv=None):
                          help="side the session ended on (default: right if --right is given, else left)")
     nursing.add_argument("--note", default="")
     nursing.set_defaults(func=cmd_add_nursing)
+
+    recent = sub.add_parser("recent", help="a baby's newest records, with the IDs `delete` takes")
+    recent.add_argument("--baby")
+    recent.add_argument("--limit", type=int, default=10, help="how many to show (default: 10)")
+    recent.set_defaults(func=cmd_recent)
+
+    delete = sub.add_parser("delete", help="delete a record on every device")
+    delete.add_argument("object_type", help="the record's type as `recent` shows it, e.g. Diaper")
+    delete.add_argument("object_id")
+    delete.add_argument("--yes", action="store_true", help="confirm the delete")
+    delete.set_defaults(func=cmd_delete)
+
+    undo = sub.add_parser("undo", help="delete a baby's newest record")
+    undo.add_argument("--baby")
+    undo.add_argument("--hours", type=float, default=24, help="ignore records older than this (default: 24)")
+    undo.add_argument("--yes", action="store_true", help="delete it (without, only shows what would go)")
+    undo.set_defaults(func=cmd_undo)
 
     insights = sub.add_parser("insights", help="age, next feed, intake, diapers and growth percentiles")
     insights.add_argument("--baby", help="one baby (default: every baby)")

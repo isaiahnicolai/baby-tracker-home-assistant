@@ -75,6 +75,15 @@ before upgrading.
   Nursing buttons with a Nursing binary sensor. The record is written when
   you press End.
 - **New services**: `log_activity` and `add_solids`.
+- **Voice control through Assist**: log diapers, bottles, sleeps, nursing
+  sessions and temperatures, and ask when a baby last ate, when the next
+  feed is, how much they have had today and whether they are asleep
+  ("Everly had a wet diaper", "when did Everly last eat"). The intents are
+  `BabyTracker...` (also available to AI conversation agents as tools). Home
+  Assistant only reads sentence files from `<config>/custom_sentences/`, so a
+  repair offers to write the English file there with your babies' names;
+  nothing is written until you confirm. See "Voice control (Assist)" in the
+  readme.
 - **Blueprints** for feed due, wake to feed and a daily intake summary.
 - **Alert options** in the options flow: feeding-overdue hours, minimum wet
   diapers, night hours and fever temperature.
@@ -82,7 +91,17 @@ before upgrading.
   several refreshes, and an account that was reset (Force Resync needed).
 - **Diagnostics** (credentials redacted): babies, last sync, pending
   uploads, insights, controls and running nursing timers.
-- **Image entities** for baby photos.
+- **Image entities** for baby photos, and a **Photo Landscape** entity for
+  babies that have the app's wide (`_l.jpg`) version of the photo.
+- **Undo**: an Undo Last Entry button per baby deletes the newest record
+  from the last 24 hours, and the new `undo_last` and `delete_record`
+  services delete the newest record or one by type and ID. The deletion
+  reaches the phone on its next sync, is logged, and is reported as an
+  `undo` event on the Activity event entity and as a `baby_tracker_undo`
+  bus event.
+- **Recent Entries** sensor per baby (diagnostic): the newest record's label
+  as the state and the last ten, with the type and ID `delete_record`
+  takes, in its `records` attribute.
 - **Entity translations and `icons.json`**; services and exceptions are
   documented in `strings.json`.
 - **Command line**: `babytracker insights`, `next`, `calendar`,
@@ -92,6 +111,16 @@ before upgrading.
   `get_upcoming_milestones`, `get_upcoming_vaccines`,
   `pending_upload_count`, `add_other_feed`, `add_activity` and
   `get_last_activity`.
+- **Delete and undo in the client**: `delete_record(object_type, object_id)`
+  removes a record here and uploads a delete carrying the whole record, so
+  the phone sees it on its next sync. `get_recent_records(baby_id, limit,
+  within_hours)` lists a baby's newest records of every type with a short
+  label, and `undo_last(baby_id, within_hours)` deletes the newest. The
+  command line gets `recent`, `delete` and `undo` (both ask for `--yes`).
+  Pump sessions have no baby, so they can be deleted but are not listed.
+  Doctor visits made here were never uploaded, so deleting one is local.
+- `download_baby_landscape_picture` fetches the `<pictureName>_l.jpg`
+  variant of a baby photo that the app keeps next to the portrait.
 - **Sync protocol completed**: activity pictures are downloaded and kept
   (with a retry limit), pictures can be uploaded, `logout` ends the server
   session, and the app's conflict, relive and repeated-delete messages are
@@ -105,6 +134,13 @@ before upgrading.
   are config entities; Info and Pump Summary are diagnostic.
 - Temperature, weight, length and volume sensors show the unit chosen for
   the entry rather than Home Assistant's own unit system.
+- **The Medicine Amount follows the Medicine you select.** Choosing a
+  medicine sets the amount to that medicine's usual amount from the app
+  (when it has one) instead of keeping the previous medicine's dose; the
+  number starts at the first medicine's usual amount rather than 1, shows
+  the medicine's unit as an attribute, and Give Medicine uses the usual
+  amount when the amount is 0 or unset. A dose you set by hand is still
+  remembered across restarts.
 - Buttons ignore a repeat press within 3 seconds, and writes ask for a
   debounced refresh, so a double tap does not log a record twice.
 - Feed Due, Wake To Feed, Feeding Overdue, Night Mode and the feeding
@@ -150,6 +186,10 @@ before upgrading.
 - A transient photo download failure is retried instead of remembered.
 - Only one account can be added (`single_config_entry`); the registry
   migration cannot capture account-level entities.
+- A sleep left running (duration 0) for more than 24 hours is no longer
+  reported as in progress by the last-sleep reads, `is_currently_sleeping`
+  or the Long Sleep alert; it is still the last sleep, with `is_sleeping`
+  false. This is the same window that stops Wake Up from ending it.
 
 ## [0.2.0] - 2026-10-30
 

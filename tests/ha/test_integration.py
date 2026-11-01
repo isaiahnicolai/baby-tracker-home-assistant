@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import EntityCategory, UnitOfLength, UnitOfMass, UnitOfTemperature, UnitOfVolume
 from homeassistant.core import State
@@ -11,6 +12,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import intent
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
@@ -22,6 +24,7 @@ from pytest_homeassistant_custom_component.common import (
 from pytest_homeassistant_custom_component.components.diagnostics import get_diagnostics_for_config_entry
 
 from custom_components.baby_tracker import BabyTrackerDataCoordinator
+from custom_components.baby_tracker import intent as bt_intent
 from custom_components.baby_tracker.client import AccountResetError, AuthenticationError
 from custom_components.baby_tracker.client.models import Baby
 from custom_components.baby_tracker.const import DOMAIN
@@ -46,6 +49,13 @@ def make_entry(unit_system="imperial", options=None):
 MEDICINES = [
     {"id": "MED-TYLENOL", "name": "Tylenol", "amount_per_time": 3.75, "unit": "ml"},
     {"id": "MED-VITD", "name": "Vitamin D", "amount_per_time": 1.0, "unit": "ml"},
+]
+# What get_recent_records returns for Everly (newest first), and what undo_last deletes
+RECENT = [
+    {"object_type": "Diaper", "object_id": "DIAPER-1", "time": "2026-03-01T10:00:00+00:00",
+     "kind": "wet diaper", "note": ""},
+    {"object_type": "Formula", "object_id": "FORMULA-1", "time": "2026-03-01T09:30:00+00:00",
+     "kind": "formula 4 oz", "note": "after the nap"},
 ]
 FOODS = [{"id": "FOOD-BANANA", "name": "Banana", "description": "", "is_bottle": False}]
 
@@ -127,6 +137,7 @@ EVERLY_DATA = {
     "upcoming_milestones": [{"id": "MS1", "name": "First smile", "description": "", "for_age": 2},
                             {"id": "MS2", "name": "Rolls over", "description": "", "for_age": 5}],
     "upcoming_vaccines": [{"id": "V1", "name": "HepB", "description": "", "for_age": 0}],
+    "recent_records": RECENT,
 }
 
 # What the coordinator keeps for the account as a whole
@@ -191,8 +202,18 @@ def backend():
         calls.append(("add_other_feed", baby_id, feed_type_id, amount, unit, is_english_measure))
         return {"status": "success"}
 
+    def undo_last(self, baby_id, within_hours=24):
+        calls.append(("undo_last", baby_id, within_hours))
+        return {"status": "success", "deleted": RECENT[0], "queued": True}
+
+    def delete_record(self, object_type, object_id):
+        calls.append(("delete_record", object_type, object_id))
+        return {"status": "success", "object_type": object_type, "object_id": object_id, "queued": True}
+
     with patch(f"{CORE}.authenticate", return_value={"status": "success"}), \
          patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fake_fetch), \
+         patch(f"{CORE}.undo_last", undo_last), \
+         patch(f"{CORE}.delete_record", delete_record), \
          patch(f"{CORE}.add_diaper", add_diaper), \
          patch(f"{CORE}.add_temperature", add_temperature), \
          patch(f"{CORE}.log_growth", log_growth), \
@@ -653,6 +674,7 @@ async def test_baby_without_a_photo_still_has_an_image_entity(hass, backend):
     await setup(hass, make_entry())
     assert hass.states.get("image.everly_photo").state == "unknown"
     assert hass.states.get("image.ann_marie_photo") is not None
+    assert hass.states.get("image.everly_photo_landscape") is None  # only babies with a landscape photo get one
 
 
 def household_fetch(self, photo_dir):
@@ -819,7 +841,8 @@ async def test_activity_event_fires_when_something_new_is_found(hass, backend, c
 
     state = hass.states.get("event.everly_activity")
     assert state.attributes["event_type"] == event_type
-    assert state.attributes["event_types"] == ["feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine"]
+    assert state.attributes["event_types"] == [
+        "feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine", "undo"]
     assert state.attributes["baby_name"] == "Everly"
     assert state.attributes["time"] == next(iter(changes.values()))["time"]
     assert hass.states.get("event.ann_marie_activity").state == "unknown"  # only Everly's changed
@@ -833,6 +856,18 @@ async def test_unchanged_data_fires_no_activity_event(hass, backend):
     await setup(hass, entry)
     await hass.data[DOMAIN][entry.entry_id].async_refresh()
     await hass.async_block_till_done()
+    assert hass.states.get("event.everly_activity").state == "unknown"
+
+
+async def test_an_older_record_becoming_the_latest_is_not_announced(hass, backend):
+    """After an undo the previous feed is the newest again; that is not a new feeding."""
+    entry = make_entry()
+    await setup(hass, entry)
+    older = {"last_feeding": {"time": "2026-03-01 08:00:00 +0000", "type": "Nursing"},
+             "last_diaper": {"time": "2026-03-01 07:00:00 +0000", "status": "Wet"}}
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch_with(**older)):
+        await hass.data[DOMAIN][entry.entry_id].async_refresh()
+        await hass.async_block_till_done()
     assert hass.states.get("event.everly_activity").state == "unknown"
 
 
@@ -911,8 +946,10 @@ async def test_controls_follow_the_unit_setting(hass, backend):
     assert size.attributes["mode"] == "box"
     assert hass.states.get("number.ann_marie_bottle_size") is not None  # every baby has the controls
 
-    assert float(hass.states.get("number.everly_medicine_amount").state) == 1
+    # It starts at the usual dose of the first medicine, whose unit it shows
+    assert float(hass.states.get("number.everly_medicine_amount").state) == 3.75
     assert hass.states.get("number.everly_medicine_amount").attributes["step"] == 0.1
+    assert hass.states.get("number.everly_medicine_amount").attributes["unit"] == "ml"
     assert float(hass.states.get("number.everly_tummy_time_minutes").state) == 15
 
     bottle_type = hass.states.get("select.everly_bottle_type")
@@ -961,9 +998,9 @@ async def test_give_medicine_logs_the_selected_medicine_and_amount(hass, backend
     entry = make_entry()
     await setup(hass, entry)
 
-    # Until one is chosen, the first medicine
+    # Until one is chosen, the first medicine and its usual dose
     await press(hass, "button.everly_give_medicine")
-    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-TYLENOL", 1.0)
+    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-TYLENOL", 3.75)
 
     await select_option(hass, "select.everly_medicine", "Vitamin D")
     await set_number(hass, "number.everly_medicine_amount", 2.5)
@@ -978,7 +1015,7 @@ async def test_controls_are_restored_after_a_restart(hass, backend):
         (State("number.everly_bottle_size", "7.5"),
          {"native_max_value": 12, "native_min_value": 1, "native_step": 0.5,
           "native_unit_of_measurement": "oz", "native_value": 7.5}),
-        # Saved in another unit, so meaningless here: the default stands
+        # Saved in another unit, so meaningless here: the medicine's usual dose stands
         (State("number.everly_medicine_amount", "9"),
          {"native_max_value": 100, "native_min_value": 0.1, "native_step": 0.1,
           "native_unit_of_measurement": "mL", "native_value": 9}),
@@ -988,7 +1025,7 @@ async def test_controls_are_restored_after_a_restart(hass, backend):
     await setup(hass, make_entry())
 
     assert float(hass.states.get("number.everly_bottle_size").state) == 7.5
-    assert float(hass.states.get("number.everly_medicine_amount").state) == 1
+    assert float(hass.states.get("number.everly_medicine_amount").state) == 3.75
     assert hass.states.get("select.everly_bottle_type").state == "pumped"
     assert hass.states.get("select.everly_medicine").state == "Vitamin D"
     await press(hass, "button.everly_add_bottle")
@@ -1363,3 +1400,620 @@ async def test_a_failed_press_can_be_tried_again_at_once(hass, backend):
     logged = len(backend)
     await press(hass, "button.everly_add_wet_diaper")
     assert len(backend) == logged
+
+
+# ----- undo and delete -----
+
+async def test_undo_button_deletes_the_newest_entry(hass, backend):
+    await setup(hass, make_entry())
+    bus_events = async_capture_events(hass, "baby_tracker_undo")
+
+    await press(hass, "button.everly_undo_last_entry")
+    await hass.async_block_till_done()
+
+    assert backend[-1] == ("undo_last", "ID-EVERLY", 24.0)
+    # It is announced like the other writes: on the bus and on the baby's Activity event
+    assert len(bus_events) == 1 and bus_events[0].data["kind"] == "wet diaper"
+    state = hass.states.get("event.everly_activity")
+    assert state.attributes["event_type"] == "undo"
+    assert state.attributes["object_type"] == "Diaper" and state.attributes["object_id"] == "DIAPER-1"
+    assert hass.states.get("event.ann_marie_activity").state == "unknown"
+    # Each baby has the button
+    assert hass.states.get("button.ann_marie_undo_last_entry") is not None
+
+
+async def test_undo_button_is_debounced_so_it_cannot_delete_two_entries(hass, backend):
+    await setup(hass, make_entry())
+    for _ in range(3):
+        await press(hass, "button.everly_undo_last_entry")
+    assert [call[0] for call in backend].count("undo_last") == 1
+
+
+async def test_undo_with_nothing_to_undo_is_refused(hass, backend):
+    await setup(hass, make_entry())
+    nothing = {"status": "error", "message": "Nothing to undo"}
+    with patch(f"{CORE}.undo_last", return_value=nothing), pytest.raises(ServiceValidationError) as err:
+        await press(hass, "button.everly_undo_last_entry")
+    assert err.value.translation_key == "nothing_to_undo"
+    assert err.value.translation_placeholders == {"hours": "24"}
+
+    # A refused press is not debounced, and fires no event
+    assert hass.states.get("event.everly_activity").state == "unknown"
+    await press(hass, "button.everly_undo_last_entry")
+    assert backend[-1][0] == "undo_last"
+
+
+async def test_undo_last_service(hass, backend):
+    await setup(hass, make_entry())
+
+    await hass.services.async_call(DOMAIN, "undo_last", {"baby_name": "Everly", "within_hours": 6}, blocking=True)
+    assert backend[-1] == ("undo_last", "ID-EVERLY", 6.0)
+
+    await hass.services.async_call(DOMAIN, "undo_last", {"baby_name": "Ann Marie"}, blocking=True)
+    assert backend[-1] == ("undo_last", "ID-TWIN", 24.0)  # the default window
+
+    with pytest.raises(ServiceValidationError):  # two babies and none chosen
+        await hass.services.async_call(DOMAIN, "undo_last", {}, blocking=True)
+
+    # Any other failure is an error, not a validation problem
+    with patch(f"{CORE}.undo_last", return_value={"status": "error", "message": "Not authenticated"}), \
+         pytest.raises(HomeAssistantError) as err:
+        await hass.services.async_call(DOMAIN, "undo_last", {"baby_name": "Everly"}, blocking=True)
+    assert not isinstance(err.value, ServiceValidationError)
+
+
+async def test_delete_record_service(hass, backend):
+    await setup(hass, make_entry())
+    bus_events = async_capture_events(hass, "baby_tracker_undo")
+
+    # No baby needed: a record's type and ID are enough
+    await hass.services.async_call(
+        DOMAIN, "delete_record", {"object_type": "Formula", "object_id": "FORMULA-1"}, blocking=True)
+    assert backend[-1] == ("delete_record", "Formula", "FORMULA-1")
+    assert not bus_events
+
+    # With a baby, the deletion is reported on that baby's Activity event
+    await hass.services.async_call(
+        DOMAIN, "delete_record",
+        {"baby_name": "Everly", "object_type": "Diaper", "object_id": "DIAPER-1"}, blocking=True)
+    await hass.async_block_till_done()
+    assert backend[-1] == ("delete_record", "Diaper", "DIAPER-1")
+    assert len(bus_events) == 1 and bus_events[0].data["object_id"] == "DIAPER-1"
+    assert hass.states.get("event.everly_activity").attributes["event_type"] == "undo"
+
+    with pytest.raises(vol.Invalid):  # only the record types the app has
+        await hass.services.async_call(
+            DOMAIN, "delete_record", {"object_type": "Pizza", "object_id": "X"}, blocking=True)
+
+
+async def test_delete_record_reports_what_the_client_refused(hass, backend):
+    await setup(hass, make_entry())
+    refused = {"status": "error", "message": "No Diaper record with ID NOPE"}
+    with patch(f"{CORE}.delete_record", return_value=refused), pytest.raises(ServiceValidationError) as err:
+        await hass.services.async_call(
+            DOMAIN, "delete_record", {"object_type": "Diaper", "object_id": "NOPE"}, blocking=True)
+    assert err.value.translation_key == "delete_failed"
+    assert err.value.translation_placeholders == {
+        "object_type": "Diaper", "object_id": "NOPE", "error": "No Diaper record with ID NOPE"}
+
+
+async def test_undo_and_delete_ask_for_a_debounced_refresh(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    with patch.object(coordinator, "async_request_refresh") as request, \
+         patch.object(coordinator, "async_refresh") as refresh:
+        await hass.services.async_call(DOMAIN, "undo_last", {"baby_name": "Everly"}, blocking=True)
+        await hass.services.async_call(
+            DOMAIN, "delete_record", {"object_type": "Diaper", "object_id": "DIAPER-1"}, blocking=True)
+    assert request.call_count == 2
+    refresh.assert_not_called()
+
+
+async def test_recent_entries_sensor_lists_the_newest_records(hass, backend):
+    await setup(hass, make_entry())
+
+    recent = hass.states.get("sensor.everly_recent_entries")
+    assert recent.state == "wet diaper"  # the newest
+    # The type and ID are what delete_record takes
+    assert recent.attributes["records"] == RECENT
+    assert er.async_get(hass).async_get("sensor.everly_recent_entries").entity_category is EntityCategory.DIAGNOSTIC
+
+    # Nothing logged for Ann Marie
+    assert hass.states.get("sensor.ann_marie_recent_entries").state == "unknown"
+
+
+async def test_recent_entries_follow_the_refresh(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    newer = [{"object_type": "Sleep", "object_id": "SLEEP-1", "time": "2026-03-01T11:00:00+00:00",
+              "kind": "sleep 45 min", "note": ""}, *RECENT]
+
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch_with(recent_records=newer)):
+        await coordinator_for(hass, entry).async_refresh()
+        await hass.async_block_till_done()
+
+    recent = hass.states.get("sensor.everly_recent_entries")
+    assert recent.state == "sleep 45 min" and len(recent.attributes["records"]) == 3
+
+
+async def test_the_fetch_reads_each_babys_recent_records_in_the_same_job(hass, backend):
+    from unittest.mock import MagicMock
+
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    tracker = MagicMock()
+    tracker.sync.return_value = {"status": "success"}
+    tracker.get_all_babies.return_value = [EVERLY]
+    tracker.get_baby_info.return_value = EVERLY
+    tracker.get_events_between.return_value = []
+    tracker.get_recent_records.return_value = RECENT
+    coordinator.baby_tracker = tracker
+
+    _, _, _, baby_data, _, _ = REAL_FETCH(coordinator, coordinator.photo_dir)
+    assert baby_data["Everly"]["recent_records"] == RECENT
+    tracker.get_recent_records.assert_called_once_with("ID-EVERLY", 10)
+
+    # A record the database cannot read leaves the sensor empty rather than failing the refresh
+    tracker.get_recent_records.side_effect = ValueError("bad row")
+    _, _, _, baby_data, _, _ = REAL_FETCH(coordinator, coordinator.photo_dir)
+    assert baby_data["Everly"]["recent_records"] == []
+
+
+# ----- the Medicine Amount follows the selected medicine -----
+
+# Tylenol has a usual dose, Gripe water has none, Iron has no unit either
+MEDICINES_WITH_GAPS = [
+    {"id": "MED-TYLENOL", "name": "Tylenol", "amount_per_time": 3.75, "unit": "ml"},
+    {"id": "MED-GRIPE", "name": "Gripe water", "amount_per_time": 0, "unit": ""},
+    {"id": "MED-IRON", "name": "Iron", "amount_per_time": None, "unit": None},
+]
+
+
+def fetch_with_medicines(medicines):
+    def fetch(self, photo_dir):
+        return (*fake_fetch(self, photo_dir)[:5], medicines)
+    return fetch
+
+
+async def test_selecting_a_medicine_sets_its_usual_amount(hass, backend):
+    await setup(hass, make_entry())
+    amount = "number.everly_medicine_amount"
+    assert float(hass.states.get(amount).state) == 3.75 and hass.states.get(amount).attributes["unit"] == "ml"
+
+    await select_option(hass, "select.everly_medicine", "Vitamin D")
+    assert float(hass.states.get(amount).state) == 1.0  # the number's state moved with the select
+    assert hass.states.get(amount).attributes["unit"] == "ml"
+
+    # A dose set by hand stands until another medicine is chosen
+    await set_number(hass, amount, 2.5)
+    assert float(hass.states.get(amount).state) == 2.5
+    await select_option(hass, "select.everly_medicine", "Tylenol")
+    assert float(hass.states.get(amount).state) == 3.75
+
+    # Each baby has their own
+    assert float(hass.states.get("number.ann_marie_medicine_amount").state) == 3.75
+    await select_option(hass, "select.everly_medicine", "Vitamin D")
+    assert float(hass.states.get("number.ann_marie_medicine_amount").state) == 3.75
+
+
+async def test_a_medicine_with_no_usual_amount_leaves_the_amount_alone(hass, backend):
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with_medicines(MEDICINES_WITH_GAPS)):
+        await setup(hass, make_entry())
+        amount = "number.everly_medicine_amount"
+        await set_number(hass, amount, 2.5)
+
+        for name in ("Gripe water", "Iron"):
+            await select_option(hass, "select.everly_medicine", name)
+            assert float(hass.states.get(amount).state) == 2.5, name
+            assert "unit" not in hass.states.get(amount).attributes  # the medicine has none to show
+
+
+async def test_give_medicine_falls_back_to_the_usual_amount(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+
+    for empty in (0, None):
+        coordinator.set_control("ID-EVERLY", "medicine_amount", empty)
+        allow_another_press(hass, entry)
+        await press(hass, "button.everly_give_medicine")
+        assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-TYLENOL", 3.75)
+
+    await select_option(hass, "select.everly_medicine", "Vitamin D")
+    coordinator.set_control("ID-EVERLY", "medicine_amount", 0)
+    allow_another_press(hass, entry)
+    await press(hass, "button.everly_give_medicine")
+    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-VITD", 1.0)
+
+    # An amount that was set is used as it is
+    await set_number(hass, "number.everly_medicine_amount", 2.5)
+    allow_another_press(hass, entry)
+    await press(hass, "button.everly_give_medicine")
+    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-VITD", 2.5)
+
+
+async def test_give_medicine_with_no_amount_and_no_usual_dose_is_refused(hass, backend):
+    entry = make_entry()
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with_medicines(MEDICINES_WITH_GAPS)):
+        await setup(hass, entry)
+        await select_option(hass, "select.everly_medicine", "Gripe water")
+        coordinator_for(hass, entry).set_control("ID-EVERLY", "medicine_amount", 0)
+        with pytest.raises(ServiceValidationError) as err:
+            await press(hass, "button.everly_give_medicine")
+    assert err.value.translation_key == "no_medicine_amount"
+    assert not [call for call in backend if call[0] == "add_medicine"]
+
+
+async def test_an_amount_set_by_hand_is_restored_and_not_replaced_by_the_selection(hass, backend):
+    mock_restore_cache_with_extra_data(hass, [
+        (State("number.everly_medicine_amount", "2.5"),
+         {"native_max_value": 100, "native_min_value": 0.1, "native_step": 0.1,
+          "native_unit_of_measurement": None, "native_value": 2.5}),
+        (State("select.everly_medicine", "Vitamin D"), {}),
+    ])
+    await setup(hass, make_entry())
+
+    assert hass.states.get("select.everly_medicine").state == "Vitamin D"
+    assert float(hass.states.get("number.everly_medicine_amount").state) == 2.5  # not Vitamin D's 1.0
+    await press(hass, "button.everly_give_medicine")
+    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-VITD", 2.5)
+
+
+# ----- landscape photo -----
+
+PHOTO_BABY = Baby({"objectID": "ID-EVERLY", "name": "Everly", "dob": "", "dueDay": "", "pictureName": "everly.jpg"})
+
+
+async def setup_with_photos(hass, portrait=True, landscape=True):
+    """Set up with the real coordinator fetch, against a client that downloads these pictures (None: none)."""
+    photo_dir = hass.config.path("baby_tracker")
+
+    def saver(name, content, wanted):
+        def download(self, picture_name, save_dir):
+            assert save_dir == photo_dir
+            if not wanted:
+                return None
+            os.makedirs(save_dir, exist_ok=True)
+            path = os.path.join(save_dir, name)
+            with open(path, "wb") as photo:
+                photo.write(content)
+            return path
+        return download
+
+    with patch(f"{CORE}.authenticate", return_value={"status": "success"}), \
+         patch(f"{CORE}.sync", return_value={"status": "success"}), \
+         patch(f"{CORE}.get_all_babies", return_value=[PHOTO_BABY]), \
+         patch(f"{CORE}.get_baby_info", return_value=PHOTO_BABY), \
+         patch(f"{CORE}.download_baby_picture", saver("everly.jpg", b"portrait-bytes", portrait)), \
+         patch(f"{CORE}.download_baby_landscape_picture", saver("everly_l.jpg", b"landscape-bytes", landscape)):
+        await setup(hass, make_entry())
+
+
+async def test_a_landscape_photo_is_a_second_image_entity(hass, hass_client):
+    await setup_with_photos(hass)
+
+    landscape = hass.states.get("image.everly_photo_landscape")
+    assert landscape is not None
+    client = await hass_client()
+    response = await client.get(landscape.attributes["entity_picture"])
+    assert response.status == 200 and await response.read() == b"landscape-bytes"
+
+    # The portrait is untouched
+    portrait = hass.states.get("image.everly_photo")
+    assert await (await client.get(portrait.attributes["entity_picture"])).read() == b"portrait-bytes"
+    ent_reg = er.async_get(hass)
+    assert ent_reg.async_get("image.everly_photo_landscape").unique_id == f"{DOMAIN}_{EMAIL}_ID-EVERLY_photo_landscape"
+    assert ent_reg.async_get("image.everly_photo").unique_id == f"{DOMAIN}_{EMAIL}_ID-EVERLY_photo"
+
+
+async def test_no_landscape_photo_means_no_landscape_entity(hass, hass_client):
+    await setup_with_photos(hass, landscape=False)
+
+    assert hass.states.get("image.everly_photo") is not None
+    assert hass.states.get("image.everly_photo_landscape") is None
+    assert er.async_get(hass).async_get_entity_id("image", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-EVERLY_photo_landscape") is None
+
+
+async def test_a_landscape_photo_without_a_portrait(hass, hass_client):
+    await setup_with_photos(hass, portrait=False)
+
+    assert hass.states.get("image.everly_photo").state == "unknown"  # nothing to show, but the entity stays
+    landscape = hass.states.get("image.everly_photo_landscape")
+    response = await (await hass_client()).get(landscape.attributes["entity_picture"])
+    assert response.status == 200 and await response.read() == b"landscape-bytes"
+
+
+# ----- Assist: voice intents and the sentence file -----
+
+async def start_assist(hass, freezer, tmp_path, unit_system="imperial"):
+    """Set the integration up at 12:00 with the config directory in tmp_path, and register the intents."""
+    freezer.move_to("2026-03-01 12:00:00+00:00")
+    hass.config.config_dir = str(tmp_path)
+    entry = make_entry(unit_system)
+    await setup(hass, entry)
+    await bt_intent.async_setup_intents(hass)
+    return entry
+
+
+@pytest.fixture
+async def assist(hass, backend, freezer, tmp_path):
+    return await start_assist(hass, freezer, tmp_path)
+
+
+async def ask(hass, intent_type, **slots):
+    return await intent.async_handle(hass, "test", intent_type, {name: {"value": value} for name, value in slots.items()})
+
+
+def said(result):
+    return result.speech["plain"]["speech"]
+
+
+def at(hour, minute=0):
+    """A time on the test day (in UTC) as Home Assistant says it, in its time zone."""
+    return bt_intent.clock(datetime(2026, 3, 1, hour, minute, tzinfo=UTC))
+
+
+@pytest.mark.parametrize(("kind", "pee", "poo", "spoken"), [
+    ("wet", True, False, "wet"), ("dirty", False, True, "dirty"), ("poopy", False, True, "dirty"),
+    ("mixed", True, True, "mixed"), ("dry", False, False, "dry"),
+])
+async def test_the_diaper_intent_logs_for_the_named_baby(hass, assist, kind, pee, poo, spoken):
+    with patch(f"{CORE}.add_diaper", return_value={"status": "success"}) as add_diaper:
+        result = await ask(hass, "BabyTrackerLogDiaper", baby="everly", kind=kind)  # any capitalisation
+    add_diaper.assert_called_once_with("ID-EVERLY", None, pee, poo, 5, 5, 5, 2, "Added by voice")
+    assert result.response_type is intent.IntentResponseType.ACTION_DONE
+    assert said(result) == f"Logged a {spoken} diaper for Everly."
+
+
+async def test_the_bottle_intent_uses_the_entrys_unit_and_the_babys_bottle_type(hass, assist, backend):
+    result = await ask(hass, "BabyTrackerLogBottle", baby="Everly", amount=4.0)
+    assert backend[-1] == ("add_formula", "ID-EVERLY", 4.0, True)  # an imperial entry: oz
+    assert said(result) == "Logged a 4 oz formula bottle for Everly."
+
+    result = await ask(hass, "BabyTrackerLogBottle", baby="Everly", amount=120.0, unit="ml", type="breast milk")
+    assert backend[-1] == ("add_pumped", "ID-EVERLY", 120.0, False)
+    assert said(result) == "Logged a 120 ml bottle of pumped milk for Everly."
+
+    # No type said: the baby's Bottle Type control decides
+    coordinator_for(hass, assist).set_control("ID-EVERLY", "bottle_type", "pumped")
+    await ask(hass, "BabyTrackerLogBottle", baby="Everly", amount=3.0)
+    assert backend[-1] == ("add_pumped", "ID-EVERLY", 3.0, True)
+
+
+async def test_a_bottle_too_big_to_be_real_is_not_logged(hass, assist, backend):
+    logged = len(backend)
+    result = await ask(hass, "BabyTrackerLogBottle", baby="Everly", amount=1200.0, unit="oz")
+    assert len(backend) == logged
+    assert result.response_type is intent.IntentResponseType.ERROR
+    assert "doesn't sound like a bottle" in said(result)
+
+
+async def test_the_temperature_intent_tells_fahrenheit_from_celsius(hass, assist, backend):
+    result = await ask(hass, "BabyTrackerLogTemperature", baby="Everly", temperature=98.6)
+    assert backend[-1] == ("add_temperature", "ID-EVERLY", 98.6, True)
+    assert said(result) == "Logged a temperature of 98.6 degrees Fahrenheit for Everly."
+
+    await ask(hass, "BabyTrackerLogTemperature", baby="Everly", temperature=37.2)
+    assert backend[-1] == ("add_temperature", "ID-EVERLY", 37.2, False)
+
+    logged = len(backend)
+    result = await ask(hass, "BabyTrackerLogTemperature", baby="Everly", temperature=60.0)
+    assert len(backend) == logged and result.response_type is intent.IntentResponseType.ERROR
+
+
+async def test_the_sleep_intents_log_the_start_and_end_of_a_sleep(hass, assist):
+    with patch(f"{CORE}.log_sleep_event", return_value={"status": "success"}) as log_sleep:
+        # The fixture's Everly has been asleep since 11:00
+        result = await ask(hass, "BabyTrackerStartSleep", baby="Everly")
+        log_sleep.assert_not_called()
+        assert said(result) == "Everly is already asleep."
+
+        result = await ask(hass, "BabyTrackerEndSleep", baby="Everly")
+        log_sleep.assert_called_once_with("ID-EVERLY", False, "Added by voice", None)
+        assert said(result) == "Logged that Everly woke up after 1 hour."
+
+        log_sleep.reset_mock()
+        coordinator_for(hass, assist).data["baby_data"]["Everly"]["last_sleep"] = {
+            "time": "2026-03-01 10:00:00 +0000", "is_sleeping": False, "duration": 45, "current_duration": 45}
+        result = await ask(hass, "BabyTrackerEndSleep", baby="Everly")
+        log_sleep.assert_not_called()
+        assert said(result) == "Everly isn't asleep, so there's no sleep to end."
+
+        result = await ask(hass, "BabyTrackerStartSleep", baby="Everly")
+        log_sleep.assert_called_once_with("ID-EVERLY", True, "Added by voice", None)
+        assert said(result) == "Logged that Everly fell asleep."
+
+
+async def test_the_nursing_intents_time_a_session_and_log_it(hass, assist, backend, freezer):
+    result = await ask(hass, "BabyTrackerEndNursing", baby="Everly")
+    assert said(result) == "No nursing session is running for Everly."
+
+    result = await ask(hass, "BabyTrackerStartNursing", baby="Everly", side="left")
+    assert said(result) == "Started timing Everly on the left."
+    assert hass.states.get("binary_sensor.everly_nursing").state == "on"
+
+    freezer.tick(timedelta(minutes=10))
+    result = await ask(hass, "BabyTrackerEndNursing", baby="Everly")
+    assert backend[-1] == ("add_nursing", "ID-EVERLY", "2026-03-01 12:00:00 +0000", 10, 0, 1)
+    assert said(result) == "Logged Everly's nursing: 10 min on the left."
+    assert hass.states.get("binary_sensor.everly_nursing").state == "off"
+
+
+async def test_a_failed_write_is_spoken_not_raised(hass, assist):
+    with patch(f"{CORE}.add_diaper", return_value={"status": "error", "message": "offline"}):
+        result = await ask(hass, "BabyTrackerLogDiaper", baby="Everly", kind="wet")
+    assert result.response_type is intent.IntentResponseType.ERROR
+    assert result.error_code is intent.IntentResponseErrorCode.FAILED_TO_HANDLE
+    assert said(result) == "Sorry, I couldn't do that in Baby Tracker."
+
+
+async def test_the_question_intents_answer_from_the_babys_data(hass, assist):
+    # It is 12:00; Everly last ate at 9:30 (a 4 oz bottle), had a wet diaper at 10:00 and fell asleep at 11:00
+    assert said(await ask(hass, "BabyTrackerLastFeed", baby="Everly")) == "Everly last ate 2 h 30 min ago, a 4 oz bottle."
+    assert said(await ask(hass, "BabyTrackerLastDiaper", baby="Everly")) == "Everly's last diaper was wet, 2 hours ago."
+    assert said(await ask(hass, "BabyTrackerNextFeed", baby="Everly")) == (
+        f"Everly's next feed is expected around {at(12, 30)}, in 30 minutes.")
+    assert said(await ask(hass, "BabyTrackerSleepStatus", baby="Everly")) == (
+        f"Everly has been asleep for 1 hour, since {at(11)}.")
+    assert said(await ask(hass, "BabyTrackerLastFeed", baby="Ann Marie")) == "I don't have any feeds logged for Ann Marie."
+    assert said(await ask(hass, "BabyTrackerNextFeed", baby="Ann Marie")) == (
+        "I don't have enough feeds logged to predict Ann Marie's next feed yet.")
+
+
+async def test_the_intake_intent_reports_in_the_entrys_unit(hass, backend, freezer, tmp_path):
+    await start_assist(hass, freezer, tmp_path, unit_system="metric")
+    assert said(await ask(hass, "BabyTrackerIntakeToday", baby="Everly")) == (
+        "Everly has had 420 ml in the last 24 hours, which is low. Expected is 600 to 800 ml.")
+
+
+async def test_the_sleep_question_says_how_long_an_awake_baby_has_been_up(hass, assist):
+    coordinator_for(hass, assist).data["baby_data"]["Everly"]["last_sleep"] = {
+        "time": "2026-03-01 10:00:00 +0000", "is_sleeping": False, "duration": 45, "current_duration": 45}
+    assert said(await ask(hass, "BabyTrackerSleepStatus", baby="Everly")) == (
+        "Everly has been awake for 1 h 15 min. The last sleep lasted 45 minutes.")
+
+
+async def test_the_summary_covers_every_baby_when_none_is_named(hass, assist):
+    everly = (f"Everly last ate 2 h 30 min ago, a 4 oz bottle. Everly's last diaper was wet, 2 hours ago. "
+              f"Everly has been asleep for 1 hour, since {at(11)}. "
+              f"Everly's next feed is expected around {at(12, 30)}, in 30 minutes.")
+    assert said(await ask(hass, "BabyTrackerSummary", baby="Everly")) == everly
+    assert said(await ask(hass, "BabyTrackerSummary")) == f"I don't have anything logged for Ann Marie yet. {everly}"
+
+
+async def test_with_two_babies_and_none_named_the_intent_asks_which(hass, assist, backend):
+    logged = len(backend)
+    result = await ask(hass, "BabyTrackerLogDiaper", kind="wet")
+    assert len(backend) == logged
+    assert result.response_type is intent.IntentResponseType.ERROR
+    assert result.error_code is intent.IntentResponseErrorCode.NO_VALID_TARGETS
+    assert said(result) == "Which baby? Ann Marie or Everly."
+
+    result = await ask(hass, "BabyTrackerLastFeed", baby="Nobody")
+    assert said(result) == "I don't know a baby called Nobody."
+
+
+async def test_the_only_baby_is_used_when_none_is_named(hass, backend, freezer, tmp_path):
+    def one_baby(self, photo_dir):
+        return [EVERLY], EVERLY, {}, {"Everly": {"baby_info": EVERLY, **EVERLY_DATA}}, ACCOUNT, MEDICINES
+
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", one_baby):
+        await start_assist(hass, freezer, tmp_path)
+        result = await ask(hass, "BabyTrackerLogDiaper", kind="wet")
+    assert backend[-1][:2] == ("add_diaper", "ID-EVERLY")
+    assert said(result) == "Logged a wet diaper for Everly."
+
+
+async def test_the_intents_say_so_when_baby_tracker_is_not_set_up(hass):
+    await bt_intent.async_setup_intents(hass)
+    result = await ask(hass, "BabyTrackerLastFeed", baby="Everly")
+    assert result.response_type is intent.IntentResponseType.ERROR
+    assert said(result) == "Baby Tracker isn't set up."
+
+
+async def test_the_intents_are_registered_once(hass):
+    await bt_intent.async_setup_intents(hass)
+    await bt_intent.async_setup_intents(hass)
+    registered = [h.intent_type for h in intent.async_get(hass) if h.intent_type.startswith("BabyTracker")]
+    assert sorted(registered) == sorted(h.intent_type for h in bt_intent.HANDLERS) and len(registered) == 13
+
+
+def test_baby_names_become_list_values_without_template_syntax():
+    from custom_components.baby_tracker.sentences import baby_values
+
+    assert baby_values(["Everly", "ann marie", " Everly ", "Zoe (Z)", "", None]) == [
+        "ann marie", "Everly", {"in": "Zoe Z", "out": "Zoe (Z)"}]
+
+
+async def test_a_missing_sentence_file_raises_a_repair_and_nothing_is_written(hass, backend, tmp_path):
+    hass.config.config_dir = str(tmp_path)
+    await setup(hass, make_entry())
+
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, "custom_sentences")
+    assert issue is not None
+    assert issue.is_fixable is True and issue.severity is ir.IssueSeverity.WARNING
+    assert issue.translation_key == "custom_sentences"
+    assert issue.translation_placeholders == {"folder": str(tmp_path / "custom_sentences")}
+    assert not (tmp_path / "custom_sentences").exists()  # not without the confirmation
+
+
+async def test_confirming_the_repair_writes_the_sentences_with_the_babys_names(hass, backend, tmp_path):
+    import yaml
+
+    from custom_components.baby_tracker.repairs import async_create_fix_flow
+    from custom_components.baby_tracker.sentences import async_check_sentences
+
+    hass.config.config_dir = str(tmp_path)
+    entry = make_entry()
+    await setup(hass, entry)
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, "custom_sentences") is not None
+
+    flow = await async_create_fix_flow(hass, "custom_sentences", None)
+    flow.hass, flow.handler, flow.issue_id = hass, DOMAIN, "custom_sentences"
+    form = await flow.async_step_init()
+    assert form["type"] is FlowResultType.FORM and form["step_id"] == "confirm"
+    assert form["description_placeholders"] == {"folder": str(tmp_path / "custom_sentences")}
+    assert not (tmp_path / "custom_sentences").exists()  # showing the form writes nothing
+
+    done = await flow.async_step_confirm({})
+    assert done["type"] is FlowResultType.CREATE_ENTRY
+
+    sentences_file = tmp_path / "custom_sentences" / "en" / "baby_tracker.yaml"
+    written = yaml.safe_load(sentences_file.read_text(encoding="utf-8"))
+    assert written["lists"]["baby"]["values"] == ["Ann Marie", "Everly"]
+    assert "BabyTrackerLogDiaper" in written["intents"]
+
+    # What is there now is what the integration wants: the repair clears
+    await async_check_sentences(hass, coordinator_for(hass, entry))
+    assert registry.async_get_issue(DOMAIN, "custom_sentences") is None
+
+    # A hand-edited file is out of date again
+    sentences_file.write_text("language: en\n", encoding="utf-8")
+    await async_check_sentences(hass, coordinator_for(hass, entry))
+    assert registry.async_get_issue(DOMAIN, "custom_sentences") is not None
+
+
+async def test_the_repair_reports_a_folder_it_cannot_write(hass, backend, tmp_path):
+    from custom_components.baby_tracker.repairs import async_create_fix_flow
+
+    hass.config.config_dir = str(tmp_path)
+    await setup(hass, make_entry())
+    flow = await async_create_fix_flow(hass, "custom_sentences", None)
+    flow.hass, flow.handler, flow.issue_id = hass, DOMAIN, "custom_sentences"
+
+    with patch("custom_components.baby_tracker.sentences.write", side_effect=PermissionError("read-only")):
+        result = await flow.async_step_confirm({})
+    assert result["type"] is FlowResultType.FORM and result["errors"] == {"base": "write_failed"}
+
+
+def test_the_shipped_sentences_are_understood_by_assist():
+    hassil = pytest.importorskip("hassil")
+    import yaml
+
+    from custom_components.baby_tracker.sentences import render, template_languages
+
+    intents = hassil.Intents.from_dict(yaml.safe_load(render(template_languages()["en"], ["Everly", "Ann Marie"])))
+    for text, intent_type, slots in (
+        ("Everly had a wet diaper", "BabyTrackerLogDiaper", {"baby": "Everly", "kind": "wet"}),
+        ("log a 120 ml bottle for ann marie", "BabyTrackerLogBottle", {"baby": "Ann Marie", "amount": 120, "unit": "ml"}),
+        ("Everly is asleep", "BabyTrackerStartSleep", {"baby": "Everly"}),
+        ("Everly woke up", "BabyTrackerEndSleep", {"baby": "Everly"}),
+        ("start nursing Everly on the left", "BabyTrackerStartNursing", {"baby": "Everly", "side": "left"}),
+        ("stop nursing Everly", "BabyTrackerEndNursing", {"baby": "Everly"}),
+        ("when did Everly last eat", "BabyTrackerLastFeed", {"baby": "Everly"}),
+        ("when was Everly's last diaper change", "BabyTrackerLastDiaper", {"baby": "Everly"}),
+        ("when is Everly's next feed", "BabyTrackerNextFeed", {"baby": "Everly"}),
+        ("how much has Everly eaten today", "BabyTrackerIntakeToday", {"baby": "Everly"}),
+        ("is Everly sleeping", "BabyTrackerSleepStatus", {"baby": "Everly"}),
+        ("how is Everly doing", "BabyTrackerSummary", {"baby": "Everly"}),
+    ):
+        result = hassil.recognize(text, intents)
+        assert result is not None, text
+        assert result.intent.name == intent_type, text
+        got = {name: entity.value for name, entity in result.entities.items()}
+        assert got == slots, text  # 120.0 == 120

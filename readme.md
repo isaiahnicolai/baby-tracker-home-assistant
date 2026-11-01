@@ -10,6 +10,7 @@ This custom component integrates the Baby Tracker app data with Home Assistant, 
 - **Household view, calendar and events**: sensors across all babies, a calendar and an Activity event entity per baby, and [blueprints](#blueprints) for notifications
 - **Service Calls**: Add new records through Home Assistant service calls
 - **Controls**: Set a bottle size, bottle type, medicine and amount once, then log with one button; time nursing with Start/End buttons
+- **Undo**: An Undo Last Entry button per baby, and `undo_last` and `delete_record` services, take back a mis-pressed button
 - **Alert settings and repairs**: Tune the alert thresholds in the options, and see sync problems on Home Assistant's Repairs page
 - **Google Home Integration**: Log activities using voice commands through Google Home routines
 - **Complete Activity Tracking**: Diapers, feeding (nursing/formula/pumped), sleep, temperature, bath, medicine, growth measurements, milestones, doctor visits, and vaccines
@@ -79,6 +80,9 @@ babytracker add-nursing --baby Everly --left 10 --right 8                  # min
 babytracker insights --baby Everly          # next feed, 24 hour intake, diapers, growth percentiles
 babytracker next                            # each baby's predicted next feed, and who is due first
 babytracker calendar --baby Everly --days 2 # feeds, sleeps, baths, visits and medicines
+babytracker recent --baby Everly --limit 10 # newest records, with the type and ID `delete` takes
+babytracker delete Diaper <object-id> --yes # delete a record on every device
+babytracker undo --baby Everly --yes        # delete the newest record from the last day
 babytracker inventory                       # pumped milk in store
 babytracker devices
 babytracker raw <device-uuid> --since 100   # decoded records exactly as the server sends them
@@ -209,14 +213,15 @@ These are totals over a rolling 7 days (the `window_days` attribute says so), up
 - **Night Mode** (`binary_sensor`): on while the baby sleeps at night, 19:00 to 07:00 unless you change the [night hours](#options)
 - **Nursing** (`binary_sensor`): on while a [nursing timer](#nursing-timer) is running
 - **Info** (diagnostic sensor): the baby's age, with date of birth and other details in attributes
-- **Photo** (`image`): the baby's photo from the app. See [Photos](#photos)
+- **Photo** and **Photo Landscape** (`image`): the baby's photo from the app, and its wide version when the app has one. See [Photos](#photos)
+- **Recent Entries** (diagnostic sensor): the baby's newest records, with the type and ID that `delete_record` takes. See [Undoing a mistake](#undoing-a-mistake)
 - **Sync Now** and **Force Resync** (configuration buttons on the *Baby Tracker* device)
 - **Buttons** for quick logging: wet/dirty/mixed diapers, bath, start/end sleep, and the [controls and buttons](#controls-and-buttons) below (bottle, medicine, nursing timer, tummy time)
 - **Fixed-size bottle buttons** (3 to 8 oz) and **Give Tylenol**: still available, and kept on installs that already have them. They are switched off by default on new installs now that *Add Bottle* and *Give Medicine* cover them; turn them on from the entity settings if you want them
 
 ### Photos
 
-Each baby's photo is shown by its **Photo** image entity (for example `image.everly_photo`), for dashboards and picture cards. The files are kept in a private `baby_tracker` folder in your Home Assistant configuration directory (photos attached to activities go in its `pictures` subfolder) and are only served through the image entity, which needs a login or the entity's access token. They are **not** under `www`, so nobody can fetch them without logging in.
+Each baby's photo is shown by its **Photo** image entity (for example `image.everly_photo`), for dashboards and picture cards. If the app also has a landscape (wide) version of the photo, the baby gets a **Photo Landscape** entity (`image.everly_photo_landscape`) too, which suits banner cards; it is created when the integration is set up, so reload it after adding a landscape photo in the app. The files are kept in a private `baby_tracker` folder in your Home Assistant configuration directory (photos attached to activities go in its `pictures` subfolder) and are only served through the image entity, which needs a login or the entity's access token. They are **not** under `www`, so nobody can fetch them without logging in.
 
 Earlier versions saved photos in `www/baby_tracker`, where anyone who could reach Home Assistant could fetch them without logging in. Those old copies are not deleted for you: remove the `www/baby_tracker` folder. Home Assistant shows a [repair](#repairs) on *Settings > Repairs* while it exists.
 
@@ -230,10 +235,11 @@ Each baby has a few settings that the logging buttons use, so a bottle of any si
 | `select.everly_bottle_type` | `formula` or `pumped`: which kind of bottle Add Bottle logs |
 | `button.everly_add_bottle` | Logs a bottle of the Bottle Size, as formula or pumped milk (Bottle Type) |
 | `select.everly_medicine` | Which of your account's medicines (the ones in the app) Give Medicine logs. Starts on the first |
-| `number.everly_medicine_amount` | The dose Give Medicine logs, in 0.1 steps. Starts at 1 |
+| `number.everly_medicine_amount` | The dose Give Medicine logs, in 0.1 steps. Choosing a medicine sets it to that medicine's usual amount from the app (when it has one), and its `unit` attribute shows the medicine's unit. Give Medicine uses the usual amount if this is 0 or unset |
 | `button.everly_give_medicine` | Logs a dose of the selected medicine |
 | `number.everly_tummy_time_minutes` | How long Log Tummy Time logs. Starts at 15 |
 | `button.everly_log_tummy_time` | Logs that much tummy time |
+| `button.everly_undo_last_entry` | Deletes the baby's newest record from the last 24 hours. See [Undoing a mistake](#undoing-a-mistake) |
 
 The settings are remembered across restarts. A bottle size saved in the other unit (after switching the entry between imperial and metric) is not reused. Under the same device you will also find the existing *Add Wet/Dirty/Mixed Diaper*, *Log Bath* and *Start/End Sleep* buttons.
 
@@ -253,6 +259,12 @@ entities:
   - button.everly_give_medicine
   - button.everly_log_tummy_time
 ```
+
+### Undoing a mistake
+
+**Undo Last Entry** (`button.everly_undo_last_entry`) deletes the newest record of any kind for that baby, as long as it is less than 24 hours old, and it is removed on your other devices too the next time they sync. It does nothing but report "Nothing to undo" when there is no such record, and a double tap deletes only one. Home Assistant logs what was deleted at info level, fires a `baby_tracker_undo` event on the bus and an `undo` event on the baby's Activity event entity.
+
+The **Recent Entries** sensor (`sensor.everly_recent_entries`, a diagnostic entity) shows the newest record in its state, for example `wet diaper` or `formula 4 oz`, and the last ten in its `records` attribute, each with `object_type`, `object_id`, `time`, `kind` and `note`. Use the `object_type` and `object_id` with the [`delete_record` service](#undo-last-and-delete-record) to delete an older record.
 
 ### Nursing Timer
 
@@ -286,6 +298,7 @@ Problems you can act on show up on *Settings > Repairs*:
 - **Old baby photos are publicly readable**: the `www/baby_tracker` folder from earlier versions still exists. Delete it; the photos are kept privately now. The repair goes away on its own after you delete it and restart or reload the integration.
 - **Baby Tracker records aren't reaching the server**: records logged in Home Assistant have stayed unsent for more than 3 refreshes in a row. They are kept and sent when the server accepts them; the repair clears once they have gone.
 - **Baby Tracker account was reset**: the account was reset or recreated in the app, so the data here belongs to the old group and syncing has stopped. Press Force Resync. The repair clears after the next successful sync.
+- **Install the Baby Tracker voice commands**: the Assist sentence file with your babies' names is missing or out of date. Confirm the repair to write it (see [Voice control](#voice-control-assist)).
 
 Refreshes, service calls and button presses never write to the local database at the same time, and the database waits up to 10 seconds for a lock rather than failing.
 
@@ -348,7 +361,7 @@ Each baby has a calendar (for example `calendar.baby_name_calendar`) showing the
 
 ## Event entities
 
-Each baby has an **Activity** event entity (`event.baby_name_activity`). It fires when a refresh finds something new, with one of these event types: `feeding`, `diaper`, `sleep_start`, `sleep_end`, `bath` or `medicine`. The details (type, time, medicine name and so on) are attributes of the event. In an automation:
+Each baby has an **Activity** event entity (`event.baby_name_activity`). It fires when a refresh finds something new, with one of these event types: `feeding`, `diaper`, `sleep_start`, `sleep_end`, `bath`, `medicine` or `undo` (an entry was deleted with Undo Last Entry or the `undo_last` service). The details (type, time, medicine name and so on) are attributes of the event. In an automation:
 
 ```yaml
 triggers:
@@ -568,6 +581,27 @@ data:
 
 ### Utility Services
 
+#### Undo Last and Delete Record
+
+```yaml
+service: baby_tracker.undo_last
+data:
+  baby_name: "Your Baby Name" # Optional if you have only one baby (or pick the baby's device)
+  within_hours: 24 # Optional: only undo a record this recent (default 24)
+```
+
+Deletes the baby's newest record of any kind, here and on the other devices. It fails with "Nothing to undo" if there is no record in that window.
+
+```yaml
+service: baby_tracker.delete_record
+data:
+  object_type: Diaper # Diaper, Nursing, Formula, Pumped, OtherFeed, Sleep, Temperature, Medication, Bath, Growth, Milestone, Vaccine, OtherActivity, Joy, Journal or DoctorVisit
+  object_id: "0B1C2D3E-..." # From the Recent Entries sensor's records attribute
+  baby_name: "Your Baby Name" # Optional: only used to report the deletion on that baby's Activity event
+```
+
+Deletes one record by type and ID. It fails with an error message if there is no such record.
+
 #### List All Babies
 
 ```yaml
@@ -603,6 +637,37 @@ data:
 ```
 
 Dismissed until the condition clears and comes back. `baby_tracker.dismiss_all_alerts` dismisses every active alert (a baby's, with `baby_name`).
+
+## Voice control (Assist)
+
+Home Assistant's Assist (the voice assistant on phones, satellites and the dashboard, and any voice or text pipeline that uses Home Assistant's own conversation agent) can log things and answer questions about your babies. Say the baby's name as it is in the Baby Tracker app. With only one baby you can leave the name out; with several, leave it out and Assist asks *Which baby?*
+
+**Logging**
+
+| Say | What it does |
+| --- | --- |
+| "Everly had a wet diaper", "log a dirty diaper for Everly", "Everly pooped" | Logs a wet, dirty, mixed or dry diaper |
+| "log a 120 ml bottle for Everly", "Everly drank 4 ounces of pumped milk", "I gave Everly a 4 oz formula bottle" | Logs a bottle of formula or pumped milk. Without a unit it is in the unit chosen for the integration; without a type it is the baby's Bottle Type |
+| "Everly is asleep", "Everly went to sleep", "start a nap for Everly" | Logs the start of a sleep |
+| "Everly woke up", "end Everly's nap" | Ends the sleep in progress |
+| "start nursing Everly on the left", "Everly is nursing on the right side" | Starts the nursing timer on a side (the other side switches the timer) |
+| "stop nursing Everly", "Everly is done nursing" | Logs the session, dated when it started |
+| "log a temperature of 98.6 for Everly", "Everly's temperature is 37.2" | Logs a temperature. 90 to 110 is taken as Fahrenheit and 34 to 43 as Celsius, whatever the units setting |
+
+**Questions**
+
+| Ask | Answer |
+| --- | --- |
+| "when did Everly last eat", "when was Everly's last feed" | "Everly last ate 2 hours ago, a 4 oz bottle." |
+| "when was Everly's last diaper change" | "Everly's last diaper was wet, 45 minutes ago." |
+| "when is Everly's next feed" | The predicted time from the [insights](#insights) |
+| "how much has Everly eaten today", "is Everly eating enough" | The last 24 hours of intake against the expected range |
+| "is Everly sleeping", "is Everly awake", "how long has Everly been asleep" | Asleep since, or awake since |
+| "how is Everly doing", "baby status" | A short status: last feed, last diaper, sleep and next feed (every baby when none is named) |
+
+The sentences are in the English file `custom_components/baby_tracker/custom_sentences/en/baby_tracker.yaml`. Home Assistant only reads sentence files from `<config>/custom_sentences/<language>/`, and the file needs your babies' names, so there is a one-time step: after the integration is set up, a repair appears in *Settings > Repairs* ("Install the Baby Tracker voice commands"). Select it and confirm, and the integration writes `<config>/custom_sentences/en/baby_tracker.yaml` with your babies' names filled in, then asks the conversation agent to reload. If a command is not recognised straight away, restart Home Assistant. Nothing is written to your configuration folder until you confirm. The repair comes back when a baby is added or renamed, or if the file changes, so the names stay current.
+
+Assist can only run the sentences if its language is English and Home Assistant's own conversation agent handles them. With an AI conversation agent that has *Control Home Assistant* turned on, the same actions are available to it as tools (`BabyTrackerLogDiaper`, `BabyTrackerLastFeed` and so on) without the sentence file.
 
 ## Google Home Integration
 

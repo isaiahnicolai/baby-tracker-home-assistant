@@ -149,6 +149,19 @@ def test_picture_names_cannot_escape_the_picture_folder(tracker, server, tmp_pat
     assert not (tmp_path / "evil.jpg").exists()
 
 
+def test_baby_landscape_picture_is_the_name_with_l_appended(tracker, server, tmp_path):
+    server.pictures = {"BABYPIC_l.jpg": b"l" * 200}
+    for name in ("BABYPIC", "BABYPIC.jpg"):
+        saved = tracker.download_baby_landscape_picture(name, str(tmp_path))
+        assert os.path.basename(saved) == "BABYPIC_l.jpg"
+    assert tracker.download_baby_landscape_picture("", str(tmp_path)) is None
+    # A baby without one: asked once, then remembered as missing
+    assert tracker.download_baby_landscape_picture("PLAIN", str(tmp_path)) is None
+    assert tracker.download_baby_landscape_picture("PLAIN", str(tmp_path)) is None
+    asked = [p for _, p in server.requests if p == "/account/picture/PLAIN_l.jpg"]
+    assert len(asked) == 1
+
+
 def test_baby_picture_gets_a_jpg_extension_unless_it_has_one(tracker, server, tmp_path):
     server.pictures = {"BABYPIC.jpg": b"j" * 200, "other.png": b"p" * 200}
     saved = tracker.download_baby_picture("BABYPIC", str(tmp_path))

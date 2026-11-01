@@ -74,3 +74,9 @@ class MedicineSelect(BabyTrackerSelect):
     @property
     def current_option(self):
         return self.coordinator.selected_medicine(self._baby_id)
+
+    async def async_select_option(self, option: str) -> None:
+        self.coordinator.set_control(self._baby_id, self._control, option)
+        # The Medicine Amount takes this medicine's usual dose
+        self.coordinator.follow_medicine(self._baby_id)
+        self.async_write_ha_state()

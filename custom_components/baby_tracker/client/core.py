@@ -11,7 +11,7 @@ import threading
 import time as _time
 
 from . import dbconn as sqlite3  # sqlite3 with a busy timeout and WAL
-from . import insights
+from . import insights, records
 from .dbconn import remove_sidecar_files
 from .models import Baby
 
@@ -450,6 +450,26 @@ class BabyTracker:
         except Exception as e:
             _LOGGER.error(f"Error saving baby picture: {e}")
             return None
+
+    def download_baby_landscape_picture(self, picture_name, save_dir):
+        """
+        Download the landscape variant of a baby's picture, the app's "<pictureName>_l.jpg"
+        (Baby.getPictureLandscapeFile), next to the portrait. Not every baby has one on the
+        server; like the portrait it is remembered as missing for a day.
+
+        Args:
+            picture_name: The baby's pictureName, with or without ".jpg"
+            save_dir: Directory to save the picture to
+
+        Returns:
+            str: Local path to the saved picture, or None if there is none
+        """
+        if not picture_name:
+            return None
+        base = os.path.basename(picture_name.replace("\\", "/"))
+        if base.lower().endswith(".jpg"):
+            base = base[:-4]
+        return self.download_baby_picture(f"{base}_l.jpg", save_dir)
 
     def get_all_babies(self):
         """
@@ -1770,6 +1790,71 @@ class BabyTracker:
     # A first weight within this many days of birth is taken as the birth weight
     _BIRTH_WEIGHT_DAYS = 14
 
+    # ===== DELETE AND UNDO =====
+
+    def get_recent_records(self, baby_id, limit=10, within_hours=None):
+        """
+        The newest records of one baby across the types that can be logged here, newest first.
+
+        Each item is {"object_type", "object_id", "time", "kind", "note"}: object_type is the
+        registry's name (what delete_record takes), time is ISO 8601 with the tracker's zone,
+        and kind a short lowercase label such as "wet diaper", "formula 4 oz" or
+        "nursing L 10 / R 8". Pump sessions belong to the account, not a baby, so they are
+        not listed.
+
+        Args:
+            limit: Most records to return
+            within_hours: Only records from this many hours back (default: any age)
+        """
+        db = self._open_db()
+        if db is None:
+            return []
+        return db.get_recent_records(baby_id, limit=limit, within_hours=within_hours)
+
+    def delete_record(self, object_type, object_id):
+        """
+        Delete one record and queue the delete for the other devices.
+
+        Args:
+            object_type: The record's type as get_recent_records gives it, e.g. "Diaper"
+            object_id: The record's ID
+
+        Returns:
+            dict: {"status": "success", "object_type", "object_id", "queued"} or
+                {"status": "error", "message"}
+        """
+        if not self.is_authenticated:
+            return {"status": "error", "message": "Not authenticated"}
+        record_type = records.record_type(object_type)
+        if record_type is None or record_type.selection or not record_type.activity:
+            return {"status": "error", "message": f"{object_type} records can't be deleted"}
+        try:
+            response = self.api.delete_record(object_type, object_id)
+        except ValueError as e:
+            return {"status": "error", "message": str(e)}
+        except Exception as e:
+            _LOGGER.error(f"Failed to delete {object_type} {object_id}: {e}")
+            return {"status": "error", "message": f"Failed to delete record: {e}"}
+        return {"status": "success", "object_type": records.canonical_type(object_type),
+                "object_id": object_id, "queued": response.get("queued", False)}
+
+    def undo_last(self, baby_id, within_hours=24):
+        """
+        Delete the newest record of a baby (see get_recent_records), if it is no older
+        than within_hours (None: any age).
+
+        Returns:
+            dict: {"status": "success", "deleted": <the get_recent_records item>, "queued"}
+                or {"status": "error", "message": "Nothing to undo"}
+        """
+        latest = self.get_recent_records(baby_id, limit=1, within_hours=within_hours)
+        if not latest:
+            return {"status": "error", "message": "Nothing to undo"}
+        result = self.delete_record(latest[0]["object_type"], latest[0]["object_id"])
+        if result.get("status") != "success":
+            return result
+        return {"status": "success", "deleted": latest[0], "queued": result.get("queued", False)}
+
     def _local_tz(self):
         """The configured time zone, else the host's (read each time so DST is followed)."""
         return self.tz or datetime.now().astimezone().tzinfo
@@ -1979,5 +2064,5 @@ def _serialized(method):
 
 
 for _name, _method in list(vars(BabyTracker).items()):
-    if callable(_method) and (_name.startswith(("add_", "log_")) or _name in ("authenticate", "sync", "force_resync")):
+    if callable(_method) and (_name.startswith(("add_", "log_", "delete_", "undo_")) or _name in ("authenticate", "sync", "force_resync")):
         setattr(BabyTracker, _name, _serialized(_method))

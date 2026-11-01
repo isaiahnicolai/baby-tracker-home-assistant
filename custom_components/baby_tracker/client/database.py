@@ -1910,16 +1910,17 @@ class BabyTrackerLocalDatabase:
                 duration = row[2] or 0
                 start_time = row[1]
 
-                # CRITICAL: duration == 0 means sleep is IN PROGRESS (currently sleeping)
-                # duration > 0 means sleep is COMPLETED
-                is_sleeping = (duration == 0)
+                # duration == 0 means sleep is IN PROGRESS (currently sleeping), duration > 0
+                # means COMPLETED - but an unfinished sleep older than IN_PROGRESS_SLEEP_SECONDS
+                # was never ended, so it is still returned as the last sleep but not as running
+                current_time = datetime.now(timezone.utc).timestamp()
+                is_sleeping = (duration == 0 and bool(start_time)
+                               and current_time - start_time < IN_PROGRESS_SLEEP_SECONDS)
 
                 # If sleep is in progress, calculate current duration
                 current_duration = duration
-                if is_sleeping and start_time:
-                    # Calculate how long they've been sleeping
-                    current_time = datetime.now(timezone.utc).timestamp()
-                    current_duration = int((current_time - start_time) / 60)  # minutes
+                if is_sleeping:
+                    current_duration = max(int((current_time - start_time) / 60), 0)  # minutes
 
                 return {
                     "id": row[0],
@@ -1941,7 +1942,8 @@ class BabyTrackerLocalDatabase:
         """
         Check if the baby is currently sleeping (has an in-progress sleep).
 
-        In Baby Tracker, a sleep with duration=0 indicates "in progress" sleep.
+        In Baby Tracker, a sleep with duration=0 indicates "in progress" sleep, for
+        IN_PROGRESS_SLEEP_SECONDS; an older one was never ended.
 
         :param baby_id: Optional baby ID
         :return: True if baby is currently sleeping, False otherwise
@@ -1950,7 +1952,6 @@ class BabyTrackerLocalDatabase:
         if not last_sleep:
             return False
 
-        # duration == 0 means sleep is in progress
         return last_sleep.get("is_sleeping", False)
 
     def get_last_nursing_direct(self, baby_id: Optional[str] = None) -> Optional[Dict]:
@@ -3394,6 +3395,153 @@ class BabyTrackerLocalDatabase:
             return row[0] if row else 0
         finally:
             conn.close()
+
+    def get_record_wire(self, object_type: str, object_id: str, tz_offset: int = 0) -> Optional[Dict]:
+        """
+        A stored record (anything but a baby or selection) as the apps send it,
+        with the baby and selection it refers to nested, or None if it isn't there.
+        """
+        record_type = records.record_type(object_type)
+        if record_type is None or record_type.selection or not record_type.activity:
+            raise ValueError(f"{object_type} is not a record that can be deleted")
+        canonical = records.canonical_type(object_type)
+        conn = self._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            if not self._table_exists(cursor, record_type.table):
+                return None
+            row = cursor.execute(f'SELECT * FROM "{record_type.table}" WHERE ID = ?', (object_id,)).fetchone()
+            if row is None:
+                return None
+            row = dict(row)
+
+            def nested(wire_type, nested_id):
+                table = records.record_type(wire_type).table
+                found = None
+                if nested_id:
+                    found = cursor.execute(f'SELECT * FROM "{table}" WHERE ID = ?', (nested_id,)).fetchone()
+                return None if found is None else records.named_wire(records.canonical_type(wire_type), dict(found))
+
+            baby = nested("Baby", row["BabyID"]) if record_type.baby else None
+            ref = records.SELECTION_REFERENCES.get(canonical)
+            selection = nested(ref[1], row[ref[0]]) if ref else None
+            return records.record_wire(canonical, row, baby, selection, tz_offset)
+        finally:
+            conn.close()
+
+    # What get_recent_records reads: (object type, table alias, SQL for one baby). Each query
+    # selects ID, Time, Timestamp, Note and then what the kind label is made of.
+    _RECENT_QUERIES = (
+        ("Diaper", "", "SELECT ID, Time, Timestamp, Note, Status, Amount FROM Diaper"),
+        ("Nursing", "", "SELECT ID, Time, Timestamp, Note, LeftDuration, RightDuration, BothDuration FROM Nursing"),
+        ("Formula", "", "SELECT ID, Time, Timestamp, Note, Amount, IsEnglishScale FROM Formula"),
+        ("Pumped", "", "SELECT ID, Time, Timestamp, Note, Amount, IsEnglishScale FROM Pumped"),
+        ("OtherFeed", "f.", "SELECT f.ID, f.Time, f.Timestamp, f.Note, s.Name, f.Amount, f.IsEnglishScale, f.Unit "
+                            "FROM OtherFeed f LEFT JOIN OtherFeedSelection s ON f.TypeID = s.ID"),
+        ("Sleep", "", "SELECT ID, Time, Timestamp, Note, Duration FROM Sleep"),
+        ("Temperature", "", "SELECT ID, Time, Timestamp, Note, Temp, IsEnglishScale FROM Temperature"),
+        ("Medication", "m.", "SELECT m.ID, m.Time, m.Timestamp, m.Note, s.Name, m.Amount, s.Unit "
+                             "FROM Medicine m LEFT JOIN MedicineSelection s ON m.MedID = s.ID"),
+        ("Bath", "b.", "SELECT b.ID, b.Time, b.Timestamp, b.Note, d.Name "
+                       "FROM Bath b LEFT JOIN BathDesc d ON b.DescID = d.ID"),
+        ("Growth", "", "SELECT ID, Time, Timestamp, Note, Weight, Length, Head, IsEnglishWeightScale, "
+                       "IsEnglishLengthScale FROM Growth"),
+        ("Milestone", "m.", "SELECT m.ID, m.Time, m.Timestamp, m.Note, s.Name FROM Milestone m "
+                            "LEFT JOIN MilestoneSelection s ON m.MilestoneSelectionID = s.ID"),
+        ("Vaccine", "v.", "SELECT v.ID, v.Time, v.Timestamp, v.Note, s.Name FROM Vaccine v "
+                          "LEFT JOIN VaccineSelection s ON v.VaccID = s.ID"),
+        ("OtherActivity", "a.", "SELECT a.ID, a.Time, a.Timestamp, a.Note, d.Name, a.Duration FROM OtherActivity a "
+                                "LEFT JOIN OtherActivityDesc d ON a.DescID = d.ID"),
+        ("Joy", "", "SELECT ID, Time, Timestamp, Note FROM Joy"),
+        ("Journal", "", "SELECT ID, Time, Timestamp, Note FROM Journal"),
+        ("DoctorVisit", "", "SELECT ID, Time, Timestamp, Note, IsAppointment, Symptom FROM DoctorVisit"),
+    )
+
+    def _recent_kind(self, object_type: str, extra: tuple, now: float, time: float) -> str:
+        """The short lowercase label of a recent record (see get_recent_records)."""
+        def amount(value, english):
+            return f"{value or 0:g} oz" if english else f"{value or 0:g} ml"
+
+        if object_type == "Diaper":
+            return f"{self._get_diaper_status(extra[0], extra[1]).lower()} diaper"
+        if object_type == "Nursing":
+            left, right, both = (value or 0 for value in extra)
+            sides = [f"{label} {minutes}" for label, minutes in (("L", left), ("R", right)) if minutes]
+            if both and not sides:
+                sides = [f"{both} min"]
+            return " ".join(["nursing", " / ".join(sides)]).strip()
+        if object_type in ("Formula", "Pumped"):
+            return f"{'formula' if object_type == 'Formula' else 'pumped milk'} {amount(*extra)}"
+        if object_type == "OtherFeed":
+            name, value, english, unit = extra
+            return f"{(name or 'feed').lower()} {f'{value or 0:g} {unit}' if unit else amount(value, english)}"
+        if object_type == "Sleep":
+            minutes = extra[0] or 0
+            if minutes:
+                return f"sleep {minutes} min"
+            return "sleep in progress" if now - time < IN_PROGRESS_SLEEP_SECONDS else "sleep (never ended)"
+        if object_type == "Temperature":
+            return f"temperature {extra[0]:g} {'F' if extra[1] else 'C'}"
+        if object_type == "Medication":
+            name, dose, unit = extra
+            return " ".join(part for part in ("medicine", (name or "unknown").lower(),
+                                              f"{dose:g} {unit or ''}".strip() if dose else "") if part)
+        if object_type == "Growth":
+            weight, length, head, english_weight, english_length = extra
+            parts = [f"{weight:g} {'lb' if english_weight else 'kg'}" if weight else "",
+                     f"{length:g} {'in' if english_length else 'cm'}" if length else "",
+                     f"head {head:g} {'in' if english_length else 'cm'}" if head else ""]
+            return " ".join(["growth", ", ".join(part for part in parts if part)]).strip()
+        if object_type == "OtherActivity":
+            name, minutes = extra
+            return " ".join(part for part in ((name or "activity").lower(), f"{minutes} min" if minutes else "") if part)
+        if object_type == "DoctorVisit":
+            label = "doctor appointment" if extra[0] else "doctor visit"
+            return f"{label}: {extra[1]}" if extra[1] else label
+        if object_type in ("Bath", "Milestone", "Vaccine"):
+            return f"{object_type.lower()} {extra[0].lower()}" if extra[0] else object_type.lower()
+        return object_type.lower()
+
+    def get_recent_records(self, baby_id: str, limit: int = 10, within_hours: Optional[float] = None) -> List[Dict]:
+        """
+        The newest records of one baby across every type that can be logged here, newest
+        first (pump sessions belong to the account, not a baby, so they are not included).
+
+        Each item has object_type (the registry's name, as delete_record takes it),
+        object_id, time (ISO 8601 in the configured zone), kind (a short lowercase label such
+        as "wet diaper" or "formula 120 ml") and note. within_hours leaves out older records.
+        """
+        if not baby_id or limit <= 0:
+            return []
+        now = self._now().timestamp()
+        since = None if within_hours is None else now - within_hours * 3600
+        found = []
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            for object_type, alias, select in self._RECENT_QUERIES:
+                if not self._table_exists(cursor, records.record_type(object_type).table):
+                    continue
+                sql = f"{select} WHERE {alias}BabyID = ?"
+                params = [baby_id]
+                if since is not None:
+                    sql += f" AND {alias}Time >= ?"
+                    params.append(since)
+                sql += f" ORDER BY {alias}Time DESC, {alias}Timestamp DESC LIMIT {int(limit)}"
+                for object_id, time, timestamp, note, *extra in cursor.execute(sql, params).fetchall():
+                    time = time or 0
+                    found.append((time, timestamp or 0, {
+                        "object_type": object_type,
+                        "object_id": object_id,
+                        "time": self._local(time).isoformat(),
+                        "kind": self._recent_kind(object_type, tuple(extra), now, time),
+                        "note": note or "",
+                    }))
+        finally:
+            conn.close()
+        found.sort(key=lambda item: item[:2], reverse=True)
+        return [item[2] for item in found[:limit]]
 
     def get_named_wire(self, object_type: str, object_id: str) -> Optional[Dict]:
         """A stored baby or selection as the apps send it, or None if it isn't there."""

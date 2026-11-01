@@ -9,8 +9,9 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import BOTTLE_TYPE_PUMPED, DOMAIN, UNIT_SYSTEM_IMPERIAL
+from .const import BOTTLE_TYPE_PUMPED, DOMAIN, UNDO_WINDOW_HOURS, UNIT_SYSTEM_IMPERIAL
 from .entity import baby_device_info, baby_unique_id, system_device_info
+from .services import async_end_nursing
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,6 +53,8 @@ async def async_setup_entry(
             BabyTrackerNursingButton(coordinator, baby_name, "start_nursing_right", side="right"),
             BabyTrackerNursingButton(coordinator, baby_name, "end_nursing", side=None),
             BabyTrackerTummyTimeButton(coordinator, baby_name),
+            # Take back the newest record
+            BabyTrackerUndoButton(coordinator, baby_name),
             # Fixed-size bottles and Tylenol, from before the controls above
             BabyTrackerBottleButton(coordinator, baby_name, "3oz", 3),
             BabyTrackerBottleButton(coordinator, baby_name, "4oz", 4),
@@ -153,7 +156,10 @@ class BabyTrackerGiveMedicineButton(BabyTrackerButton):
         medicine = self.coordinator.selected_medicine(self._baby_id)
         if not medicine:
             raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_medicine_selected")
-        amount = self.coordinator.control(self._baby_id, "medicine_amount")
+        # An amount of 0 (or none) means the medicine's usual dose
+        amount = self.coordinator.control(self._baby_id, "medicine_amount") or self.coordinator.medicine_dose(self._baby_id)
+        if not amount:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_medicine_amount")
         _LOGGER.info(f"Giving {medicine} ({amount}) to {self._baby_name}")
 
         await self.hass.services.async_call(
@@ -194,27 +200,10 @@ class BabyTrackerNursingButton(BabyTrackerButton):
             coordinator.start_nursing(self._baby_id, self._side)
             return
 
-        totals = coordinator.nursing_totals(self._baby_id)
-        if totals is None:
-            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_nursing_timer")
+        # The session is dated when it started, and the timer stops once it is logged; if that
+        # failed, the timer keeps running so End Nursing can be pressed again
+        totals = await async_end_nursing(self.hass, coordinator, self._baby_id, note="Added from Home Assistant")
         _LOGGER.info(f"Nursing ended for {self._baby_name}: left {totals['left']} min, right {totals['right']} min")
-
-        await self.hass.services.async_call(
-            DOMAIN,
-            "add_nursing",
-            {
-                "baby_name": self._baby_name,
-                # The session is dated when it started
-                "time": totals["started_at"],
-                "left_duration": min(totals["left"], 120),
-                "right_duration": min(totals["right"], 120),
-                "finish_side": totals["side"].capitalize(),
-                "note": "Added from Home Assistant"
-            },
-            blocking=True
-        )
-        # Only once it is logged; if that failed, the timer keeps running so End Nursing can be pressed again
-        coordinator.clear_nursing(self._baby_id)
 
 
 class BabyTrackerTummyTimeButton(BabyTrackerButton):
@@ -244,6 +233,32 @@ class BabyTrackerTummyTimeButton(BabyTrackerButton):
                 "duration": minutes,
                 "note": "Added from Home Assistant"
             },
+            blocking=True
+        )
+
+
+class BabyTrackerUndoButton(BabyTrackerButton):
+    """Button to delete the baby's newest record, from the last day, for when the wrong button was pressed."""
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the button."""
+        super().__init__(coordinator)
+        self._baby_name = baby_name
+        self._baby_id = coordinator.baby_id_for(baby_name)
+
+        self._attr_has_entity_name = True
+        self._attr_translation_key = "undo_last"
+        self._attr_unique_id = baby_unique_id(coordinator, baby_name, "undo_last")
+        self._attr_device_info = baby_device_info(coordinator, baby_name)
+
+    async def _press(self) -> None:
+        _LOGGER.info(f"Undoing the last entry for {self._baby_name}")
+
+        # Raises ServiceValidationError when there is nothing from the last day to undo
+        await self.hass.services.async_call(
+            DOMAIN,
+            "undo_last",
+            {"baby_name": self._baby_name, "within_hours": UNDO_WINDOW_HOURS},
             blocking=True
         )
 

@@ -172,21 +172,40 @@ FEVER_WINDOW_HOURS = 24
 ISSUE_OLD_WWW_FOLDER = "old_www_folder"
 ISSUE_UPLOADS_PENDING = "uploads_pending"
 ISSUE_ACCOUNT_RESET = "account_reset"
+ISSUE_CUSTOM_SENTENCES = "custom_sentences"  # the Assist sentence file is not installed or is out of date
 UPLOADS_PENDING_REFRESHES = 3  # raise the issue once records stay unsent for more refreshes than this
 
 # Event names
 EVENT_FEEDING = "baby_tracker_feeding"
 EVENT_DIAPER = "baby_tracker_diaper"
 EVENT_SLEEP = "baby_tracker_sleep"
+EVENT_UNDO = "baby_tracker_undo"
+
+# Records the delete_record service takes (the client's record type names), and how far back Undo Last Entry looks
+DELETABLE_RECORD_TYPES = [
+    "Diaper", "Nursing", "Formula", "Pumped", "OtherFeed", "Sleep", "Temperature", "Medication", "Bath",
+    "Growth", "Milestone", "Vaccine", "OtherActivity", "Joy", "Journal", "DoctorVisit",
+]
+UNDO_WINDOW_HOURS = 24
+RECENT_RECORDS_LIMIT = 10  # how many records the Recent Entries sensor lists
+NOTHING_TO_UNDO = "Nothing to undo"  # what the client's undo_last reports when there is no record in the window
 
 # What a baby's Activity event entity can report
-ACTIVITY_EVENT_TYPES = ["feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine"]
+ACTIVITY_EVENT_TYPES = ["feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine", "undo"]
 SIGNAL_ACTIVITY = "baby_tracker_activity"  # dispatcher signal, suffixed with the config entry ID
 
 
 def activity_signal(entry_id):
     """The dispatcher signal the coordinator sends when a baby has a new activity."""
     return f"{SIGNAL_ACTIVITY}_{entry_id}"
+
+
+SIGNAL_CONTROL = "baby_tracker_control"  # sent when the coordinator changes a baby's control itself
+
+
+def control_signal(entry_id):
+    """The dispatcher signal for a control (a number or select value) the coordinator set itself."""
+    return f"{SIGNAL_CONTROL}_{entry_id}"
 
 
 # Entities worked out from the clock re-evaluate this often between refreshes

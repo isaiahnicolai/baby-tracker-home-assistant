@@ -540,6 +540,67 @@ add_solids:
       selector:
         datetime:
 
+undo_last:
+  fields:
+    baby_name:
+      required: false
+      selector:
+        text:
+    device_id:
+      required: false
+      selector:
+        device:
+          filter:
+            - integration: baby_tracker
+    within_hours:
+      required: false
+      default: 24
+      selector:
+        number:
+          min: 0.5
+          max: 720
+          step: 0.5
+          unit_of_measurement: h
+
+delete_record:
+  fields:
+    baby_name:
+      required: false
+      selector:
+        text:
+    device_id:
+      required: false
+      selector:
+        device:
+          filter:
+            - integration: baby_tracker
+    object_type:
+      required: true
+      example: "Diaper"
+      selector:
+        select:
+          options:
+            - "Diaper"
+            - "Nursing"
+            - "Formula"
+            - "Pumped"
+            - "OtherFeed"
+            - "Sleep"
+            - "Temperature"
+            - "Medication"
+            - "Bath"
+            - "Growth"
+            - "Milestone"
+            - "Vaccine"
+            - "OtherActivity"
+            - "Joy"
+            - "Journal"
+            - "DoctorVisit"
+    object_id:
+      required: true
+      selector:
+        text:
+
 list_babies:
   fields: {}
 

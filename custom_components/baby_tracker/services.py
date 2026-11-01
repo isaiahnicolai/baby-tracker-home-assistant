@@ -18,7 +18,11 @@ from .const import (
     ALERT_TYPE_NO_POOP,
     ALERT_TYPE_WAKE_TO_FEED,
     DEFAULT_UNIT_SYSTEM,
+    DELETABLE_RECORD_TYPES,
     DOMAIN,
+    EVENT_UNDO,
+    NOTHING_TO_UNDO,
+    UNDO_WINDOW_HOURS,
     UNIT_SYSTEM_IMPERIAL,
 )
 
@@ -177,6 +181,122 @@ DISMISS_ALL_ALERTS_SCHEMA = vol.Schema({
     vol.Optional("baby_name"): cv.string,
 })
 
+UNDO_LAST_SCHEMA = vol.Schema({
+    vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
+    vol.Optional("within_hours", default=UNDO_WINDOW_HOURS): vol.All(vol.Coerce(float), vol.Range(min=0.01)),
+})
+
+DELETE_RECORD_SCHEMA = vol.Schema({
+    # Only used to say which baby's Activity event the deletion is reported on
+    vol.Optional("baby_name"): cv.string,
+    vol.Optional("device_id"): cv.string,
+    vol.Required("object_type"): vol.In(DELETABLE_RECORD_TYPES),
+    vol.Required("object_id"): cv.string,
+})
+
+
+# Android NursingFinishSide: NotSet=0, Left=1, Right=2 ("Both" has no finish side)
+NURSING_FINISH_SIDES = {"Both": 0, "Left": 1, "Right": 2}
+
+
+# ----- writes shared by the services, the buttons and the Assist intents -----
+# Each one writes in an executor job, raises HomeAssistantError if the write failed, and then asks for
+# a (debounced) refresh so the entities pick the record up.
+
+def get_coordinator(hass: HomeAssistant):
+    """The data coordinator of the (first) configured entry."""
+    for entry_id, coordinator in hass.data.get(DOMAIN, {}).items():
+        if entry_id != "config":
+            return coordinator
+    raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_entry")
+
+
+def check_result(result, what):
+    """Raise if a core write reported failure, so the caller sees the error."""
+    ok = result.get("status") == "success" if isinstance(result, dict) else bool(result)
+    if not ok:
+        message = result.get("message") if isinstance(result, dict) else None
+        raise HomeAssistantError(
+            translation_domain=DOMAIN, translation_key="action_failed",
+            translation_placeholders={"action": what, "error": message or "unknown error"},
+        )
+
+
+def sync_time_str(moment):
+    """A time in the sync format, "2026-03-01 09:30:00 +0000" (None for now)."""
+    return dt_util.as_utc(moment).strftime("%Y-%m-%d %H:%M:%S +0000") if moment else None
+
+
+async def async_log_diaper(
+    hass, coordinator, baby_id, pee=True, poo=False, *, time_str=None, pee_color=5, poo_color=5,
+    texture=5, amount=2, note="",
+):
+    """Log a diaper change (neither pee nor poo is a dry diaper)."""
+    result = await hass.async_add_executor_job(
+        coordinator.baby_tracker.add_diaper, baby_id, time_str, pee, poo, pee_color, poo_color, texture, amount, note,
+    )
+    check_result(result, "add diaper")
+    await coordinator.async_request_refresh()
+
+
+async def async_log_bottle(hass, coordinator, baby_id, amount, is_english, *, pumped=False, time_str=None, note=""):
+    """Log a bottle of formula, or of pumped milk, in oz (is_english) or mL."""
+    result = await hass.async_add_executor_job(
+        coordinator.baby_tracker.add_pumped if pumped else coordinator.baby_tracker.add_formula,
+        baby_id, time_str, amount, is_english, note,
+    )
+    check_result(result, "add pumped milk" if pumped else "add formula")
+    await coordinator.async_request_refresh()
+
+
+async def async_log_sleep(hass, coordinator, baby_id, is_start, *, note="", moment=None):
+    """Log the start of a sleep, or the end of the one in progress."""
+    result = await hass.async_add_executor_job(
+        coordinator.baby_tracker.log_sleep_event, baby_id, is_start, note, dt_util.as_utc(moment) if moment else None,
+    )
+    check_result(result, "start sleep" if is_start else "end sleep")
+    await coordinator.async_request_refresh()
+
+
+async def async_log_temperature(hass, coordinator, baby_id, temperature, is_fahrenheit, *, time_str=None, note=""):
+    """Log a temperature reading in F (is_fahrenheit) or C."""
+    result = await hass.async_add_executor_job(
+        coordinator.baby_tracker.add_temperature, baby_id, time_str, temperature, is_fahrenheit, note,
+    )
+    check_result(result, "add temperature")
+    await coordinator.async_request_refresh()
+
+
+async def async_log_nursing(
+    hass, coordinator, baby_id, *, left=0, right=0, both=0, finish_side="Left", time_str=None, note="",
+):
+    """Log a nursing session; finish_side is "Left", "Right" or "Both"."""
+    result = await hass.async_add_executor_job(
+        coordinator.baby_tracker.add_nursing, baby_id, time_str, left, right, both,
+        NURSING_FINISH_SIDES.get(finish_side, 1), note,
+    )
+    check_result(result, "add nursing")
+    await coordinator.async_request_refresh()
+
+
+async def async_end_nursing(hass, coordinator, baby_id, note=""):
+    """
+    Log the running nursing timer as a session, dated when it started, then stop the timer.
+    Returns the totals it logged (see the coordinator's nursing_totals).
+    """
+    totals = coordinator.nursing_totals(baby_id)
+    if totals is None:
+        raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_nursing_timer")
+    await async_log_nursing(
+        hass, coordinator, baby_id,
+        left=min(totals["left"], 120), right=min(totals["right"], 120),
+        finish_side=totals["side"].capitalize(), time_str=sync_time_str(totals["started_at"]), note=note,
+    )
+    # Only once it is logged; if that failed, the timer keeps running so it can be ended again
+    coordinator.clear_nursing(baby_id)
+    return totals
+
 
 async def async_register_services(hass: HomeAssistant):
     """Register services for Baby Tracker."""
@@ -225,15 +345,7 @@ async def async_register_services(hass: HomeAssistant):
             translation_placeholders={"names": ", ".join(b.name for b in babies)},
         )
 
-    def _check(result, what):
-        """Raise if a core write reported failure, so the caller sees the error."""
-        ok = result.get("status") == "success" if isinstance(result, dict) else bool(result)
-        if not ok:
-            message = result.get("message") if isinstance(result, dict) else None
-            raise HomeAssistantError(
-                translation_domain=DOMAIN, translation_key="action_failed",
-                translation_placeholders={"action": what, "error": message or "unknown error"},
-            )
+    _check = check_result
 
     def _get_unit_system_from_config():
         """Get the configured unit system (imperial or metric), honouring the options flow."""
@@ -259,8 +371,7 @@ async def async_register_services(hass: HomeAssistant):
 
     def _time_str(data):
         """That time in the sync format, "2026-03-01 09:30:00 +0000" (None for now)."""
-        moment = _utc(data)
-        return moment.strftime("%Y-%m-%d %H:%M:%S +0000") if moment else None
+        return sync_time_str(_utc(data))
 
     async def add_diaper(call: ServiceCall):
         """Add a diaper change record."""
@@ -268,21 +379,11 @@ async def async_register_services(hass: HomeAssistant):
         coordinator = _get_coordinator(hass)
         baby_id = await _get_baby_id(coordinator, data)
 
-        result = await hass.async_add_executor_job(
-            coordinator.baby_tracker.add_diaper,
-            baby_id,
-            _time_str(data),
-            data.get("pee"),
-            data.get("poo"),
-            data.get("pee_color", 5),
-            data.get("poo_color", 5),
-            data.get("texture", 5),
-            data.get("amount", 2),
-            data.get("note", "")
+        await async_log_diaper(
+            hass, coordinator, baby_id, data.get("pee"), data.get("poo"),
+            time_str=_time_str(data), pee_color=data.get("pee_color", 5), poo_color=data.get("poo_color", 5),
+            texture=data.get("texture", 5), amount=data.get("amount", 2), note=data.get("note", ""),
         )
-
-        _check(result, "add diaper")
-        await coordinator.async_request_refresh()
 
     async def add_nursing(call: ServiceCall):
         """Add a nursing session record."""
@@ -290,23 +391,12 @@ async def async_register_services(hass: HomeAssistant):
         coordinator = _get_coordinator(hass)
         baby_id = await _get_baby_id(coordinator, data)
 
-        # Android NursingFinishSide: NotSet=0, Left=1, Right=2 ("Both" has no finish side)
-        finish_side_map = {"Both": 0, "Left": 1, "Right": 2}
-        finish_side = finish_side_map.get(data.get("finish_side", "Left"), 1)
-
-        result = await hass.async_add_executor_job(
-            coordinator.baby_tracker.add_nursing,
-            baby_id,
-            _time_str(data),
-            data.get("left_duration", 0),
-            data.get("right_duration", 0),
-            data.get("both_duration", 0),
-            finish_side,
-            data.get("note", "")
+        await async_log_nursing(
+            hass, coordinator, baby_id,
+            left=data.get("left_duration", 0), right=data.get("right_duration", 0),
+            both=data.get("both_duration", 0), finish_side=data.get("finish_side", "Left"),
+            time_str=_time_str(data), note=data.get("note", ""),
         )
-
-        _check(result, "add nursing")
-        await coordinator.async_request_refresh()
 
     async def add_formula(call: ServiceCall):
         """Add a formula feeding record."""
@@ -321,17 +411,10 @@ async def async_register_services(hass: HomeAssistant):
         if is_english is None:
             is_english = _is_imperial_config()
 
-        result = await hass.async_add_executor_job(
-            coordinator.baby_tracker.add_formula,
-            baby_id,
-            _time_str(data),
-            data.get("amount"),
-            is_english,
-            data.get("note", "")
+        await async_log_bottle(
+            hass, coordinator, baby_id, data.get("amount"), is_english,
+            time_str=_time_str(data), note=data.get("note", ""),
         )
-
-        _check(result, "add formula")
-        await coordinator.async_request_refresh()
 
     async def add_pumped(call: ServiceCall):
         """Add a pumped milk record."""
@@ -344,17 +427,10 @@ async def async_register_services(hass: HomeAssistant):
         if is_english is None:
             is_english = _is_imperial_config()
 
-        result = await hass.async_add_executor_job(
-            coordinator.baby_tracker.add_pumped,
-            baby_id,
-            _time_str(data),
-            data.get("amount"),
-            is_english,
-            data.get("note", "")
+        await async_log_bottle(
+            hass, coordinator, baby_id, data.get("amount"), is_english,
+            pumped=True, time_str=_time_str(data), note=data.get("note", ""),
         )
-
-        _check(result, "add pumped milk")
-        await coordinator.async_request_refresh()
 
     async def add_temperature(call: ServiceCall):
         """Add a temperature record."""
@@ -362,17 +438,10 @@ async def async_register_services(hass: HomeAssistant):
         coordinator = _get_coordinator(hass)
         baby_id = await _get_baby_id(coordinator, data)
 
-        result = await hass.async_add_executor_job(
-            coordinator.baby_tracker.add_temperature,
-            baby_id,
-            _time_str(data),
-            data.get("temperature"),
-            _unit_default(data, "is_fahrenheit"),
-            data.get("note", "")
+        await async_log_temperature(
+            hass, coordinator, baby_id, data.get("temperature"), _unit_default(data, "is_fahrenheit"),
+            time_str=_time_str(data), note=data.get("note", ""),
         )
-
-        _check(result, "add temperature")
-        await coordinator.async_request_refresh()
 
     async def log_bath(call: ServiceCall):
         """Log a bath record."""
@@ -465,14 +534,7 @@ async def async_register_services(hass: HomeAssistant):
         baby_id = await _get_baby_id(coordinator, data)
 
         is_start = data.get("is_start", True)
-        result = await hass.async_add_executor_job(
-            coordinator.baby_tracker.log_sleep_event,
-            baby_id,
-            is_start,
-            data.get("note", ""),
-            _utc(data),
-        )
-        _check(result, "start sleep" if is_start else "end sleep")
+        await async_log_sleep(hass, coordinator, baby_id, is_start, note=data.get("note", ""), moment=_utc(data))
 
         _LOGGER.info(f"Logged sleep {'start' if is_start else 'end'}")
         await coordinator.async_request_refresh()
@@ -661,6 +723,58 @@ async def async_register_services(hass: HomeAssistant):
         _LOGGER.info(f"Logged solids: {food_name}, {data.get('amount')} {data.get('unit', '')}")
         await coordinator.async_request_refresh()
 
+    async def undo_last(call: ServiceCall):
+        """Delete a baby's newest record (within the last within_hours), on every device."""
+        data = call.data
+        coordinator = _get_coordinator(hass)
+        baby_id = await _get_baby_id(coordinator, data)
+
+        result = await hass.async_add_executor_job(
+            coordinator.baby_tracker.undo_last, baby_id, data.get("within_hours", UNDO_WINDOW_HOURS)
+        )
+        if result.get("status") != "success" and result.get("message") == NOTHING_TO_UNDO:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="nothing_to_undo",
+                translation_placeholders={"hours": f"{data.get('within_hours', UNDO_WINDOW_HOURS):g}"},
+            )
+        _check(result, "undo the last entry")
+
+        deleted = result.get("deleted") or {}
+        _LOGGER.info(f"Undid the last entry: {deleted.get('kind')} ({deleted.get('object_type')} {deleted.get('object_id')})")
+        coordinator._announce("undo", coordinator.baby_name_for(baby_id), baby_id, {
+            "object_type": deleted.get("object_type"),
+            "object_id": deleted.get("object_id"),
+            "kind": deleted.get("kind"),
+            "time": deleted.get("time"),
+        }, EVENT_UNDO)
+        await coordinator.async_request_refresh()
+
+    async def delete_record(call: ServiceCall):
+        """Delete one record by its type and ID (see the Recent Entries sensor), on every device."""
+        data = call.data
+        coordinator = _get_coordinator(hass)
+        baby_id = await _get_baby_id(coordinator, data) if data.get("baby_name") or data.get("device_id") else None
+
+        result = await hass.async_add_executor_job(
+            coordinator.baby_tracker.delete_record, data["object_type"], data["object_id"]
+        )
+        if result.get("status") != "success":
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="delete_failed",
+                translation_placeholders={
+                    "object_type": data["object_type"], "object_id": data["object_id"],
+                    "error": result.get("message") or "unknown error",
+                },
+            )
+
+        _LOGGER.info(f"Deleted {data['object_type']} {data['object_id']}")
+        if baby_id:
+            coordinator._announce("undo", coordinator.baby_name_for(baby_id), baby_id, {
+                "object_type": result.get("object_type", data["object_type"]),
+                "object_id": data["object_id"],
+            }, EVENT_UNDO)
+        await coordinator.async_request_refresh()
+
     async def list_babies(call: ServiceCall):
         """List all babies in the database."""
         coordinator = _get_coordinator(hass)
@@ -740,12 +854,7 @@ async def async_register_services(hass: HomeAssistant):
                     _LOGGER.info(f"Config entry {entry_id} reloaded")
                 break
 
-    def _get_coordinator(hass):
-        """Get the data coordinator for the first configured entry."""
-        for entry_id, coordinator in hass.data[DOMAIN].items():
-            if entry_id != "config":
-                return coordinator
-        raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_entry")
+    _get_coordinator = get_coordinator
 
     # Register the services
     hass.services.async_register(
@@ -792,6 +901,12 @@ async def async_register_services(hass: HomeAssistant):
     )
     hass.services.async_register(
         DOMAIN, "add_solids", add_solids, schema=SOLIDS_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "undo_last", undo_last, schema=UNDO_LAST_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "delete_record", delete_record, schema=DELETE_RECORD_SCHEMA
     )
     hass.services.async_register(
         DOMAIN, "list_babies", list_babies, schema=LIST_BABIES_SCHEMA, supports_response="only"
@@ -945,6 +1060,8 @@ async def async_unregister_services(hass: HomeAssistant):
         "log_vaccine",
         "log_activity",
         "add_solids",
+        "undo_last",
+        "delete_record",
         "list_babies",
         "sync",
         "force_resync",

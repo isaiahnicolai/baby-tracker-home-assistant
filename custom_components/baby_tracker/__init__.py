@@ -33,15 +33,19 @@ from .const import (
     EVENT_FEEDING,
     EVENT_SLEEP,
     ISSUE_ACCOUNT_RESET,
+    ISSUE_CUSTOM_SENTENCES,
     ISSUE_OLD_WWW_FOLDER,
     ISSUE_UPLOADS_PENDING,
     NURSING_STORE_VERSION,
     NURSING_TIMER_MAX_AGE_HOURS,
     PHOTO_DIR_NAME,
+    RECENT_RECORDS_LIMIT,
     UPLOADS_PENDING_REFRESHES,
     activity_signal,
+    control_signal,
 )
 from .entity import migrate_to_baby_ids, remove_retired_entities
+from .sentences import async_check_sentences
 from .services import async_register_services, async_unregister_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -106,6 +110,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
+    # Voice control needs a sentence file with the babies' names in the config directory (a repair installs it)
+    await async_check_sentences(hass, coordinator)
+
     # Settings changed in the options flow take effect on reload
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
     # A baby added or renamed in the app needs its entities created/renamed
@@ -165,8 +172,24 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry):
     db_path = os.path.join(hass.config.path(), "baby_tracker.db")
     await hass.async_add_executor_job(_remove_database, db_path)
     await Store(hass, NURSING_STORE_VERSION, f"{DOMAIN}.{entry.entry_id}.nursing").async_remove()
-    for issue_id in (ISSUE_OLD_WWW_FOLDER, ISSUE_UPLOADS_PENDING, ISSUE_ACCOUNT_RESET):
+    for issue_id in (ISSUE_OLD_WWW_FOLDER, ISSUE_UPLOADS_PENDING, ISSUE_ACCOUNT_RESET, ISSUE_CUSTOM_SENTENCES):
         ir.async_delete_issue(hass, DOMAIN, issue_id)
+
+
+def _is_newer(current, previous):
+    """Whether a record time (text, "2026-03-01 12:00:00 +0000") is later than the one seen last.
+
+    A plain "changed" check would also fire when the newest record is deleted
+    (undone) and an older one becomes the latest again.
+    """
+    if not current:
+        return False
+    if not previous:
+        return True
+    try:
+        return datetime.fromisoformat(current) > datetime.fromisoformat(previous)
+    except (TypeError, ValueError):
+        return current != previous
 
 
 def _remove_database(db_path):
@@ -245,6 +268,26 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         names = self.medicine_names
         chosen = self.control(baby_id, "medicine")
         return chosen if chosen in names else (names[0] if names else None)
+
+    def selected_medicine_info(self, baby_id):
+        """The account's record of the medicine chosen for a baby (name, amount_per_time, unit...), or None."""
+        name = self.selected_medicine(baby_id)
+        return next((m for m in (self.data or {}).get("medicines") or [] if m.get("name") == name), None)
+
+    def medicine_dose(self, baby_id):
+        """The usual dose of the baby's selected medicine (its amount per time), or None when it has none."""
+        amount = (self.selected_medicine_info(baby_id) or {}).get("amount_per_time")
+        return amount if isinstance(amount, (int, float)) and amount > 0 else None
+
+    def follow_medicine(self, baby_id):
+        """
+        The baby's Medicine was just changed: set the Medicine Amount to that medicine's usual
+        dose, if it has one, and tell the number to show it (and the medicine's unit).
+        """
+        dose = self.medicine_dose(baby_id)
+        if dose is not None:
+            self.set_control(baby_id, "medicine_amount", dose)
+        async_dispatcher_send(self.hass, control_signal(self.config_entry.entry_id), baby_id, "medicine_amount")
 
     # ----- buttons -----
 
@@ -377,6 +420,13 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 return baby.object_id
         raise ValueError(f"Unknown baby: {baby_name}")
 
+    def baby_name_for(self, baby_id):
+        """The name of the baby with this ID (None when there isn't one)."""
+        for baby in (self.data or {}).get("babies") or []:
+            if baby.object_id == baby_id:
+                return baby.name
+        return None
+
     def check_babies_changed(self):
         """Reload when the app's babies change, so entities match them."""
         babies = {b.name: b.object_id for b in (self.data or {}).get("babies") or []}
@@ -441,12 +491,18 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
             if not baby.picture_name:
                 continue
             saved = tracker.download_baby_picture(baby.picture_name, photo_dir)
-            if saved:
-                # The file may have gained a .jpg extension
+            landscape = tracker.download_baby_landscape_picture(baby.picture_name, photo_dir)
+            if saved or landscape:
+                # The file may have gained a .jpg extension. The landscape variant is optional on the server.
                 baby_pictures[baby.name] = {
                     "path": saved,
-                    "updated": dt_util.utc_from_timestamp(os.path.getmtime(saved)),
+                    "updated": dt_util.utc_from_timestamp(os.path.getmtime(saved)) if saved else None,
                 }
+                if landscape:
+                    baby_pictures[baby.name]["landscape"] = {
+                        "path": landscape,
+                        "updated": dt_util.utc_from_timestamp(os.path.getmtime(landscape)),
+                    }
 
         baby_data = {}
         now = dt_util.utcnow()
@@ -482,6 +538,8 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 "upcoming_milestones": self._derived("Upcoming milestones", [], tracker.get_upcoming_milestones, baby_id),
                 "upcoming_vaccines": self._derived("Upcoming vaccines", [], tracker.get_upcoming_vaccines, baby_id),
                 "last_event": self._latest_event(tracker, baby_id, now),
+                "recent_records": self._derived(
+                    "Recent records", [], tracker.get_recent_records, baby_id, RECENT_RECORDS_LIMIT),
             }
 
         account = {
@@ -531,7 +589,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 # Feeding change: compare last_feeding time
                 curr_feed_time = (current.get("last_feeding") or {}).get("time")
                 prev_feed_time = (prev.get("last_feeding") or {}).get("time")
-                if curr_feed_time and curr_feed_time != prev_feed_time:
+                if _is_newer(curr_feed_time, prev_feed_time):
                     self._announce("feeding", baby_name, baby_id, {
                         "type": (current.get("last_feeding") or {}).get("type"),
                         "time": curr_feed_time,
@@ -540,7 +598,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 # Diaper change: compare last_diaper time
                 curr_diaper_time = (current.get("last_diaper") or {}).get("time")
                 prev_diaper_time = (prev.get("last_diaper") or {}).get("time")
-                if curr_diaper_time and curr_diaper_time != prev_diaper_time:
+                if _is_newer(curr_diaper_time, prev_diaper_time):
                     self._announce("diaper", baby_name, baby_id, {
                         "status": (current.get("last_diaper") or {}).get("status"),
                         "time": curr_diaper_time,
@@ -549,7 +607,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 # Sleep change: compare last_sleep time or status
                 curr_sleep = current.get("last_sleep") or {}
                 prev_sleep = prev.get("last_sleep") or {}
-                if (curr_sleep.get("time") != prev_sleep.get("time") or
+                if (_is_newer(curr_sleep.get("time"), prev_sleep.get("time")) or
                         curr_sleep.get("is_sleeping") != prev_sleep.get("is_sleeping")):
                     self._announce("sleep_start" if curr_sleep.get("is_sleeping") else "sleep_end",
                                    baby_name, baby_id, {
@@ -559,12 +617,12 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
 
                 # Baths and medicines are only reported by the Activity event entity
                 curr_bath = current.get("last_bath") or {}
-                if curr_bath.get("time") and curr_bath.get("time") != (prev.get("last_bath") or {}).get("time"):
+                if _is_newer(curr_bath.get("time"), (prev.get("last_bath") or {}).get("time")):
                     self._announce("bath", baby_name, baby_id, {
                         "bath_type": curr_bath.get("bath_type"), "time": curr_bath.get("time")})
 
                 curr_medicine = current.get("last_medicine") or {}
-                if curr_medicine.get("time") and curr_medicine.get("time") != (prev.get("last_medicine") or {}).get("time"):
+                if _is_newer(curr_medicine.get("time"), (prev.get("last_medicine") or {}).get("time")):
                     self._announce("medicine", baby_name, baby_id, {
                         "medicine_name": curr_medicine.get("medicine_name"),
                         "amount": curr_medicine.get("amount"),
