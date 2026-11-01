@@ -24,6 +24,8 @@ from .const import (
     CONF_SLEEP_SOURCE_ASLEEP_STATES,
     CONF_SLEEP_SOURCE_ENTITY,
     CONF_SLEEP_SOURCES,
+    CONF_TRACKED_ACTIVITIES,
+    CONF_TRACKING,
     CONF_UNIT_SYSTEM,
     CONFIG_ENTRY_VERSION,
     DEFAULT_FEEDING_OVERDUE_HOURS,
@@ -36,6 +38,8 @@ from .const import (
     LOW_WET_THRESHOLD,
     NIGHT_END_HOUR,
     NIGHT_START_HOUR,
+    TRACKING_AUTO,
+    TRACKING_GROUPS,
     UNIT_SYSTEM_IMPERIAL,
     UNIT_SYSTEM_METRIC,
 )
@@ -171,6 +175,7 @@ class OptionsFlow(config_entries.OptionsFlow):
     def __init__(self):
         self._options = {}  # what the first step collected
         self._sleep_sources = {}  # {baby_id: settings} being collected, one baby per step
+        self._tracking = {}  # {baby_id: [groups]} for the babies set by hand (the rest are "auto")
         self._babies_left = []  # [(baby_id, name)] still to ask about
 
     async def async_step_init(self, user_input=None):
@@ -222,6 +227,10 @@ class OptionsFlow(config_entries.OptionsFlow):
         """After the general settings: one step per baby for the sleep source, if the account has babies."""
         self._options = options
         self._sleep_sources = dict(self.config_entry.options.get(CONF_SLEEP_SOURCES) or {})
+        self._tracking = {
+            baby_id: setting for baby_id, setting in (self.config_entry.options.get(CONF_TRACKING) or {}).items()
+            if isinstance(setting, list)
+        }
         coordinator = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
         babies = (getattr(coordinator, "data", None) or {}).get("babies") or []
         self._babies_left = [(baby.object_id, baby.name) for baby in babies]
@@ -233,25 +242,37 @@ class OptionsFlow(config_entries.OptionsFlow):
         data = dict(self._options)
         if self._sleep_sources:
             data[CONF_SLEEP_SOURCES] = self._sleep_sources
+        if self._tracking:
+            data[CONF_TRACKING] = self._tracking
         return self.async_create_entry(data=data)
 
     async def async_step_sleep_source(self, user_input=None):
-        """Take one baby's sleep from another entity (leave the entity empty for none)."""
+        """
+        Take one baby's sleep from another entity (leave the entity empty for none), and choose which
+        activities count as tracked for them (auto: the ones logged in the last two weeks).
+        """
         baby_id, baby_name = self._babies_left[0]
         errors = {}
 
         if user_input is not None:
-            if not user_input.get(CONF_SLEEP_SOURCE_ENTITY):
+            tracked = user_input.get(CONF_TRACKED_ACTIVITIES) or [TRACKING_AUTO]
+            source = {key: value for key, value in user_input.items() if key != CONF_TRACKED_ACTIVITIES}
+            if not source.get(CONF_SLEEP_SOURCE_ENTITY):
                 self._sleep_sources.pop(baby_id, None)
-            elif not user_input.get(CONF_SLEEP_SOURCE_ASLEEP_STATES):
+            elif not source.get(CONF_SLEEP_SOURCE_ASLEEP_STATES):
                 errors[CONF_SLEEP_SOURCE_ASLEEP_STATES] = "no_asleep_states"
             else:
-                self._sleep_sources[baby_id] = user_input
+                self._sleep_sources[baby_id] = source
             if not errors:
+                if TRACKING_AUTO in tracked:
+                    self._tracking.pop(baby_id, None)
+                else:
+                    self._tracking[baby_id] = [group for group in TRACKING_GROUPS if group in tracked]
                 self._babies_left.pop(0)
                 return await self._async_next_baby()
 
         saved = user_input if user_input is not None else self._sleep_sources.get(baby_id, {})
+        tracked = user_input.get(CONF_TRACKED_ACTIVITIES) if user_input is not None else self._tracking.get(baby_id)
         entity = saved.get(CONF_SLEEP_SOURCE_ENTITY)
         return self.async_show_form(
             step_id="sleep_source",
@@ -270,6 +291,10 @@ class OptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(CONF_SLEEP_MIN_MINUTES,
                              default=saved.get(CONF_SLEEP_MIN_MINUTES, DEFAULT_SLEEP_MIN_MINUTES)):
                     vol.All(int, vol.Range(min=0, max=180)),
+                vol.Optional(CONF_TRACKED_ACTIVITIES, default=tracked or [TRACKING_AUTO]):
+                    selector.SelectSelector(selector.SelectSelectorConfig(
+                        options=[TRACKING_AUTO, *TRACKING_GROUPS], multiple=True,
+                        translation_key=CONF_TRACKED_ACTIVITIES, mode=selector.SelectSelectorMode.LIST)),
             }),
         )
 
