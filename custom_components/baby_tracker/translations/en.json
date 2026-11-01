@@ -348,6 +348,9 @@
       },
       "baby_photo_landscape": {
         "name": "Photo Landscape"
+      },
+      "latest_photo": {
+        "name": "Latest Photo"
       }
     },
     "calendar": {
@@ -367,6 +370,7 @@
               "sleep_end": "Sleep ended",
               "bath": "Bath",
               "medicine": "Medicine",
+              "photo": "Photo added",
               "undo": "Entry undone"
             }
           }
