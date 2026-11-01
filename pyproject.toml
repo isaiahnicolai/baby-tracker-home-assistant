@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "babytracker-client"
-version = "0.3.1"
+version = "0.4.0"
 license = "MIT"
 license-files = ["LICENSE"]
 description = "Python client and CLI for the Baby Tracker sync service (also used by the Home Assistant integration)"

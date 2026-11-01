@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) (while it is below 1.0, a minor
 version may contain breaking changes).
 
-## [0.4.0] - unreleased
+## [0.4.0] - 2026-11-01
 
 ### Added
 
@@ -31,6 +31,18 @@ version may contain breaking changes).
   when an awake one will probably need sleep, from the baby's own recent wake
   windows within the typical range for their corrected age (35 minutes at
   birth up to 5-6 hours at two years).
+- **Next Sleep, Expected Wake and Wake Window** sensors for each baby, from that
+  prediction: when an awake baby will probably need sleep, when a sleeping one
+  is expected to wake, and the baby's usual wake window in hours (with the
+  typical range for their age, the basis and the sample size as attributes).
+- **Sleep Due** and **Nap Running Long** alerts. Sleep Due turns on when an
+  awake baby reaches the end of their wake window; Nap Running Long when a
+  sleep is 30 minutes past the expected wake time. Both are re-evaluated every
+  minute and accepted by `dismiss_alert` (`sleep_due`, `wake_overdue`).
+- Blueprint **Sleep due notification**: sends a phone a message when Sleep Due
+  turns on.
+- Assist: "when should Everly nap", "when is Everly's next nap" and "when will
+  Everly wake up" answer from the prediction (`BabyTrackerNextSleep`).
 
 ## [0.3.1] - 2026-11-01
 
@@ -289,6 +301,7 @@ before upgrading.
 - The YAML configuration path was removed; set up the integration from the
   UI.
 
+[0.4.0]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/releases/tag/v0.2.0

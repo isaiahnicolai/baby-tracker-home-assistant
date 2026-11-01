@@ -1,0 +1,58 @@
+blueprint:
+  name: Baby Tracker - Sleep due notification
+  description: >
+    Sends a notification to a phone running the Home Assistant app when a
+    baby's Sleep Due alert turns on (an awake baby has reached the end of
+    their usual wake window). Use {baby} in the message for the baby's name.
+  domain: automation
+  source_url: https://github.com/isaiahnicolai/baby-tracker-home-assistant/blob/main/blueprints/automation/baby_tracker/sleep_due_notification.yaml
+  author: Baby Tracker for Home Assistant
+  input:
+    sleep_due_alert:
+      name: Sleep Due alert
+      description: The baby's Sleep Due binary sensor (for example binary_sensor.everly_sleep_due).
+      selector:
+        entity:
+          filter:
+            - integration: baby_tracker
+              domain: binary_sensor
+    notify_device:
+      name: Phone to notify
+      description: A device with the Home Assistant companion app.
+      selector:
+        device:
+          filter:
+            - integration: mobile_app
+    title:
+      name: Title
+      default: Nap time
+      selector:
+        text:
+    message:
+      name: Message
+      description: "{baby} is replaced with the baby's name."
+      default: "{baby} is probably ready for a nap"
+      selector:
+        text:
+
+mode: single
+max_exceeded: silent
+
+variables:
+  alert: !input sleep_due_alert
+  message_template: !input message
+
+triggers:
+  - trigger: state
+    entity_id: !input sleep_due_alert
+    to: "on"
+
+actions:
+  - alias: Tell the phone which baby is sleepy
+    domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: !input title
+    message: >
+      {% set baby = state_attr(alert, 'baby_name') or state_attr(alert, 'friendly_name') %}
+      {{ message_template | replace('{baby}', baby) }}
