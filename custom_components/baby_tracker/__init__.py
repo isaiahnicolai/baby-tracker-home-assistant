@@ -173,6 +173,15 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
             self._baby_ids = babies
             self.hass.async_create_task(self.hass.config_entries.async_reload(self.config_entry.entry_id))
 
+    @staticmethod
+    def _insights_for(tracker, baby):
+        """One baby's insights, or {} so a bad record never breaks the whole refresh."""
+        try:
+            return tracker.get_insights(baby.object_id) or {}
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Insights for %s unavailable: %s", baby.name, err, exc_info=True)
+            return {}
+
     def _fetch(self, www_dir):
         """
         Sync and read everything for one refresh. Runs in a single executor
@@ -224,6 +233,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 "today_wet_count": tracker.get_today_wet_diaper_count(baby_id),
                 "daily_summary": tracker.get_daily_summary(baby_id),
                 "sleep_analysis": tracker.get_sleep_analysis(baby_id, 14),
+                "insights": self._insights_for(tracker, baby),
             }
 
         return all_babies, baby_info, baby_pictures, baby_data

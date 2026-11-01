@@ -18,17 +18,60 @@ TWIN = Baby({"objectID": "ID-TWIN", "name": "Ann Marie", "dob": "", "dueDay": ""
 CORE = "custom_components.baby_tracker.client.core.BabyTracker"
 
 
-def make_entry():
+def make_entry(unit_system="imperial"):
     return MockConfigEntry(
         domain=DOMAIN, unique_id=EMAIL, title="Baby Tracker",
-        data={"email": EMAIL, "password": "pw", "scan_interval": 15, "unit_system": "imperial",
+        data={"email": EMAIL, "password": "pw", "scan_interval": 15, "unit_system": unit_system,
               "device_uuid": "ha-uuid"},
     )
 
 
+# What BabyTracker.get_insights returns (datetimes as ISO strings)
+INSIGHTS = {
+    "baby_id": "ID-EVERLY",
+    "name": "Everly",
+    "generated_at": "2026-03-01T10:00:00+00:00",
+    "age": {
+        "chronological_days": 60, "corrected_days": 46, "chronological_months": 1.97,
+        "corrected_months": 1.51, "gestation_days": 244, "premature": True,
+        "correction_days": 14, "correction_applied": True,
+    },
+    "next_feed": {
+        "predicted_at": "2026-03-01T12:30:00+00:00", "interval_hours": 3.0, "basis": "history",
+        "sample_count": 6, "bucket": "day", "last_feed_at": "2026-03-01T09:30:00+00:00",
+        "overdue": False, "max_gap_hours": 5.0, "wake_by": "2026-03-01T14:30:00+00:00",
+    },
+    "intake": {
+        "actual_ml": 420.0, "expected_min_ml": 600, "expected_max_ml": 800, "status": "low",
+        "reason": "420 ml is under 600 ml (150 ml/kg)", "bottle_feeds": 6, "nursing_feeds": 1,
+        "ml_per_kg": 105.0,
+    },
+    "diapers": {
+        "status": "ok", "wet_status": "ok", "stool_status": "ok", "wet_count": 7, "dirty_count": 3,
+        "day_of_life": 61, "expected_min_wet": 6, "low_below_wet": 5, "expected_min_dirty": 0,
+        "note": "Infrequent stools are normal after 6 weeks",
+    },
+    "growth": {
+        "weight": {
+            "kind": "weight", "age_months": 1.4, "value": 4.0, "z": -0.5, "percentile": 30.9,
+            "p3": 3.2, "p50": 4.5, "p97": 5.9, "measured_at": "2026-02-27T09:00:00+00:00",
+        },
+        "length": {
+            "kind": "length", "age_months": 1.4, "value": 54.0, "z": -0.2, "percentile": 42.1,
+            "p3": 50.0, "p50": 55.0, "p97": 60.0, "measured_at": "2026-02-27T09:00:00+00:00",
+        },
+    },
+    "weight_velocity": {
+        "status": "ok", "grams_per_day": 27.5, "expected_min": 20.0, "expected_max": 35.0,
+        "span_days": 14.0, "from_at": "2026-02-13T09:00:00+00:00", "to_at": "2026-02-27T09:00:00+00:00",
+        "reason": "28 g/day against 20-35 g/day expected",
+    },
+}
+
+
 def fake_fetch(self, www_dir):
     babies = [TWIN, EVERLY]
-    return babies, EVERLY, {}, {b.name: {"baby_info": b} for b in babies}
+    return babies, EVERLY, {}, {b.name: {"baby_info": b, "insights": INSIGHTS if b is EVERLY else {}} for b in babies}
 
 
 @pytest.fixture
@@ -139,3 +182,34 @@ async def test_options_flow(hass):
             result["flow_id"], {"scan_interval": 5, "unit_system": "metric"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options == {"scan_interval": 5, "unit_system": "metric"}
+
+
+async def test_insight_entities(hass, backend):
+    await setup(hass, make_entry(unit_system="metric"))
+
+    assert hass.states.get("sensor.everly_next_feed").state == "2026-03-01T12:30:00+00:00"
+    next_feed = hass.states.get("sensor.everly_next_feed").attributes
+    assert next_feed["basis"] == "history" and next_feed["wake_by"] == "2026-03-01T14:30:00+00:00"
+
+    intake = hass.states.get("sensor.everly_intake_24h")
+    assert float(intake.state) == 420.0
+    assert intake.attributes["unit_of_measurement"] == "mL"
+    assert intake.attributes["status"] == "low"
+    assert intake.attributes["expected_min_ml"] == 600
+    assert intake.attributes["bottle_feeds"] == 6
+
+    assert hass.states.get("sensor.everly_intake_status").state == "low"
+    assert hass.states.get("sensor.everly_diaper_adequacy").state == "ok"
+    assert float(hass.states.get("sensor.everly_weight_percentile").state) == 30.9
+    assert hass.states.get("sensor.everly_weight_percentile").attributes["p50"] == 4.5
+    assert hass.states.get("sensor.everly_head_percentile").state == "unknown"  # no head measurement
+    assert float(hass.states.get("sensor.everly_weight_gain").state) == 27.5
+    assert hass.states.get("sensor.everly_corrected_age").state == "46"
+
+    assert hass.states.get("binary_sensor.everly_intake_low").state == "on"
+    assert hass.states.get("binary_sensor.everly_feed_due").state == "on"  # the prediction is in the past
+    assert hass.states.get("binary_sensor.everly_wake_to_feed").state == "on"
+
+    # A baby with no insights has unknown values rather than errors
+    assert hass.states.get("sensor.ann_marie_next_feed").state == "unknown"
+    assert hass.states.get("binary_sensor.ann_marie_intake_low").state == "off"

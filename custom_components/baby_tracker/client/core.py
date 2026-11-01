@@ -3,11 +3,12 @@
 from .api import AccountResetError, AuthenticationError, BabyTrackerAPI
 from .database import BabyTrackerLocalDatabase
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import sqlite3
 import logging
 
+from . import insights
 from .models import Baby
 
 _LOGGER = logging.getLogger(__name__)
@@ -1654,3 +1655,122 @@ class BabyTracker:
         except Exception as e:
             _LOGGER.error(f"Failed to add activity record: {str(e)}")
             return {"status": "error", "message": f"Failed to add activity record: {str(e)}"}
+
+    # ===== INSIGHTS =====
+
+    # How far back feeds are read to learn the baby's rhythm
+    _INSIGHT_FEED_DAYS = 7
+    # A first weight within this many days of birth is taken as the birth weight
+    _BIRTH_WEIGHT_DAYS = 14
+
+    def _local_tz(self):
+        """The configured time zone, else the host's (read each time so DST is followed)."""
+        return self.tz or datetime.now().astimezone().tzinfo
+
+    def get_insights(self, baby_id=None, now=None):
+        """
+        Derived insights for one baby: age, next feed, 24-hour intake, diaper
+        adequacy, growth percentiles and weight velocity (see insights.py).
+
+        Args:
+            baby_id: Baby ID (defaults to the first baby)
+            now: Optional aware datetime to compute for (defaults to now)
+
+        Returns:
+            dict: {"baby_id", "name", "generated_at", "age", "next_feed",
+            "intake", "diapers", "growth", "weight_velocity"}; each part is a
+            plain dict, or None when the data it needs is missing. Empty when
+            the baby isn't found.
+        """
+        if not self.db:
+            if self.db_path and os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path)
+                self.api.local_db = self.db
+            else:
+                return {}
+
+        if baby_id:
+            baby = next((b for b in self.db.get_all_babies() if b.object_id == baby_id), None)
+        else:
+            baby = self.db.get_baby_info()
+        if baby is None:
+            return {}
+        baby_id = baby.object_id
+
+        tz = self._local_tz()
+        now = now.astimezone(tz) if now else datetime.now(tz)
+        stamp = now.timestamp()
+
+        def at(seconds):
+            return datetime.fromtimestamp(seconds, tz)
+
+        age = insights.age_info(baby.dob, baby.due_day, now)
+        growth_rows = self.db.get_insight_growth(baby_id)
+
+        def age_at(moment):
+            return insights.age_info(baby.dob, baby.due_day, moment)
+
+        # Corrected age drives feeding and growth expectations; the day of
+        # life for diapers is the chronological one.
+        corrected_days = max(0, age.corrected_days) if age else 0
+        chronological_days = age.chronological_days if age else 0
+
+        latest_weight = next((r for r in reversed(growth_rows) if r["weight_kg"]), None)
+        weight_kg = latest_weight["weight_kg"] if latest_weight else None
+        birth_weight_kg = None
+        if age and growth_rows:
+            first = next((r for r in growth_rows if r["weight_kg"]), None)
+            born = insights.parse_api_date(baby.dob)
+            if first and born and at(first["time"]) - born <= timedelta(days=self._BIRTH_WEIGHT_DAYS):
+                birth_weight_kg = first["weight_kg"]
+
+        feeds = [
+            insights.Feed(
+                start=at(row["time"]),
+                # Nursing durations are minutes (Android: time + duration * 60000 ms)
+                end=at(row["time"] + row["duration"] * 60) if row["duration"] else None,
+                amount_ml=row["amount_ml"],
+                kind=row["kind"],
+            )
+            for row in self.db.get_insight_feeds(baby_id, stamp - self._INSIGHT_FEED_DAYS * 86400)
+        ]
+        day_ago = now - timedelta(hours=24)
+
+        next_feed = insights.predict_next_feed(
+            feeds, now, corrected_days, weight_kg=weight_kg, birth_weight_kg=birth_weight_kg)
+        intake = insights.intake_assessment(
+            [f for f in feeds if f.start >= day_ago], weight_kg, corrected_days, None)
+
+        diapers = None
+        if age:
+            counts = self.db.get_insight_diaper_counts(baby_id, day_ago.timestamp())
+            diapers = insights.diaper_adequacy(counts["wet"], counts["dirty"], chronological_days)
+
+        growth = None
+        velocity = None
+        if age:
+            growth = {}
+            for kind, column in (("weight", "weight_kg"), ("length", "length_cm"), ("head", "head_cm")):
+                row = next((r for r in reversed(growth_rows) if r[column]), None)
+                if row is None:
+                    continue
+                measured = at(row["time"])
+                months = age_at(measured).corrected_months
+                result = insights.growth_percentile(baby.gender, months, row[column], kind)
+                if result is not None:
+                    growth[kind] = {**insights.to_dict(result), "measured_at": measured.isoformat()}
+            weights = [(at(r["time"]), r["weight_kg"]) for r in growth_rows if r["weight_kg"]]
+            if weights:
+                velocity = insights.weight_velocity(weights, max(0, age_at(weights[-1][0]).corrected_days))
+
+        return {
+            "baby_id": baby_id,
+            "name": baby.name,
+            "generated_at": now.isoformat(),
+            "age": insights.to_dict(age) if age else None,
+            "next_feed": insights.to_dict(next_feed),
+            "intake": insights.to_dict(intake),
+            "diapers": insights.to_dict(diapers) if diapers else None,
+            "growth": growth or None,
+            "weight_velocity": insights.to_dict(velocity) if velocity else None,
+        }

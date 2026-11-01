@@ -163,6 +163,28 @@ After setting up the integration, the following sensors will be created **for ea
 - **Last Doctor Visit** - Most recent doctor appointment or visit
 - **Last Vaccine** - Most recent vaccine administered
 
+## Insights
+
+Alongside the raw logs, each baby gets a few derived entities. They are recalculated on every refresh from what you have logged, and show as unknown when there is not enough data (no weight, no feeds, and so on).
+
+| Entity | What it shows |
+| --- | --- |
+| `sensor.<baby>_next_feed` | Timestamp of the next expected feed, from the median of recent feed intervals (day and night separately), with the interval, basis and sample size as attributes |
+| `sensor.<baby>_feed_interval` | The usual time between feeds, in hours |
+| `sensor.<baby>_intake_24h` | Bottle milk (formula and pumped) over the last 24 hours, with the expected range for the baby's weight. Shown in fl oz when the integration is set to imperial units |
+| `sensor.<baby>_intake_status` | `low`, `ok`, `high` or `unknown` against that range |
+| `sensor.<baby>_diaper_adequacy` | `ok`, `low` or `unknown` for wet and dirty diapers in the last 24 hours, for the baby's age |
+| `sensor.<baby>_weight_percentile`, `_length_percentile`, `_head_percentile` | Percentile of the latest measurement on the WHO growth standard (attributes give z-score and the 3rd, 50th and 97th percentile values in kg or cm) |
+| `sensor.<baby>_weight_gain` | Grams per day between the latest two weights at least 5 days apart, with the expected range |
+| `sensor.<baby>_corrected_age` | Age in days corrected for prematurity (diagnostic) |
+| `binary_sensor.<baby>_intake_low` | On when intake status is `low` |
+| `binary_sensor.<baby>_feed_due` | On once the predicted next feed time has passed |
+| `binary_sensor.<baby>_wake_to_feed` | On when a young baby has gone past the longest sensible gap between feeds |
+
+The numbers rest on published guidance: roughly 150-200 ml of milk per kg of body weight per day (AAP and NHS feeding guidance, capped at 960 ml), the WHO Child Growth Standards for percentiles (read from the CDC's copy of the tables, bundled in `custom_components/baby_tracker/client/data`), and, for babies born before 37 weeks, age corrected for prematurity until 24 months as the AAP recommends. Feed timing, diaper and weight gain ranges are rules of thumb, not measurements of your baby. **These entities are not medical advice and cannot diagnose anything.** Every baby is different; talk to your pediatrician or health visitor about any worry about feeding, diapers or growth.
+
+The three binary sensors work like the other alerts: they can be dismissed with `baby_tracker.dismiss_alert` using their entity ID.
+
 ## Service Calls
 
 All services support multi-baby tracking with an optional `baby_name` parameter.
