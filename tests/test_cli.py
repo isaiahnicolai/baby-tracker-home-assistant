@@ -43,6 +43,13 @@ def test_adds_a_diaper_for_the_named_baby(server, state_dir, capsys):
     assert server.uploads[-1]["record"]["status"] == 2
 
 
+def test_logout_ends_the_server_session_without_syncing(server, state_dir, capsys):
+    result = run(capsys, state_dir, "logout")
+    assert result["status"] == "success"
+    assert ("DELETE", "/session") in server.requests
+    assert not [p for m, p in server.requests if p.startswith("/account/transaction")]
+
+
 def test_requires_a_baby_when_there_are_several(server, state_dir, capsys):
     with pytest.raises(SystemExit, match="--baby is required"):
         main(["--state-dir", str(state_dir), "add-diaper", "wet"])

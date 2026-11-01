@@ -323,6 +323,84 @@ BABY_REFERENCE_TABLES = [
 ]
 
 
+# Picture.mediaType (MediaType): the Picture table stores the index
+MEDIA_TYPES = ["MediaTypePicture", "MediaTypeVideo", "MediaTypeAudio"]
+THUMBNAIL_SUFFIX = "__thumbnail.jpg"  # DefaultValues.ThumbnailPost
+
+
+def picture_entries(record) -> List[Dict[str, Any]]:
+    """
+    The pictureNote entries of an activity as Picture rows plus a `deleted`
+    flag: [{ID, Timestamp, Type, FileName, deleted}]. Entries without an
+    objectID can't be keyed and are left out. Nothing is returned for an
+    activity whose pictures aren't loaded (Activity.isPictureLoaded).
+    """
+    if not _bool(record.get("pictureLoaded"), default=True):
+        return []
+    entries = []
+    for picture in record.get("pictureNote") or []:
+        if not isinstance(picture, dict) or not picture.get("objectID"):
+            continue
+        entries.append({
+            "ID": picture["objectID"],
+            "Timestamp": picture.get("timestamp"),
+            "Type": _enum(picture.get("mediaType"), MEDIA_TYPES, 0),
+            # Picture() defaults its file name to its own ID
+            "FileName": picture.get("fileName") or picture["objectID"],
+            "deleted": _bool(picture.get("deleted")),
+        })
+    return entries
+
+
+def media_files(file_name: str, media_type: int) -> Tuple[str, str]:
+    """(file, thumbnail) names on the server for a Picture (Picture.getFileFullName/getThumbnailFullName)."""
+    extension = {0: ".jpg", 1: ".mp4"}.get(media_type, "")
+    return file_name + extension, file_name + THUMBNAIL_SUFFIX
+
+
+def format_date(timestamp) -> str:
+    """Unix seconds as the API's date string."""
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(float(timestamp or 0), timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
+
+
+# Wire names that differ from the names we store records under
+WIRE_NAMES = {"BathType": "BathDesc"}
+
+
+def named_wire(object_type: str, row: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    A stored baby or selection as the apps send it, for the records we upload
+    ourselves (ConflictRecord winners, RELIVE). `row` is its table row by column name.
+    """
+    wire = {
+        "BCObjectType": WIRE_NAMES.get(object_type, object_type),
+        "objectID": row["ID"],
+        "timestamp": format_date(row["Timestamp"]),
+        "newFlage": False,
+        "name": row["Name"],
+    }
+    if object_type == "Baby":
+        wire.update({
+            "dob": format_date(row["DOB"]) if row["DOB"] else "",
+            "dueDay": format_date(row["DueDay"]) if row["DueDay"] else "",
+            "gender": bool(row["Gender"]),
+            "pictureName": row["Picture"] or "",
+        })
+        return wire
+    wire["desc"] = row["Description"] or ""
+    if object_type == "MedicationSelection":
+        wire.update({"prescription": bool(row["IsPrescription"]), "amountPerTime": row["AmountPerTime"] or 0,
+                     "unit": row["Unit"] or "", "interval": row["Interval"] or 0})
+    elif object_type == "OtherFeedSelection":
+        wire["bottle"] = bool(row["IsBottle"])
+    elif object_type in ("MilestoneSelection", "VaccineSelection"):
+        wire["forAge"] = row["ForAge"] or 0
+        if object_type == "MilestoneSelection" and row["BabyID"]:
+            wire["babyID"] = row["BabyID"]
+    return wire
+
+
 def canonical_type(object_type: str) -> str:
     return ALIASES.get(object_type, object_type)
 

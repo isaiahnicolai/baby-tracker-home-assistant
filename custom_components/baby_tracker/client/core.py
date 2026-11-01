@@ -1,6 +1,6 @@
 """Baby Tracker core functionality."""
 
-from .api import AuthenticationError, BabyTrackerAPI
+from .api import AccountResetError, AuthenticationError, BabyTrackerAPI
 from .database import BabyTrackerLocalDatabase
 import os
 from datetime import datetime, timezone
@@ -135,7 +135,7 @@ class BabyTracker:
                 "baby_info": baby_info,
                 "in_group": True
             }
-        except AuthenticationError:
+        except (AuthenticationError, AccountResetError):
             raise
         except Exception as e:
             _LOGGER.error(f"Authentication failed: {str(e)}")
@@ -154,9 +154,16 @@ class BabyTracker:
             _LOGGER.error(f"Failed to add {what}: {e}")
             return {"status": "error", "message": f"Failed to add {what}: {e}"}
 
-    def sync(self):
+    def sync(self, picture_dir=None):
         """
-        Synchronize data with the server.
+        Synchronize data with the server: merge other devices' changes,
+        download the activity pictures they refer to, then upload ours (the
+        app's order).
+
+        Args:
+            picture_dir: directory to keep activity pictures in. Pictures are
+                only downloaded (and deleted along with their activity) when
+                this is given.
 
         Returns:
             dict: Sync results with counts of transactions
@@ -171,12 +178,22 @@ class BabyTracker:
         }
 
         try:
-            # Same order as the app: merge other devices' changes, then upload ours
+            if picture_dir and self.db:
+                self.db.picture_dir = picture_dir
+            # Same order as the app: merge other devices' changes, download
+            # photos, then upload ours
             transactions = self.api.sync_transactions()
             result["synced_transactions"] = len(transactions)
+            if picture_dir:
+                try:
+                    result["downloaded_pictures"] = self.api.download_pending_pictures(picture_dir)
+                except Exception as e:
+                    # As in the app, a photo problem doesn't stop our records going up
+                    _LOGGER.warning(f"Picture download failed: {e}")
+                    result["picture_error"] = str(e)
             result["uploaded_transactions"] = self.api.upload_pending()
             result["status"] = "success"
-        except AuthenticationError:
+        except (AuthenticationError, AccountResetError):
             raise
         except Exception as e:
             _LOGGER.error(f"Sync failed: {str(e)}")
@@ -206,6 +223,9 @@ class BabyTracker:
             if self.db:
                 try:
                     self.api.upload_pending()
+                except AccountResetError:
+                    # The queue belongs to the old group and can't be sent to the new one
+                    _LOGGER.warning("Account was reset; discarding records that were never uploaded")
                 except Exception as e:
                     pending = len(self.db.get_pending_transactions())
                     return {
@@ -230,6 +250,9 @@ class BabyTracker:
             self.api._merge_failures = {}
             self.api.baby_info = None
             self.api.devices = None
+            # The new database is synced with whatever account we log in to now
+            # (it is also the only way past an AccountResetError)
+            self.api.account_id = None
             self.api.is_authenticated = False
             self.is_authenticated = False
 
@@ -346,6 +369,11 @@ class BabyTracker:
         try:
             # Create the save directory if it doesn't exist
             os.makedirs(save_dir, exist_ok=True)
+
+            # The app asks for pictureName + ".jpg"; a name that already carries an extension is used as it is
+            picture_name = os.path.basename(picture_name.replace("\\", "/"))  # never a path
+            if not os.path.splitext(picture_name)[1]:
+                picture_name += ".jpg"
 
             # Check if we already have this picture
             local_path = os.path.join(save_dir, picture_name)

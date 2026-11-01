@@ -19,7 +19,7 @@ import os
 import sys
 import uuid
 
-from .api import AuthenticationError
+from .api import AccountResetError, AuthenticationError
 from .core import BabyTracker
 
 LAST = {
@@ -55,6 +55,11 @@ def _state(state_dir):
     return state
 
 
+def _picture_dir(args):
+    """Where activity pictures are kept (~/.babytracker/pictures by default)."""
+    return os.path.join(args.state_dir, "pictures")
+
+
 def _connect(args):
     state = _state(args.state_dir)
     email = args.email or os.environ.get("BABYTRACKER_EMAIL") or input("Baby Tracker email: ")
@@ -65,7 +70,7 @@ def _connect(args):
     if result.get("status") != "success":
         raise SystemExit(f"Could not connect: {result.get('message')}")
     if not args.offline:
-        sync = tracker.sync()
+        sync = tracker.sync(picture_dir=_picture_dir(args))
         if sync.get("status") != "success":
             print(f"warning: sync failed: {sync.get('message')}", file=sys.stderr)
     return tracker
@@ -93,7 +98,14 @@ def cmd_babies(tracker, args):
 
 
 def cmd_sync(tracker, args):
-    _print(tracker.sync())
+    _print(tracker.sync(picture_dir=_picture_dir(args)))
+
+
+def cmd_logout(tracker, args):
+    """End the server session. Nothing is stored between runs (each command logs in
+    again), so there is no local session to clear beyond the connection's cookies."""
+    tracker.api.logout()
+    _print({"status": "success", "message": "Logged out"})
 
 
 def cmd_last(tracker, args):
@@ -132,6 +144,7 @@ def main(argv=None):
     sub.add_parser("babies", help="list babies").set_defaults(func=cmd_babies)
     sub.add_parser("sync", help="download new records and upload queued ones").set_defaults(func=cmd_sync)
     sub.add_parser("devices", help="list devices registered on the account").set_defaults(func=cmd_devices)
+    sub.add_parser("logout", help="end the session on the server").set_defaults(func=cmd_logout)
 
     last = sub.add_parser("last", help="show the most recent record of a kind")
     last.add_argument("kind", choices=sorted(LAST))
@@ -151,10 +164,14 @@ def main(argv=None):
     raw.set_defaults(func=cmd_raw)
 
     args = parser.parse_args(argv)
+    if args.command == "logout":
+        args.offline = True  # no point syncing just to log out
     try:
         tracker = _connect(args)
     except AuthenticationError as err:
         raise SystemExit(f"Login rejected: {err}")
+    except AccountResetError as err:
+        raise SystemExit(f"{err}\nDelete the state directory ({args.state_dir}) to start over.")
     args.func(tracker, args)
 
 

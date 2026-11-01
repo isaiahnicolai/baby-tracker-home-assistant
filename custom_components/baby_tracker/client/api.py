@@ -8,6 +8,7 @@ import os
 import logging
 import sqlite3
 import time as _time
+from urllib.parse import quote
 from datetime import datetime, timezone, tzinfo
 
 from .transaction import TransactionHandler
@@ -49,10 +50,22 @@ BASE_URL = "https://prodapp.babytrackers.com"
 REQUEST_TIMEOUT = 30  # seconds
 PAGE_SIZE = 500  # the server returns at most this many transactions per request
 MAX_MERGE_ATTEMPTS = 3  # syncs to retry a transaction that fails to apply before skipping it
+SEED_DATABASE_NAME = "EasyLog.db"  # the database inside the group seed zip
+MAX_PICTURE_ATTEMPTS = 10  # failed downloads of one picture file before it is dropped
+PICTURE_BOUNDARY = "__BABY_TRACKER_BOUNDARY____Photo__"
 USER_AGENT = "Dalvik/2.1.0 (Linux; U; Android 13; sdk_gphone_x86_64 Build/TE1A.220922.034)"
 
 class AuthenticationError(Exception):
     """The server rejected the email/password (or the password was changed)."""
+
+
+class AccountResetError(Exception):
+    """
+    Login succeeded but for a different account than this database was synced
+    with: the group was reset or recreated (SyncImple.checkAccountIDFromResponse).
+    Not an AuthenticationError: the password is fine, but the local data belongs
+    to the old group, so syncing stops until the database is force-resynced.
+    """
 
 
 class BabyTrackerAPI:
@@ -133,14 +146,15 @@ class BabyTrackerAPI:
             # Get account ID from the response
             try:
                 account_data = response.json()
-                self.account_id = account_data.get("AccountID")
+                account_id = account_data.get("AccountID")
+                self._check_account(account_id)
+                self.account_id = account_id
                 _LOGGER.info(f"Logged in successfully with account ID: {self.account_id}")
                 self.is_authenticated = True
 
                 # Initialize transaction handler if we have a local database
                 if self.local_db and not self.transaction_handler:
-                    from .transaction import TransactionHandler
-                    self.transaction_handler = TransactionHandler(self.local_db)
+                    self.transaction_handler = self._new_handler()
                     _LOGGER.info("Initialized transaction handler")
 
             except ValueError:
@@ -159,6 +173,35 @@ class BabyTrackerAPI:
             return True
         else:
             raise Exception("No session ID found in response cookies")
+
+    def _check_account(self, account_id):
+        """
+        Every login must return the account this database was synced with
+        (SyncImple.checkAccountIDFromResponse). A different one means the group
+        was reset, and our local data and sync progress belong to the old group.
+        The first login on a database records the account.
+        """
+        if not account_id or not self.local_db:
+            return
+        stored = self.local_db.get_account_id()
+        if stored is None:
+            if os.path.exists(self.local_db.db_path):
+                self.local_db.set_account_id(account_id)
+        elif stored != str(account_id):
+            raise AccountResetError(
+                f"This account was reset or recreated (account {stored} is now {account_id}); "
+                "the local data belongs to the old group. Force a resync to join the new one.")
+
+    def _new_handler(self):
+        handler = TransactionHandler(self.local_db, enqueue=self._enqueue)
+        return handler
+
+    def _enqueue(self, op_code, record):
+        """Queue a record for upload under the next SyncID (never below the server's count for us)."""
+        transaction_b64 = base64.b64encode(json.dumps(record).encode('utf-8')).decode('utf-8')
+        server_last = next((d.get("LastSyncID", 0) for d in self.devices or []
+                            if d["DeviceUUID"] == self.device_uuid), 0)
+        return self.local_db.enqueue_transaction(op_code, transaction_b64, min_sync_id=server_last)
 
     def _request(self, method, path, **kwargs):
         """Send a request, logging in again once if the session has expired."""
@@ -273,14 +316,19 @@ class BabyTrackerAPI:
                 with zipfile.ZipFile(temp_zip_path, 'r') as zip_ref:
                     zip_ref.extractall(temp_dir)
                 
-                # Look for the database file
+                # The app looks for EasyLog.db (URLUtility.iOSDatabaseName); any other
+                # .db is only a fallback
                 db_source_path = None
                 for root, dirs, files in os.walk(temp_dir):
                     for file in files:
-                        if file.endswith(".db"):
+                        if file == SEED_DATABASE_NAME:
                             db_source_path = os.path.join(root, file)
                             break
-                
+                        if file.endswith(".db") and db_source_path is None:
+                            db_source_path = os.path.join(root, file)
+                    if db_source_path and os.path.basename(db_source_path) == SEED_DATABASE_NAME:
+                        break
+
                 if not db_source_path:
                     raise Exception("Database file not found in seed data")
                 
@@ -557,20 +605,25 @@ class BabyTrackerAPI:
             # The seed is another device's database: drop its upload queue so
             # its pending work is never sent as ours
             self.local_db.clear_sync_state()
-                
+            # This database now belongs to the account we just logged in to
+            if self.account_id:
+                self.local_db.set_account_id(self.account_id)
+
             baby_info = seed_result.get("baby_info")
             if not baby_info:
                 _LOGGER.warning("No baby information found in seed data")
 
             self.baby_info = baby_info
-            
+
             # Initialize transaction handler
             if self.local_db and not self.transaction_handler:
-                self.transaction_handler = TransactionHandler(self.local_db)
+                self.transaction_handler = self._new_handler()
                 _LOGGER.info("Initialized transaction handler")
-            
-            # Step 4: Sync transactions
+
+            # Step 4: Sync transactions. While joining, merges don't queue
+            # conflict/relive/delete echoes for the other devices (isInJoinGroupProcess).
             _LOGGER.info("Syncing transactions")
+            self.transaction_handler.joining = True
             try:
                 transactions = self.sync_transactions()
                 transaction_count = len(transactions) if transactions else 0
@@ -578,6 +631,8 @@ class BabyTrackerAPI:
             except Exception as sync_error:
                 _LOGGER.warning(f"Sync error (non-fatal): {sync_error}")
                 transaction_count = 0
+            finally:
+                self.transaction_handler.joining = False
             
             return {
                 "status": "success",
@@ -585,7 +640,7 @@ class BabyTrackerAPI:
                 "baby_info": baby_info
             }
             
-        except AuthenticationError:
+        except (AuthenticationError, AccountResetError):
             raise
         except Exception as e:
             _LOGGER.error(f"Error joining group: {e}")
@@ -638,7 +693,8 @@ class BabyTrackerAPI:
                     sync_id = int(item.get("SyncID", 0))
                     if sync_id <= merged:
                         continue
-                    if self.transaction_handler.process_transaction(item):
+                    if self.transaction_handler.process_transaction(
+                            item, own_device=device_uuid == self.device_uuid):
                         applied.append(item)
                         merged = sync_id
                         self._merge_failures.pop((device_uuid, sync_id), None)
@@ -689,12 +745,10 @@ class BabyTrackerAPI:
 
         transaction_b64 = base64.b64encode(json.dumps(record).encode('utf-8')).decode('utf-8')
         if not self.transaction_handler.process_transaction(
-                {"SyncID": 0, "OPCode": op_code, "Transaction": transaction_b64}):
+                {"SyncID": 0, "OPCode": op_code, "Transaction": transaction_b64}, echo=False):
             raise Exception(f"Could not save {record.get('BCObjectType')} locally")
 
-        server_last = next((d.get("LastSyncID", 0) for d in self.devices or []
-                            if d["DeviceUUID"] == self.device_uuid), 0)
-        self.local_db.enqueue_transaction(op_code, transaction_b64, min_sync_id=server_last)
+        self._enqueue(op_code, record)
 
         queued = False
         try:
@@ -806,6 +860,103 @@ class BabyTrackerAPI:
         if uploaded:
             _LOGGER.info(f"Uploaded {uploaded} transaction(s)")
         return uploaded
+
+    def download_pending_pictures(self, dest_dir):
+        """
+        Download the picture files merged activities are waiting for (the
+        PhotoDownloadList; Android downloadPhotoImpl) into dest_dir.
+
+        Each queued file gets one attempt per call. A file the server doesn't
+        give us counts a failed attempt, and is dropped from the queue after
+        MAX_PICTURE_ATTEMPTS of them. Being unable to reach the server counts
+        against nothing: the error is raised and the queue left as it is.
+
+        Returns:
+            int: number of files saved
+        """
+        if not self.local_db:
+            return 0
+        if not self.session_id:
+            raise Exception("Not logged in")
+        os.makedirs(dest_dir, exist_ok=True)
+        self.local_db.picture_dir = dest_dir
+
+        saved = 0
+        for name, _attempts in self.local_db.get_pending_downloads(MAX_PICTURE_ATTEMPTS):
+            # Names come from other devices' records and become paths here
+            if not name or name != os.path.basename(name.replace("\\", "/")) or name in (".", ".."):
+                _LOGGER.warning(f"Ignoring picture file with an unsafe name: {name!r}")
+                self.local_db.finish_download(name)
+                continue
+            path = os.path.join(dest_dir, name)
+            if os.path.exists(path):
+                self.local_db.finish_download(name)
+                continue
+
+            response = self._request("GET", f"/account/picture/{quote(name)}")
+            if response.status_code == 200:
+                if response.content:
+                    temp_path = path + ".part"
+                    with open(temp_path, "wb") as f:
+                        f.write(response.content)
+                    os.replace(temp_path, path)
+                    saved += 1
+                self.local_db.finish_download(name)
+                continue
+
+            attempts = self.local_db.fail_download(name)
+            if attempts >= MAX_PICTURE_ATTEMPTS:
+                _LOGGER.error(f"Giving up on picture {name} after {attempts} failed downloads "
+                              f"(last status {response.status_code})")
+                self.local_db.finish_download(name)
+            else:
+                _LOGGER.warning(f"Could not download picture {name}: {response.status_code} "
+                                f"(attempt {attempts}/{MAX_PICTURE_ATTEMPTS})")
+        if saved:
+            _LOGGER.info(f"Downloaded {saved} picture file(s)")
+        return saved
+
+    def upload_picture(self, path):
+        """
+        Upload a JPEG to the account (Android sendUploadPicture): a multipart
+        POST to /account/picture with the file in the `picture` field. Records
+        refer to it by file name. Returns True once the server answers 201.
+        """
+        if not self.session_id:
+            raise Exception("Not logged in")
+        with open(path, "rb") as f:
+            data = f.read()
+        file_name = os.path.basename(path).replace('"', "_").replace("\r", "_").replace("\n", "_")
+        head = (f'\r\n--{PICTURE_BOUNDARY}\r\n'
+                f'Content-Disposition: form-data; name="picture"; filename="{file_name}"\r\n'
+                'Content-Type: image/jpeg\r\n\r\n').encode("utf-8")
+        tail = f'\r\n--{PICTURE_BOUNDARY}--\r\n'.encode("utf-8")
+        response = self._request(
+            "POST", "/account/picture",
+            headers={"Content-Type": f"multipart/form-data; boundary={PICTURE_BOUNDARY}"},
+            data=head + data + tail,
+        )
+        if response.status_code != 201:
+            raise Exception(f"Upload of picture {file_name} failed: {response.status_code}")
+        return True
+
+    def logout(self):
+        """
+        End the server session (SyncImple.sendDisconnect: DELETE /session; the
+        server answers 200, or 401 if the session had already expired).
+        """
+        # Not _request: a logout must never log in again because the session was gone
+        response = self.session.request(
+            "DELETE", f"{BASE_URL}/session",
+            headers={'Connection': 'close', 'User-Agent': self.USER_AGENT},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code not in (200, 401):
+            raise Exception(f"Logout failed with status code {response.status_code}")
+        self.session.cookies.clear()
+        self.session_id = None
+        self.is_authenticated = False
+        return True
 
     def post_pump(self, time_str=None, left_duration=0, right_duration=0, left_amount=0.0, right_amount=0.0,
                   is_english_scale=False, finish_side=0, note=""):
