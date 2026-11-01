@@ -31,6 +31,13 @@ version may contain breaking changes).
   when an awake one will probably need sleep, from the baby's own recent wake
   windows within the typical range for their corrected age (35 minutes at
   birth up to 5-6 hours at two years).
+- **Sleep from another entity.** In the options, each baby can take their sleep
+  from a Home Assistant entity (a Snoo or Owlet state sensor, a bed sensor, an
+  `input_boolean`): you choose the states that mean asleep, how long a wake
+  must last to end the sleep (10 minutes by default) and the shortest sleep to
+  log (5 minutes). The start is back-dated to when the entity went to sleep,
+  the end is dated when it woke, and a restart mid-sleep loses nothing. A
+  **Sleep Source** diagnostic binary sensor shows what the integration thinks.
 
 ## [0.3.1] - 2026-11-01
 
