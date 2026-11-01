@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) (while it is below 1.0, a minor
 version may contain breaking changes).
 
+## [0.4.0] - unreleased
+
+### Added
+
+- **Latest Photo** image entity for each baby: the newest picture attached to
+  any entry (a joy, diaper, bath, activity...), served full size to logged-in
+  users only. Attributes: `kind`, `time`, `note`, `object_type`, `object_id`,
+  `picture_id` and a `recent` list of the last ten pictures.
+- A `photo` event type on the baby's Activity event entity when a new picture
+  arrives.
+- Blueprint **New photo notification**: sends the picture to a phone.
+
 ## [0.3.1] - 2026-11-01
 
 Fixes from the first run against a real account with two babies.
