@@ -5,6 +5,38 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) (while it is below 1.0, a minor
 version may contain breaking changes).
 
+## [0.3.1] - 2026-11-01
+
+Fixes from the first run against a real account with two babies.
+
+### Changed
+
+- **Adding the integration no longer waits for the whole history.** The
+  setup dialog signs in, joins the account and fetches the seed database;
+  the first refresh replays the transaction history (the integration shows
+  as initialising meanwhile, with progress in the log). A join that has not
+  finished replaying is remembered in the database, so the replay still runs
+  as part of the join (no echoes) even after a restart.
+- **The history replay is about a hundred times faster.** A page of 500
+  transactions is one database transaction with one commit (a failing
+  record is rolled back on its own), and connections use WAL with
+  `synchronous=NORMAL`. 3,000 records took 14 seconds where they took 12
+  minutes.
+- Bottle Volume, Last Pump and Pump Summary no longer carry the `volume`
+  device class, which Home Assistant 2025.11+ only allows with a total state
+  class; they keep the `measurement` class and their unit. Pumped Milk
+  Inventory is `volume_storage`. Numeric sensors have a display precision,
+  so the UI shows `0.4 fl. oz.` rather than `0.405768272422116`.
+- Next Medicine Dose is unknown once the due time is more than a day in the
+  past (the course is over) instead of showing a date days ago.
+- The Medicine Amount control rounds the app's single-precision dose (`0.3`
+  rather than `0.300000011920929`).
+- `scripts/bootstrap` works on a Home Assistant that has already been
+  onboarded (the onboarding endpoint answers 404 then).
+- The brand images for Home Assistant's integration page are in
+  `brands/custom_integrations/baby_tracker` for submission to
+  home-assistant/brands.
+
 ## [0.3.0] - 2026-10-31
 
 This release makes the entities usable in dashboards, automations and
@@ -231,5 +263,6 @@ before upgrading.
 - The YAML configuration path was removed; set up the integration from the
   UI.
 
+[0.3.1]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/releases/tag/v0.2.0

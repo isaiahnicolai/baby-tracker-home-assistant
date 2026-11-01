@@ -277,7 +277,8 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
     def medicine_dose(self, baby_id):
         """The usual dose of the baby's selected medicine (its amount per time), or None when it has none."""
         amount = (self.selected_medicine_info(baby_id) or {}).get("amount_per_time")
-        return amount if isinstance(amount, (int, float)) and amount > 0 else None
+        # The app stores it as a single-precision float: 0.3 arrives as 0.300000011920929
+        return round(amount, 3) if isinstance(amount, (int, float)) and amount > 0 else None
 
     def follow_medicine(self, baby_id):
         """
