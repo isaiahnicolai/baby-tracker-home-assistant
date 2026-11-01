@@ -181,6 +181,44 @@
       },
       "corrected_age": {
         "name": "Corrected Age"
+      },
+      "next_breast": {
+        "name": "Which Breast Next",
+        "state": {
+          "left": "Left",
+          "right": "Right",
+          "unknown": "Unknown"
+        }
+      },
+      "next_medicine_dose": {
+        "name": "Next Medicine Dose"
+      },
+      "upcoming_milestones": {
+        "name": "Upcoming Milestones"
+      },
+      "upcoming_vaccines": {
+        "name": "Upcoming Vaccines"
+      },
+      "next_feed_due": {
+        "name": "Next Feed Due"
+      },
+      "next_feed_baby": {
+        "name": "Next Feed Baby"
+      },
+      "last_fed_baby": {
+        "name": "Last Fed Baby"
+      },
+      "babies_asleep": {
+        "name": "Babies Asleep"
+      },
+      "feeds_today": {
+        "name": "Feeds Today"
+      },
+      "pending_uploads": {
+        "name": "Pending Uploads"
+      },
+      "pumped_milk_inventory": {
+        "name": "Pumped Milk Inventory"
       }
     },
     "binary_sensor": {
@@ -241,6 +279,28 @@
     "image": {
       "baby_photo": {
         "name": "Photo"
+      }
+    },
+    "calendar": {
+      "activity_calendar": {
+        "name": "Calendar"
+      }
+    },
+    "event": {
+      "activity": {
+        "name": "Activity",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "feeding": "Feeding",
+              "diaper": "Diaper",
+              "sleep_start": "Sleep started",
+              "sleep_end": "Sleep ended",
+              "bath": "Bath",
+              "medicine": "Medicine"
+            }
+          }
+        }
       }
     }
   },

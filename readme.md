@@ -7,6 +7,7 @@ This custom component integrates the Baby Tracker app data with Home Assistant, 
 - **Multi-Baby Support**: Track multiple babies with separate sensors and data for each child
 - **Automatic Syncing**: Synchronizes with the Baby Tracker servers to fetch the latest data
 - **Comprehensive Sensors**: 20+ sensors per baby tracking feeding, diapers, sleep, growth, medicine, and more
+- **Household view, calendar and events**: sensors across all babies, a calendar and an Activity event entity per baby, and [blueprints](#blueprints) for notifications
 - **Service Calls**: Add new records through Home Assistant service calls
 - **Google Home Integration**: Log activities using voice commands through Google Home routines
 - **Complete Activity Tracking**: Diapers, feeding (nursing/formula/pumped), sleep, temperature, bath, medicine, growth measurements, milestones, doctor visits, and vaccines
@@ -216,6 +217,67 @@ Alongside the raw logs, each baby gets a few derived entities. They are recalcul
 The numbers rest on published guidance: roughly 150-200 ml of milk per kg of body weight per day (AAP and NHS feeding guidance, capped at 960 ml), the WHO Child Growth Standards for percentiles (read from the CDC's copy of the tables, bundled in `custom_components/baby_tracker/client/data`), and, for babies born before 37 weeks, age corrected for prematurity until 24 months as the AAP recommends. Feed timing, diaper and weight gain ranges are rules of thumb, not measurements of your baby. **These entities are not medical advice and cannot diagnose anything.** Every baby is different; talk to your pediatrician or health visitor about any worry about feeding, diapers or growth.
 
 The three binary sensors work like the other alerts: they can be dismissed with `baby_tracker.dismiss_alert` using their entity ID.
+
+### Alerts that follow the clock
+
+Feed Due, Wake To Feed, Feeding Overdue, Night Mode, Time Since Last Feeding and Next Feeding depend on the time of day, not only on new records, so they are re-evaluated **every minute** rather than once per refresh. Feed Due turns on at the predicted time even if the next refresh is fifteen minutes away. Every alert also has a `baby_name` attribute, handy in notification templates.
+
+## Derived sensors
+
+These are worked out from the records the app already stores, on every refresh.
+
+| Entity | What it shows |
+| --- | --- |
+| `sensor.<baby>_which_breast_next` | `left`, `right` or `unknown`: the side the last nursing or pump session did not finish on. It uses the app's own rule: the latest nursing session is compared with the latest pump session (inventory adjustments don't count) and the more recent one decides. Like the app, it looks at every baby's nursing, since the mother is the same. Attributes: `last_side`, `last_type` (`nursing` or `pump`), `last_time` |
+| `sensor.<baby>_next_medicine_dose` | Timestamp when the baby's last medicine can be given again: the time it was given plus the interval set on that medicine in the app. Unknown when the medicine has no interval. Attributes: `medicine_name`, `amount`, `unit`, `last_given`, `interval_minutes` |
+| `sensor.<baby>_upcoming_milestones` | Name of the next milestone the baby hasn't logged yet, youngest `for_age_months` first. Attributes: `count` and an `upcoming` list (the first ten) |
+| `sensor.<baby>_upcoming_vaccines` | Name of the next vaccine the baby hasn't had, in the same way |
+
+Upcoming milestones and vaccines are the app's own lists, ordered by the age in months each is expected at, minus what has been logged for that baby. Nothing says a baby is behind schedule: the first item is simply the first one not yet ticked off.
+
+## Household view
+
+The *Baby Tracker* device (the one with the Sync Now button) holds sensors that look across all your babies:
+
+| Entity | What it shows |
+| --- | --- |
+| `sensor.baby_tracker_next_feed_due` | Timestamp of the earliest predicted next feed among the babies. Attributes: `baby` (whose it is) and `predictions` (every baby's predicted time) |
+| `sensor.baby_tracker_next_feed_baby` | Name of the baby who is due to feed first |
+| `sensor.baby_tracker_last_fed_baby` | Name of the baby fed most recently; the `time` attribute says when |
+| `sensor.baby_tracker_babies_asleep` | How many babies are asleep now; the `babies` attribute lists them |
+| `sensor.baby_tracker_feeds_today` | Feedings so far today across all babies; `per_baby` has each one's count |
+| `sensor.baby_tracker_pumped_milk_inventory` | Pumped milk in store: everything pumped (including inventory adjustments you made in the app) minus everything fed from the pump, like the app's own inventory. Shown in the entry's volume unit. Can go negative if feeds were logged without the pumping |
+| `sensor.baby_tracker_pending_uploads` (diagnostic) | Records logged from Home Assistant that the Baby Tracker server hasn't received yet |
+
+## Calendar
+
+Each baby has a calendar (for example `calendar.baby_name_calendar`) showing their feeds, sleeps, baths, doctor visits and medicines, so you can scroll back through a day or a week in the Calendar panel or a calendar card. A sleep lasts as long as it did (a sleep still in progress runs up to now); everything else is a 15-minute event. The calendar entity's own state is on while the most recent event is still running, and its message is that event.
+
+## Event entities
+
+Each baby has an **Activity** event entity (`event.baby_name_activity`). It fires when a refresh finds something new, with one of these event types: `feeding`, `diaper`, `sleep_start`, `sleep_end`, `bath` or `medicine`. The details (type, time, medicine name and so on) are attributes of the event. In an automation:
+
+```yaml
+triggers:
+  - trigger: state
+    entity_id: event.baby_name_activity
+    attribute: event_type
+    to: sleep_end
+```
+
+The `baby_tracker_feeding`, `baby_tracker_diaper` and `baby_tracker_sleep` events on the event bus are still fired as before. Nothing fires on the first refresh after startup.
+
+## Blueprints
+
+Ready-made automations in [`blueprints/automation/baby_tracker`](blueprints/automation/baby_tracker). Import one with its button, or in Home Assistant go to **Settings > Automations & Scenes > Blueprints > Import Blueprint** and paste the file's address.
+
+| Blueprint | What it does | Import |
+| --- | --- | --- |
+| Feed due notification | Notifies a phone when a baby's Feed Due turns on, with the baby's name in the message | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fisaiahnicolai%2Fbaby-tracker-home-assistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbaby_tracker%2Ffeed_due_notification.yaml) |
+| Wake to feed | Notifies a phone when a baby should be woken to eat | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fisaiahnicolai%2Fbaby-tracker-home-assistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbaby_tracker%2Fwake_to_feed.yaml) |
+| Daily intake summary | At a time you choose, sends how much milk the baby has had in 24 hours (by default only when it is low) | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fisaiahnicolai%2Fbaby-tracker-home-assistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbaby_tracker%2Flow_intake_daily.yaml) |
+
+The address pattern is `https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=<URL-encoded address of the blueprint file on GitHub>`. Each blueprint asks which baby's sensor to watch and which phone (a device with the Home Assistant app) to notify; create one automation per baby.
 
 ## Service Calls
 

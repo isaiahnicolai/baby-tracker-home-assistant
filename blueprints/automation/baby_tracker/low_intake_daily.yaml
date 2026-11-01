@@ -1,0 +1,74 @@
+blueprint:
+  name: Baby Tracker - Daily intake summary
+  description: >
+    Once a day, at the time you choose, sends a phone notification with how
+    much milk a baby has had in the last 24 hours and whether that is low, ok
+    or high for their weight. By default it only sends when the intake is low.
+  domain: automation
+  source_url: https://github.com/isaiahnicolai/baby-tracker-home-assistant/blob/main/blueprints/automation/baby_tracker/low_intake_daily.yaml
+  author: Baby Tracker for Home Assistant
+  input:
+    summary_time:
+      name: Time of day
+      description: When to check and send the summary.
+      default: "20:00:00"
+      selector:
+        time:
+    intake_sensor:
+      name: Intake 24h sensor
+      description: The baby's Intake 24h sensor (for example sensor.everly_intake_24h).
+      selector:
+        entity:
+          filter:
+            - integration: baby_tracker
+              domain: sensor
+    intake_status_sensor:
+      name: Intake Status sensor
+      description: The same baby's Intake Status sensor (for example sensor.everly_intake_status).
+      selector:
+        entity:
+          filter:
+            - integration: baby_tracker
+              domain: sensor
+    notify_device:
+      name: Phone to notify
+      description: A device with the Home Assistant companion app.
+      selector:
+        device:
+          filter:
+            - integration: mobile_app
+    only_when_low:
+      name: Only when low
+      description: Send nothing when the intake is ok or high.
+      default: true
+      selector:
+        boolean:
+
+mode: single
+max_exceeded: silent
+
+variables:
+  intake: !input intake_sensor
+  status_sensor: !input intake_status_sensor
+  only_when_low: !input only_when_low
+
+triggers:
+  - trigger: time
+    at: !input summary_time
+
+conditions:
+  - alias: The intake is low, if that is required
+    condition: template
+    value_template: "{{ not only_when_low or is_state(status_sensor, 'low') }}"
+
+actions:
+  - alias: Send the summary
+    domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: >
+      {{ state_attr(intake, 'friendly_name') | replace(' Intake 24h', '') }}: milk in the last 24 hours
+    message: >
+      {{ states(intake) }} {{ state_attr(intake, 'unit_of_measurement') }}
+      ({{ states(status_sensor) }}).
+      {{ state_attr(intake, 'reason') }}

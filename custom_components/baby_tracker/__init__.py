@@ -8,11 +8,13 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .client import AccountResetError, AuthenticationError, BabyTracker
 from .const import (
+    CALENDAR_LOOKBACK_DAYS,
     CONF_DEVICE_UUID,
     CONF_EMAIL,
     CONF_PASSWORD,
@@ -26,6 +28,7 @@ from .const import (
     EVENT_FEEDING,
     EVENT_SLEEP,
     PHOTO_DIR_NAME,
+    activity_signal,
 )
 from .entity import migrate_to_baby_ids, remove_retired_entities
 from .services import async_register_services, async_unregister_services
@@ -34,7 +37,7 @@ _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-PLATFORMS = ["sensor", "button", "binary_sensor", "image"]
+PLATFORMS = ["sensor", "button", "binary_sensor", "image", "calendar", "event"]
 
 
 async def async_setup(hass: HomeAssistant, config: dict):
@@ -187,6 +190,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         self.picture_dir = os.path.join(self.photo_dir, "pictures")
         self.last_sync_result = None  # what the last sync reported, for diagnostics
         self.pending_uploads = None  # records logged here that the server hasn't received yet
+        self.fetched_at = None  # when the data was last read, so time-based entities can keep it current
         _LOGGER.info(f"Initialized Baby Tracker coordinator with database at: {db_path}")
 
     def baby_id_for(self, baby_name):
@@ -214,6 +218,22 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Insights for %s unavailable: %s", baby.name, err, exc_info=True)
             return {}
+
+    @staticmethod
+    def _derived(what, default, call, *args):
+        """One derived answer (next breast, next dose...), or the default so a bad record never breaks the refresh."""
+        try:
+            return call(*args)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("%s unavailable: %s", what, err, exc_info=True)
+            return default
+
+    def _latest_event(self, tracker, baby_id, now):
+        """The most recent thing that happened for a baby (for the calendar's current event), or None."""
+        events = self._derived(
+            "Recent events", [], tracker.get_events_between,
+            baby_id, now - timedelta(days=CALENDAR_LOOKBACK_DAYS), now + timedelta(minutes=1))
+        return next((event for event in reversed(events) if event["start"] <= now), None)
 
     def _fetch(self, photo_dir):
         """
@@ -249,6 +269,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 }
 
         baby_data = {}
+        now = dt_util.utcnow()
         for baby in all_babies:
             baby_id = baby.object_id
             baby_data[baby.name] = {
@@ -275,9 +296,25 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 "daily_summary": tracker.get_daily_summary(baby_id),
                 "sleep_analysis": tracker.get_sleep_analysis(baby_id, 14),
                 "insights": self._insights_for(tracker, baby),
+                "next_breast": self._derived("Next breast", {}, tracker.get_next_breast),
+                "next_medicine_dose": self._derived("Next medicine dose", None, tracker.get_next_medicine_dose, baby_id),
+                "upcoming_milestones": self._derived("Upcoming milestones", [], tracker.get_upcoming_milestones, baby_id),
+                "upcoming_vaccines": self._derived("Upcoming vaccines", [], tracker.get_upcoming_vaccines, baby_id),
+                "last_event": self._latest_event(tracker, baby_id, now),
             }
 
-        return all_babies, baby_info, baby_pictures, baby_data
+        account = {
+            "pumped_milk_inventory": self._derived("Milk inventory", None, tracker.get_pumped_milk_inventory),
+            "pending_uploads": self.pending_uploads,
+        }
+        return all_babies, baby_info, baby_pictures, baby_data, account
+
+    def _announce(self, activity, baby_name, baby_id, details, bus_event=None):
+        """Tell the baby's Activity event entity, and the event bus where an event is named for it."""
+        payload = {"baby_name": baby_name, "baby_id": baby_id, **details}
+        if bus_event:
+            self.hass.bus.async_fire(bus_event, payload)
+        async_dispatcher_send(self.hass, activity_signal(self.config_entry.entry_id), baby_name, activity, payload)
 
     async def _async_update_data(self):
         """Fetch data from Baby Tracker."""
@@ -291,9 +328,10 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                     raise UpdateFailed(f"Authentication failed: {auth_result.get('message')}")
                 self.authenticated = True
 
-            all_babies, baby_info, baby_pictures, baby_data = await self.hass.async_add_executor_job(
+            all_babies, baby_info, baby_pictures, baby_data, account = await self.hass.async_add_executor_job(
                 self._fetch, self.photo_dir
             )
+            self.fetched_at = dt_util.utcnow()
 
             # Fire events for detected changes (skipped on the first refresh,
             # when everything would look new)
@@ -306,34 +344,44 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 curr_feed_time = (current.get("last_feeding") or {}).get("time")
                 prev_feed_time = (prev.get("last_feeding") or {}).get("time")
                 if curr_feed_time and curr_feed_time != prev_feed_time:
-                    self.hass.bus.async_fire(EVENT_FEEDING, {
-                        "baby_name": baby_name,
-                        "baby_id": baby_id,
+                    self._announce("feeding", baby_name, baby_id, {
                         "type": (current.get("last_feeding") or {}).get("type"),
                         "time": curr_feed_time,
-                    })
+                    }, EVENT_FEEDING)
 
                 # Diaper change: compare last_diaper time
                 curr_diaper_time = (current.get("last_diaper") or {}).get("time")
                 prev_diaper_time = (prev.get("last_diaper") or {}).get("time")
                 if curr_diaper_time and curr_diaper_time != prev_diaper_time:
-                    self.hass.bus.async_fire(EVENT_DIAPER, {
-                        "baby_name": baby_name,
-                        "baby_id": baby_id,
+                    self._announce("diaper", baby_name, baby_id, {
                         "status": (current.get("last_diaper") or {}).get("status"),
                         "time": curr_diaper_time,
-                    })
+                    }, EVENT_DIAPER)
 
                 # Sleep change: compare last_sleep time or status
                 curr_sleep = current.get("last_sleep") or {}
                 prev_sleep = prev.get("last_sleep") or {}
                 if (curr_sleep.get("time") != prev_sleep.get("time") or
                         curr_sleep.get("is_sleeping") != prev_sleep.get("is_sleeping")):
-                    self.hass.bus.async_fire(EVENT_SLEEP, {
-                        "baby_name": baby_name,
-                        "baby_id": baby_id,
+                    self._announce("sleep_start" if curr_sleep.get("is_sleeping") else "sleep_end",
+                                   baby_name, baby_id, {
                         "is_sleeping": curr_sleep.get("is_sleeping"),
                         "time": curr_sleep.get("time"),
+                    }, EVENT_SLEEP)
+
+                # Baths and medicines are only reported by the Activity event entity
+                curr_bath = current.get("last_bath") or {}
+                if curr_bath.get("time") and curr_bath.get("time") != (prev.get("last_bath") or {}).get("time"):
+                    self._announce("bath", baby_name, baby_id, {
+                        "bath_type": curr_bath.get("bath_type"), "time": curr_bath.get("time")})
+
+                curr_medicine = current.get("last_medicine") or {}
+                if curr_medicine.get("time") and curr_medicine.get("time") != (prev.get("last_medicine") or {}).get("time"):
+                    self._announce("medicine", baby_name, baby_id, {
+                        "medicine_name": curr_medicine.get("medicine_name"),
+                        "amount": curr_medicine.get("amount"),
+                        "unit": curr_medicine.get("unit"),
+                        "time": curr_medicine.get("time"),
                     })
 
             self._previous_data = {k: dict(v) for k, v in baby_data.items()}
@@ -348,6 +396,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                     "babies": all_babies,
                     "baby_data": baby_data,
                     "baby_pictures": baby_pictures,
+                    "account": account,
                     # Backwards compatibility fields (first baby)
                     "baby_info": baby_info,
                     "feeding_summary": first_baby_data.get("feeding_summary"),
@@ -375,6 +424,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                     "babies": [],
                     "baby_data": {},
                     "baby_pictures": {},
+                    "account": account,
                     "baby_info": baby_info
                 }
         except AuthenticationError as err:

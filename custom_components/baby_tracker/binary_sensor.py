@@ -23,6 +23,7 @@ from .const import (
     ATTR_AGE_BRACKET,
     ATTR_ALERT_TYPE,
     ATTR_BABY_AGE_DAYS,
+    ATTR_BABY_NAME,
     ATTR_CURRENT_VALUE,
     ATTR_DISMISSED,
     ATTR_THRESHOLD,
@@ -37,7 +38,7 @@ from .const import (
     NIGHT_START_HOUR,
     NO_POOP_THRESHOLDS,
 )
-from .entity import baby_device_info, baby_unique_id
+from .entity import ClockTickMixin, baby_device_info, baby_unique_id, hours_since_feeding
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -186,6 +187,7 @@ class BabyTrackerAlert(CoordinatorEntity, BinarySensorEntity):
 
         return {
             ATTR_ALERT_TYPE: self._alert_type,
+            ATTR_BABY_NAME: self._baby_name,
             ATTR_THRESHOLD: threshold,
             ATTR_CURRENT_VALUE: self._get_current_value(),
             ATTR_BABY_AGE_DAYS: age_days,
@@ -205,7 +207,7 @@ class BabyTrackerAlert(CoordinatorEntity, BinarySensorEntity):
         return self.coordinator.last_update_success and self.coordinator.data is not None
 
 
-class FeedingOverdueAlert(BabyTrackerAlert):
+class FeedingOverdueAlert(ClockTickMixin, BabyTrackerAlert):
     """Alert when feeding is overdue based on age thresholds."""
 
     _alert_type = ALERT_TYPE_FEEDING_OVERDUE
@@ -214,10 +216,7 @@ class FeedingOverdueAlert(BabyTrackerAlert):
         baby_data = self._get_baby_data()
         if not baby_data:
             return None
-        time_data = baby_data.get("time_since_last_feeding")
-        if not time_data:
-            return None
-        return time_data.get("hours_since_last_feeding")
+        return hours_since_feeding(self.coordinator, baby_data.get("time_since_last_feeding"))
 
     def _get_threshold_info(self):
         age_days = _get_baby_age_days(self._get_baby_info())
@@ -396,7 +395,7 @@ class IntakeLowAlert(InsightAlert):
         return self._get_insight("intake").get("status") == "low"
 
 
-class FeedDueAlert(InsightAlert):
+class FeedDueAlert(ClockTickMixin, InsightAlert):
     """Alert when the predicted time of the next feed has passed."""
 
     _alert_type = ALERT_TYPE_FEED_DUE
@@ -408,7 +407,7 @@ class FeedDueAlert(InsightAlert):
         return self._has_passed(self._get_current_value())
 
 
-class WakeToFeedAlert(InsightAlert):
+class WakeToFeedAlert(ClockTickMixin, InsightAlert):
     """Alert when a baby who should be woken to feed has gone past the longest sensible gap."""
 
     _alert_type = ALERT_TYPE_WAKE_TO_FEED
@@ -423,7 +422,7 @@ class WakeToFeedAlert(InsightAlert):
         return self._has_passed(self._get_current_value())
 
 
-class BabyTrackerNightModeSensor(CoordinatorEntity, BinarySensorEntity):
+class BabyTrackerNightModeSensor(ClockTickMixin, CoordinatorEntity, BinarySensorEntity):
     """Binary sensor that indicates if the baby is in night mode (sleeping at night)."""
 
     _attr_has_entity_name = True

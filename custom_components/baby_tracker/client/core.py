@@ -1683,6 +1683,94 @@ class BabyTracker:
         """The configured time zone, else the host's (read each time so DST is followed)."""
         return self.tz or datetime.now().astimezone().tzinfo
 
+    def _open_db(self):
+        """The local database, opened on first use; None while there is no database file yet."""
+        if not self.db:
+            if not (self.db_path and os.path.exists(self.db_path)):
+                return None
+            self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
+            self.api.local_db = self.db
+        return self.db
+
+    def get_next_breast(self, baby_id=None):
+        """
+        Which breast to offer next, by the app's rule: the side the latest
+        nursing or pump session finished on tells which side is next.
+
+        Args:
+            baby_id: Only count this baby's nursing (default: every baby's,
+                as the app does, since the mother is the same)
+
+        Returns:
+            dict: {"next_side": "left"|"right"|"unknown", "last_side", "last_type"
+            ("nursing", "pump" or None), "last_time"}
+        """
+        db = self._open_db()
+        if not db:
+            return {"next_side": "unknown", "last_side": "unknown", "last_type": None, "last_time": None}
+        return db.get_next_breast(baby_id)
+
+    def get_next_medicine_dose(self, baby_id):
+        """
+        When the baby's last medicine can be given again (time given plus the
+        medicine's interval).
+
+        Returns:
+            dict: {"medicine_name", "med_id", "amount", "unit", "last_given",
+            "interval_minutes", "next_dose_at"} (next_dose_at is an ISO UTC
+            time, None when the medicine has no interval), or None when no
+            medicine has been given
+        """
+        db = self._open_db()
+        return db.get_next_medicine_dose(baby_id) if db else None
+
+    def get_upcoming_milestones(self, baby_id):
+        """Milestones the baby hasn't logged yet, by ForAge (months): [{"id", "name", "description", "for_age"}]."""
+        db = self._open_db()
+        return db.get_upcoming_milestones(baby_id) if db else []
+
+    def get_upcoming_vaccines(self, baby_id):
+        """Vaccines the baby hasn't had yet, by ForAge (months): [{"id", "name", "description", "for_age"}]."""
+        db = self._open_db()
+        return db.get_upcoming_vaccines(baby_id) if db else []
+
+    def get_pumped_milk_inventory(self):
+        """
+        Milk in store for the whole account: all pumped (with inventory
+        adjustments) minus all pumped feeds.
+
+        Returns:
+            dict: {"ml", "pumped_ml", "fed_ml"}
+        """
+        db = self._open_db()
+        return db.get_pumped_milk_inventory() if db else {"ml": 0.0, "pumped_ml": 0.0, "fed_ml": 0.0}
+
+    def get_events_between(self, baby_id, start, end):
+        """
+        What happened for a baby between two times: feeds, sleeps, baths,
+        doctor visits and medicines, for the calendar.
+
+        Args:
+            baby_id: Baby ID
+            start, end: Aware datetimes (end is excluded)
+
+        Returns:
+            list: Oldest first, each {"start", "end" (aware datetimes in the
+            configured zone), "summary", "kind" ("feeding", "sleep", "bath",
+            "doctor" or "medicine"), "description"}. A sleep lasts as long as
+            its duration; everything else is 15 minutes.
+        """
+        db = self._open_db()
+        if not db:
+            return []
+        tz = self._local_tz()
+        return [
+            {**event,
+             "start": datetime.fromtimestamp(event["start"], tz),
+             "end": datetime.fromtimestamp(event["end"], tz)}
+            for event in db.get_events_between(baby_id, start.timestamp(), end.timestamp())
+        ]
+
     def get_insights(self, baby_id=None, now=None):
         """
         Derived insights for one baby: age, next feed, 24-hour intake, diaper

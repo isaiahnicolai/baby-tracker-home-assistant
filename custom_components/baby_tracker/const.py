@@ -131,5 +131,21 @@ EVENT_FEEDING = "baby_tracker_feeding"
 EVENT_DIAPER = "baby_tracker_diaper"
 EVENT_SLEEP = "baby_tracker_sleep"
 
+# What a baby's Activity event entity can report
+ACTIVITY_EVENT_TYPES = ["feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine"]
+SIGNAL_ACTIVITY = "baby_tracker_activity"  # dispatcher signal, suffixed with the config entry ID
+
+
+def activity_signal(entry_id):
+    """The dispatcher signal the coordinator sends when a baby has a new activity."""
+    return f"{SIGNAL_ACTIVITY}_{entry_id}"
+
+
+# Entities worked out from the clock re-evaluate this often between refreshes
+CLOCK_TICK_SECONDS = 60
+
+# How far back the calendar's "current event" looks for the most recent thing that happened
+CALENDAR_LOOKBACK_DAYS = 3
+
 # Bedtime analysis
 BEDTIME_ANALYSIS_DAYS = 14

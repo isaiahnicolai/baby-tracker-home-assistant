@@ -1,0 +1,58 @@
+blueprint:
+  name: Baby Tracker - Wake to feed
+  description: >
+    Sends a notification when a baby has gone past the longest sensible gap
+    between feeds and should be woken to eat (the Wake To Feed alert). Use
+    {baby} in the message for the baby's name.
+  domain: automation
+  source_url: https://github.com/isaiahnicolai/baby-tracker-home-assistant/blob/main/blueprints/automation/baby_tracker/wake_to_feed.yaml
+  author: Baby Tracker for Home Assistant
+  input:
+    wake_to_feed_alert:
+      name: Wake To Feed alert
+      description: The baby's Wake To Feed binary sensor (for example binary_sensor.everly_wake_to_feed).
+      selector:
+        entity:
+          filter:
+            - integration: baby_tracker
+              domain: binary_sensor
+    notify_device:
+      name: Phone to notify
+      description: A device with the Home Assistant companion app.
+      selector:
+        device:
+          filter:
+            - integration: mobile_app
+    title:
+      name: Title
+      default: Wake to feed
+      selector:
+        text:
+    message:
+      name: Message
+      description: "{baby} is replaced with the baby's name."
+      default: "{baby} has gone too long between feeds. Time to wake them."
+      selector:
+        text:
+
+mode: single
+max_exceeded: silent
+
+variables:
+  alert: !input wake_to_feed_alert
+  message_template: !input message
+
+triggers:
+  - trigger: state
+    entity_id: !input wake_to_feed_alert
+    to: "on"
+
+actions:
+  - alias: Tell the phone to wake the baby
+    domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: !input title
+    message: >
+      {% set baby = state_attr(alert, 'baby_name') or state_attr(alert, 'friendly_name') %}
+      {{ message_template | replace('{baby}', baby) }}
