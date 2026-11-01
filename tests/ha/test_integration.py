@@ -487,7 +487,7 @@ async def test_sleep_prediction_entities_for_an_awake_baby(hass, backend, freeze
 
     assert hass.states.get("sensor.everly_expected_wake").state == "unknown"  # awake
     assert hass.states.get("binary_sensor.everly_sleep_due").state == "off"
-    assert hass.states.get("binary_sensor.everly_wake_overdue").state == "off"
+    assert hass.states.get("binary_sensor.everly_nap_running_long").state == "off"
 
 
 async def test_sleep_prediction_entities_for_a_sleeping_baby(hass, backend, freezer):
@@ -504,17 +504,17 @@ async def test_sleep_prediction_entities_for_a_sleeping_baby(hass, backend, free
     assert hass.states.get("sensor.everly_next_sleep").state == "unknown"  # asleep
     assert hass.states.get("sensor.everly_wake_window").state == "unknown"
     assert hass.states.get("binary_sensor.everly_sleep_due").state == "off"
-    assert hass.states.get("binary_sensor.everly_wake_overdue").state == "off"  # not yet 13:10
+    assert hass.states.get("binary_sensor.everly_nap_running_long").state == "off"  # not yet 13:10
 
     # A baby with no insights has unknown values rather than errors
     for key in ("sensor.ann_marie_next_sleep", "sensor.ann_marie_expected_wake", "sensor.ann_marie_wake_window"):
         assert hass.states.get(key).state == "unknown", key
     assert hass.states.get("binary_sensor.ann_marie_sleep_due").state == "off"
-    assert hass.states.get("binary_sensor.ann_marie_wake_overdue").state == "off"
+    assert hass.states.get("binary_sensor.ann_marie_nap_running_long").state == "off"
 
 
 async def test_sleep_due_turns_on_when_the_clock_passes_the_wake_window(hass, backend, freezer):
-    freezer.move_to("2026-03-01 12:00:00+00:00")
+    freezer.move_to("2026-03-01 12:05:00+00:00")
     fetches = []
     fetch = with_next_sleep(AWAKE)
 
@@ -526,7 +526,7 @@ async def test_sleep_due_turns_on_when_the_clock_passes_the_wake_window(hass, ba
         await setup(hass, make_entry())
         assert hass.states.get("binary_sensor.everly_sleep_due").state == "off"  # sleepy at 12:15
 
-        freezer.tick(timedelta(minutes=16))  # short of the next 15-minute refresh
+        freezer.tick(timedelta(minutes=11))  # past 12:15, short of the next 15-minute refresh
         async_fire_time_changed(hass)
         await hass.async_block_till_done()
 
@@ -536,7 +536,7 @@ async def test_sleep_due_turns_on_when_the_clock_passes_the_wake_window(hass, ba
         assert due.attributes["next_sleep_at"] == "2026-03-01T12:15:00+00:00"
         assert due.attributes["awake_since"] == "2026-03-01T10:30:00+00:00"
         assert due.attributes["wake_window_hours"] == 1.75
-        assert hass.states.get("binary_sensor.everly_wake_overdue").state == "off"  # awake
+        assert hass.states.get("binary_sensor.everly_nap_running_long").state == "off"  # awake
 
         # It can be dismissed until the next episode
         await hass.services.async_call(
@@ -547,13 +547,13 @@ async def test_sleep_due_turns_on_when_the_clock_passes_the_wake_window(hass, ba
 async def test_nap_running_long_turns_on_half_an_hour_after_the_expected_wake(hass, backend, freezer):
     freezer.move_to("2026-03-01 13:08:00+00:00")  # expected wake 12:40, so 13:10 is the line
     await setup(hass, make_entry())
-    assert hass.states.get("binary_sensor.everly_wake_overdue").state == "off"
+    assert hass.states.get("binary_sensor.everly_nap_running_long").state == "off"
     assert hass.states.get("binary_sensor.everly_sleep_due").state == "off"  # asleep
 
     freezer.tick(timedelta(minutes=3))
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
-    running_long = hass.states.get("binary_sensor.everly_wake_overdue")
+    running_long = hass.states.get("binary_sensor.everly_nap_running_long")
     assert running_long.state == "on"
     assert running_long.attributes["expected_wake_at"] == "2026-03-01T12:40:00+00:00"
     assert running_long.attributes["asleep_since"] == "2026-03-01T11:00:00+00:00"
@@ -2180,7 +2180,7 @@ async def test_the_intents_are_registered_once(hass):
     await bt_intent.async_setup_intents(hass)
     await bt_intent.async_setup_intents(hass)
     registered = [h.intent_type for h in intent.async_get(hass) if h.intent_type.startswith("BabyTracker")]
-    assert sorted(registered) == sorted(h.intent_type for h in bt_intent.HANDLERS) and len(registered) == 13
+    assert sorted(registered) == sorted(h.intent_type for h in bt_intent.HANDLERS) and len(registered) == 14
 
 
 def test_baby_names_become_list_values_without_template_syntax():
