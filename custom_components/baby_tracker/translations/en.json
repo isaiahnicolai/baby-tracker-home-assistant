@@ -47,10 +47,24 @@
           "low_wet_minimum": "Low Wet Diapers turns on after 8 pm when the baby has fewer than this many.",
           "fever_threshold": "In the unit chosen above. Leave blank for 100.4 F (38.0 C)."
         }
+      },
+      "sleep_source": {
+        "title": "Sleep source for {baby}",
+        "description": "Record {baby}'s sleep from another entity, such as a Snoo, an Owlet or a bed sensor. Leave the entity empty to log sleep by hand only.",
+        "data": {
+          "sleep_source_entity": "Entity",
+          "sleep_source_asleep_states": "States that mean asleep",
+          "sleep_gap_minutes": "A wake shorter than this does not end the sleep (minutes)",
+          "sleep_min_minutes": "Never log a sleep shorter than this (minutes)"
+        },
+        "data_description": {
+          "sleep_source_asleep_states": "Check the entity's states in Developer Tools rather than guessing. Type a value and press Enter to add it."
+        }
       }
     },
     "error": {
-      "invalid_fever_threshold": "That fever temperature isn't sensible for the chosen units (95-110 F or 35-43 C)"
+      "invalid_fever_threshold": "That fever temperature isn't sensible for the chosen units (95-110 F or 35-43 C)",
+      "no_asleep_states": "Choose at least one state that means asleep"
     }
   },
   "entity": {
@@ -285,6 +299,9 @@
       },
       "nursing": {
         "name": "Nursing"
+      },
+      "sleep_source_active": {
+        "name": "Sleep Source"
       }
     },
     "button": {

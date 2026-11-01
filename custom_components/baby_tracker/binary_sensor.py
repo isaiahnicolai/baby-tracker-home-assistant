@@ -7,6 +7,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
@@ -119,6 +120,8 @@ async def async_setup_entry(
         entities.extend(alert_entities)
         entities.append(BabyTrackerNightModeSensor(coordinator, baby_name))
         entities.append(BabyTrackerNursingSensor(coordinator, baby_name))
+        if coordinator.sleep_source and coordinator.baby_id_for(baby_name) in coordinator.sleep_source.sources:
+            entities.append(BabyTrackerSleepSourceSensor(coordinator, baby_name))
 
     coordinator._alert_entities.extend(entities)
     async_add_entities(entities)
@@ -619,3 +622,35 @@ class BabyTrackerNursingSensor(CoordinatorEntity, BinarySensorEntity):
         if timer is None:
             return {}
         return {"side": timer["side"], "started_at": timer["started_at"].isoformat()}
+
+
+class BabyTrackerSleepSourceSensor(CoordinatorEntity, BinarySensorEntity):
+    """On while the integration counts the baby as asleep through another entity (a Snoo, an Owlet...)."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "sleep_source_active"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, baby_name):
+        """Initialize the sleep source sensor."""
+        super().__init__(coordinator)
+        self._baby_id = coordinator.baby_id_for(baby_name)
+        self._attr_unique_id = baby_unique_id(coordinator, baby_name, "sleep_source_active")
+        self._attr_device_info = baby_device_info(coordinator, baby_name)
+
+    @property
+    def _source(self):
+        return self.coordinator.sleep_source.sources.get(self._baby_id)
+
+    @property
+    def is_on(self):
+        return self._source.active
+
+    @property
+    def extra_state_attributes(self):
+        source = self._source
+        return {
+            "source_entity": source.entity_id,
+            "since": source.candidate_start.isoformat() if source.candidate_start else None,
+            "pending_end": source.pending_end.isoformat() if source.pending_end else None,
+        }

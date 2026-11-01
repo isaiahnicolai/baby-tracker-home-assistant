@@ -25,6 +25,18 @@ CONF_NIGHT_END_HOUR = "night_end_hour"
 CONF_FEVER_THRESHOLD = "fever_threshold"  # in the entry's temperature unit (F or C)
 DEFAULT_FEEDING_OVERDUE_HOURS = 0
 
+# Sleep recorded from another entity (a Snoo, an Owlet, a bed sensor...). The option is
+# {baby_id: {sleep_source_entity, sleep_source_asleep_states, sleep_gap_minutes, sleep_min_minutes}}
+CONF_SLEEP_SOURCES = "sleep_sources"
+CONF_SLEEP_SOURCE_ENTITY = "sleep_source_entity"
+CONF_SLEEP_SOURCE_ASLEEP_STATES = "sleep_source_asleep_states"
+CONF_SLEEP_GAP_MINUTES = "sleep_gap_minutes"  # a wake shorter than this does not end the sleep
+CONF_SLEEP_MIN_MINUTES = "sleep_min_minutes"  # a sleep shorter than this is never logged
+DEFAULT_SLEEP_ASLEEP_STATES = ["on", "asleep", "sleeping"]
+DEFAULT_SLEEP_GAP_MINUTES = 10
+DEFAULT_SLEEP_MIN_MINUTES = 5
+SLEEP_SOURCE_STORE_VERSION = 1
+
 # Sensor types
 SENSOR_TYPE_LAST_FEEDING = "last_feeding"
 SENSOR_TYPE_LAST_DIAPER = "last_diaper"

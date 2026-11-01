@@ -48,7 +48,8 @@
         "default": "mdi:white-balance-sunny",
         "state": {"on": "mdi:moon-waning-crescent"}
       },
-      "nursing": {"default": "mdi:mother-nurse"}
+      "nursing": {"default": "mdi:mother-nurse"},
+      "sleep_source_active": {"default": "mdi:bed-clock"}
     },
     "button": {
       "add_bottle": {"default": "mdi:bottle-tonic-plus"},
