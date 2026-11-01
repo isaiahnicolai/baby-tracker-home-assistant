@@ -133,6 +133,15 @@ def cmd_add_diaper(tracker, args):
     _print(tracker.add_diaper(_baby_id(tracker, args.baby), None, pee=pee, poo=poo, note=args.note))
 
 
+def cmd_add_joy(tracker, args):
+    _print(tracker.add_joy(_baby_id(tracker, args.baby), note=args.note, photo_path=args.photo,
+                           picture_dir=_picture_dir(args)))
+
+
+def cmd_attach_photo(tracker, args):
+    _print(tracker.attach_photo(args.object_type, args.object_id, args.path, picture_dir=_picture_dir(args)))
+
+
 def cmd_add_bottle(tracker, args):
     add = tracker.add_pumped if args.type == "pumped" else tracker.add_formula
     _print(add(_baby_id(tracker, args.baby), None, amount=args.amount, is_english_measure=args.unit == "oz",
@@ -264,6 +273,18 @@ def main(argv=None):
     diaper.add_argument("--baby")
     diaper.add_argument("--note", default="")
     diaper.set_defaults(func=cmd_add_diaper)
+
+    joy = sub.add_parser("add-joy", help="log a joy, optionally with a photo")
+    joy.add_argument("--baby")
+    joy.add_argument("--note", default="")
+    joy.add_argument("--photo", help="an image file to attach (needs Pillow)")
+    joy.set_defaults(func=cmd_add_joy)
+
+    attach = sub.add_parser("attach-photo", help="add a photo to an existing entry")
+    attach.add_argument("object_type", help="the entry's type as `recent` shows it, e.g. Diaper")
+    attach.add_argument("object_id")
+    attach.add_argument("path", help="an image file (needs Pillow)")
+    attach.set_defaults(func=cmd_attach_photo)
 
     bottle = sub.add_parser("add-bottle", help="log a bottle feed")
     bottle.add_argument("--baby")

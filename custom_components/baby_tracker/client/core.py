@@ -9,15 +9,21 @@ import functools
 import logging
 import threading
 import time as _time
+import uuid
 
 from . import dbconn as sqlite3  # sqlite3 with a busy timeout and WAL
-from . import insights, records
+from . import insights, photos, records
 from .dbconn import remove_sidecar_files
 from .models import Baby
+from .transaction import OP_UPDATE
 
 _LOGGER = logging.getLogger(__name__)
 
 PICTURE_RETRY_SECONDS = 24 * 3600  # how long a picture the server doesn't have is left alone
+
+
+def _now_string():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
 
 
 def _time_str(time):
@@ -1813,6 +1819,95 @@ class BabyTracker:
             return []
         return db.get_recent_records(baby_id, limit=limit, within_hours=within_hours)
 
+    def _photo_dir(self, picture_dir):
+        """Where a new photo goes: the given folder, else the one the sync uses."""
+        picture_dir = picture_dir or (self.db.picture_dir if self.db else None)
+        if not picture_dir:
+            raise ValueError("No picture folder: pass picture_dir (or sync with one) before adding photos")
+        return picture_dir
+
+    def _stage_photo(self, photo_path, picture_dir, activity_id):
+        """
+        Store a photo for an entry: the files go into the picture folder, are queued for
+        upload, and the pictureNote entry that refers to them is returned. The upload
+        happens with the record (api.upload_pending), photos first.
+        """
+        picture_dir = self._photo_dir(picture_dir)
+        file_name, path, thumbnail = photos.import_photo(photo_path, picture_dir)
+        self.db.picture_dir = picture_dir
+        self.db.add_photo_upload(path)
+        self.db.add_photo_upload(thumbnail)
+        return records.picture_wire(file_name, file_name, activity_id, _now_string(), new=True)
+
+    def add_joy(self, baby_id, note="", time_str=None, photo_path=None, picture_dir=None):
+        """
+        Log a joy, optionally with a photo (what the app's Joy entry takes).
+
+        Args:
+            note: Optional note text
+            time_str: Time string (optional, defaults to now)
+            photo_path: An image file to attach (any format Pillow reads; stored as a JPEG
+                with a thumbnail, and uploaded with the joy)
+            picture_dir: Where photos are kept (default: the folder the last sync used)
+
+        Returns:
+            dict: Result of the operation; "queued" is True while the joy or its photo
+                still has to be uploaded, which the next sync does
+        """
+        if not self.is_authenticated:
+            return {"status": "error", "message": "Not authenticated"}
+        object_id = str(uuid.uuid4())
+        pictures = []
+        try:
+            if photo_path:
+                pictures.append(self._stage_photo(photo_path, picture_dir, object_id))
+            response = self.api.post_joy(baby_id, time_str=_time_str(time_str), note=note,
+                                         pictures=pictures, object_id=object_id)
+            return {**response, "message": "Joy added"}
+        except Exception as e:
+            _LOGGER.error(f"Failed to add joy: {e}")
+            return {"status": "error", "message": f"Failed to add joy: {e}"}
+
+    def attach_photo(self, object_type, object_id, photo_path, picture_dir=None):
+        """
+        Add a photo to an entry that already exists (a diaper, a joy, a bath...), the way
+        the app does when you add one while editing it: the entry is sent again as an
+        update that lists its pictures with the new one.
+
+        Args:
+            object_type: The entry's type as get_recent_records gives it, e.g. "Diaper"
+            object_id: The entry's ID
+            photo_path: An image file (see add_joy)
+            picture_dir: Where photos are kept (default: the folder the last sync used)
+
+        Returns:
+            dict: {"status": "success", "objectID", "pictureID", "queued"} or
+                {"status": "error", "message"}
+        """
+        if not self.is_authenticated:
+            return {"status": "error", "message": "Not authenticated"}
+        record_type = records.record_type(object_type)
+        if record_type is None or record_type.selection or not record_type.activity:
+            return {"status": "error", "message": f"{object_type} entries can't have photos"}
+        if records.canonical_type(object_type) == "DoctorVisit":
+            return {"status": "error", "message": "Doctor visits are not synced, so they can't have photos"}
+        try:
+            wire = self.db.get_record_wire(object_type, object_id, self.api._tz_offset())
+            if wire is None:
+                return {"status": "error", "message": f"{object_type} {object_id} not found"}
+            existing = [records.picture_wire(p["ID"], p["FileName"], object_id, records.format_date(p["Timestamp"]),
+                                             p["Type"]) for p in self.db.get_activity_pictures(object_id)]
+            picture = self._stage_photo(photo_path, picture_dir, object_id)
+            wire["pictureNote"] = existing + [picture]
+            # An update only replaces an older copy, and dates have whole-second resolution
+            wire["timestamp"] = max(
+                _now_string(), records.format_date(self.db.convert_timestamp(wire["timestamp"]) + 1))
+            response = self.api._post_record(wire, op_code=OP_UPDATE)
+            return {**response, "pictureID": picture["objectID"], "message": "Photo added"}
+        except Exception as e:
+            _LOGGER.error(f"Failed to attach photo to {object_type} {object_id}: {e}")
+            return {"status": "error", "message": f"Failed to attach photo: {e}"}
+
     def get_pictures(self, baby_id, limit=10, picture_dir=None):
         """
         The newest pictures attached to one baby's entries, newest first.
@@ -2098,5 +2193,5 @@ def _serialized(method):
 
 
 for _name, _method in list(vars(BabyTracker).items()):
-    if callable(_method) and (_name.startswith(("add_", "log_", "delete_", "undo_")) or _name in ("authenticate", "sync", "force_resync")):
+    if callable(_method) and (_name.startswith(("add_", "log_", "delete_", "undo_", "attach_")) or _name in ("authenticate", "sync", "force_resync")):
         setattr(BabyTracker, _name, _serialized(_method))
