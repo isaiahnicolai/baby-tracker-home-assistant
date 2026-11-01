@@ -323,7 +323,41 @@ Choose **Configure** on the integration to change:
 | Night starts at / Night ends at | The hours (0-23) Night Mode uses; default 19 and 7. Night can run past midnight |
 | Fever temperature | Fever turns on at or above this, in the unit chosen above. Leave blank for 100.4 °F (38.0 °C) |
 
-The options are saved as `scan_interval`, `unit_system`, `feeding_overdue_hours`, `low_wet_minimum`, `night_start_hour`, `night_end_hour` and `fever_threshold`. The integration reloads when you save them.
+The options are saved as `scan_interval`, `unit_system`, `feeding_overdue_hours`, `low_wet_minimum`, `night_start_hour`, `night_end_hour` and `fever_threshold`. The integration reloads when you save them. After these, a **Sleep source** step follows for each baby (see below).
+
+### Sleep from a Snoo, Owlet or another entity
+
+A baby's sleep can be recorded from another Home Assistant entity, such as the state sensor of a Snoo or an Owlet, a bed sensor or an `input_boolean`. It lands in Baby Tracker (and on the phone) like a sleep you logged by hand, with the note "From <the entity's name>".
+
+For each baby the options flow asks for:
+
+| Setting | What it does |
+| --- | --- |
+| Entity | The entity to follow. Leave it empty for no source |
+| States that mean asleep | The entity's state values that mean the baby is asleep (default `on`, `asleep`, `sleeping`). Any other state means awake. Check the entity's states in **Developer Tools > States** rather than guessing: the core `snoo` integration's state sensor and the Owlet custom integration each use their own values, and they can differ between versions |
+| A wake shorter than this does not end the sleep | Minutes (default 10). A baby who stirs and settles again is still in the same sleep |
+| Never log a sleep shorter than this | Minutes (default 5). Nothing is logged for a sleep that did not last this long |
+
+How it works: when the entity goes to an asleep state, the integration waits for the minimum, then starts a sleep dated when the entity went to sleep. When the entity leaves the asleep state it waits for the gap; if the baby has not gone back to sleep by then, the sleep ends, dated when the baby woke rather than when the gap ran out. `unavailable` and `unknown` are ignored: they neither start nor end a sleep. If Home Assistant restarts mid-sleep the sleep carries on; if the entity is already asleep when it starts, the sleep is counted from then.
+
+A sleep logged this way is an ordinary sleep: you can still end it with **End Sleep**, or undo it, by hand. If a sleep is already in progress in Baby Tracker (you pressed **Start Sleep** yourself), no second one is started, and the entity's wake still ends it. A **Sleep Source** diagnostic binary sensor appears for each baby with a source: it is on while the integration counts the baby as asleep through the entity, with the attributes `source_entity`, `since` and `pending_end`.
+
+The settings are saved in the `sleep_sources` option, keyed by baby ID, with `sleep_source_entity`, `sleep_source_asleep_states`, `sleep_gap_minutes` and `sleep_min_minutes` for each baby.
+
+### When a baby outgrows the app
+
+Once a child is no longer logged for feeds or diapers, the questions about them stop making sense: Feeding Overdue would stay on for months and Time Since Last Feeding would count up forever. So the integration works out, for each baby, which activities are still **tracked**: feeds, diapers, sleep, pumping, medicine, growth and temperature. An activity is tracked when something in it was logged in the last 14 days. A baby under 14 days old tracks everything, since nothing logged yet does not mean it stopped.
+
+For an activity that is not tracked:
+
+- its alerts (for feeds: Feeding Overdue, Feed Due, Wake To Feed, Intake Low; for diapers: No Poop, Low Wet Diapers; for sleep: Long Sleep, Sleep Due, Nap Running Long; for temperature: Fever) are off, with the attribute `reason: not_tracked`;
+- its predictions and rates (Next Feed, Feed Interval, Intake, Intake Status, Time Since Last Feeding, Feeding Timer, Diaper Adequacy, Next Sleep, Expected Wake, Wake Window) read unknown, with the same attribute;
+- the household sensors (Next Feed Baby, Last Fed Baby, Babies Asleep, Feeds Today) leave that baby out;
+- Assist answers "Feeds aren't being tracked for Everly" to questions about it.
+
+What was logged is kept: Last Feeding, Last Diaper and Last Sleep still show their old values, and the counts for today stay. Logging something again (by hand, button or voice) makes the activity tracked again at the next refresh. The baby's Info sensor shows the verdict in its `tracking` attribute, and `tracking_mode` says whether it is `auto` or `manual`.
+
+To override the automatic choice, open **Configure**; the step for each baby has a **Tracked activities** field. Leave it on **Auto**, or pick the activities that should count (a baby set by hand stays that way until you set it back to Auto). It is saved in the `tracking` option as `{baby_id: [groups]}`; a baby left on auto is not listed. The other way to quiet a child entirely is to disable that baby's device in Home Assistant, which turns off all of its entities.
 
 ## Repairs
 

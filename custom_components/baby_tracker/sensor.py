@@ -27,6 +27,7 @@ from .const import (
     ATTR_TYPE,
     DOMAIN,
     FEEDING_THRESHOLDS,
+    REASON_NOT_TRACKED,
     SENSOR_TYPE_BEDTIME_ANALYSIS,
     SENSOR_TYPE_BOTTLE_VOLUME,
     SENSOR_TYPE_DAILY_SUMMARY,
@@ -62,6 +63,7 @@ from .const import (
     UNIT_SYSTEM_METRIC,
 )
 from .entity import ClockTickMixin, baby_device_info, baby_unique_id, hours_since_feeding, system_device_info
+from .tracking import is_tracked
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -168,6 +170,7 @@ class BabyTrackerSensor(CoordinatorEntity, SensorEntity):
     _sensor_type = None  # the unique ID suffix, and the translation key
     _data_key = None  # key in the baby's data dict, e.g. "last_feeding"
     _imperial_unit = None  # suggested display unit when the entry is set to imperial
+    _group = None  # the activity group a derived sensor answers about; unknown while it is not tracked
 
     def __init__(self, coordinator, baby_name, sensor_type=None):
         """Initialize the sensor."""
@@ -215,13 +218,21 @@ class BabyTrackerSensor(CoordinatorEntity, SensorEntity):
     def _attributes(self, record) -> dict:
         return {}
 
+    def _quiet(self):
+        """True when this sensor's activity is not being logged for the baby (see tracking.py)."""
+        return self._group is not None and not is_tracked(self._get_baby_data(), self._group)
+
     @property
     def native_value(self):
+        if self._quiet():
+            return None
         record = self._record()
         return self._value(record) if record else None
 
     @property
     def extra_state_attributes(self):
+        if self._quiet():
+            return {"reason": REASON_NOT_TRACKED}
         record = self._record()
         return self._attributes(record) if record else {}
 
@@ -264,6 +275,9 @@ class BabyTrackerInfoSensor(BabyTrackerSensor):
             "gender": "Male" if baby.gender else "Female",
             "baby_id": baby.object_id,
         }
+        data = self._get_baby_data() or {}
+        attrs["tracking"] = data.get("tracking") or {}
+        attrs["tracking_mode"] = data.get("tracking_mode", "auto")
         age_days = _get_baby_age_days(baby)
         if age_days is not None:
             attrs["age_days"] = age_days
@@ -276,6 +290,7 @@ class BabyTrackerTimeSinceLastFeedingSensor(ClockTickMixin, BabyTrackerSensor):
     """Minutes since the last feeding."""
 
     _sensor_type = SENSOR_TYPE_TIME_SINCE_LAST_FEEDING
+    _group = "feeds"
     _data_key = "time_since_last_feeding"
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -877,6 +892,7 @@ class BabyTrackerFeedingTimerSensor(ClockTickMixin, BabyTrackerSensor):
     """Minutes until the next feeding is due (negative once overdue)."""
 
     _sensor_type = SENSOR_TYPE_FEEDING_TIMER
+    _group = "feeds"
     _data_key = "time_since_last_feeding"
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -910,16 +926,18 @@ class BabyTrackerFeedingTimerSensor(ClockTickMixin, BabyTrackerSensor):
     @property
     def icon(self):
         """Return icon based on status."""
-        if self._compute_timer()[1] == "overdue":
+        if not self._quiet() and self._compute_timer()[1] == "overdue":
             return "mdi:timer-alert-outline"
         return "mdi:timer-outline"
 
     @property
     def native_value(self):
-        return self._compute_timer()[0]
+        return None if self._quiet() else self._compute_timer()[0]
 
     @property
     def extra_state_attributes(self):
+        if self._quiet():
+            return {"reason": REASON_NOT_TRACKED}
         _, status, threshold_hours, next_feeding_time, hours_since = self._compute_timer()
         attrs = {
             "status": status,
@@ -980,6 +998,7 @@ class BabyTrackerNextFeedSensor(BabyTrackerInsightSensor):
     """When the next feed is expected, from the pattern of recent feeds."""
 
     _sensor_type = "next_feed"
+    _group = "feeds"
     _section = "next_feed"
     _attribute_keys = ("interval_hours", "basis", "sample_count", "bucket", "last_feed_at",
                        "max_gap_hours", "wake_by", "overdue")
@@ -998,6 +1017,7 @@ class BabyTrackerFeedIntervalSensor(BabyTrackerInsightSensor):
     """The usual time between feeds right now."""
 
     _sensor_type = "feed_interval"
+    _group = "feeds"
     _section = "next_feed"
     _attribute_keys = ("basis", "sample_count", "bucket")
     _attr_device_class = SensorDeviceClass.DURATION
@@ -1013,6 +1033,7 @@ class BabyTrackerNextSleepSensor(BabyTrackerInsightSensor):
     """When the baby will probably need sleep next, from their own recent wake windows."""
 
     _sensor_type = "next_sleep"
+    _group = "sleep"
     _section = "next_sleep"
     _attribute_keys = ("awake_since", "wake_window_hours", "window_min_hours", "window_max_hours",
                        "max_awake_hours", "basis", "sample_count", "bucket", "overdue")
@@ -1031,6 +1052,7 @@ class BabyTrackerExpectedWakeSensor(BabyTrackerInsightSensor):
     """When a sleeping baby is expected to wake, from the usual length of their sleeps."""
 
     _sensor_type = "expected_wake"
+    _group = "sleep"
     _section = "next_sleep"
     _attribute_keys = ("asleep_since", "basis", "sample_count", "bucket")
     _attr_device_class = SensorDeviceClass.TIMESTAMP
@@ -1043,6 +1065,7 @@ class BabyTrackerWakeWindowSensor(BabyTrackerInsightSensor):
     """How long the baby usually stays awake between sleeps right now."""
 
     _sensor_type = "wake_window"
+    _group = "sleep"
     _section = "next_sleep"
     _attribute_keys = ("window_min_hours", "window_max_hours", "basis")
     _attr_device_class = SensorDeviceClass.DURATION
@@ -1058,6 +1081,7 @@ class BabyTrackerIntakeSensor(BabyTrackerInsightSensor):
     """Bottle milk (formula and pumped) in the last 24 hours."""
 
     _sensor_type = "intake_24h"
+    _group = "feeds"
     _section = "intake"
     _attribute_keys = ("expected_min_ml", "expected_max_ml", "status", "reason",
                        "bottle_feeds", "nursing_feeds", "ml_per_kg")
@@ -1079,6 +1103,7 @@ class BabyTrackerIntakeStatusSensor(BabyTrackerInsightSensor):
     """Whether the last 24 hours of bottle milk is low, ok or high for the baby's weight."""
 
     _sensor_type = "intake_status"
+    _group = "feeds"
     _section = "intake"
     _attribute_keys = ("reason",)
     _STATUSES = ("low", "ok", "high", "unknown")
@@ -1094,6 +1119,7 @@ class BabyTrackerDiaperAdequacySensor(BabyTrackerInsightSensor):
     """Whether the last 24 hours of wet and dirty diapers is enough for the baby's age."""
 
     _sensor_type = "diaper_adequacy"
+    _group = "diapers"
     _section = "diapers"
     _attribute_keys = ("wet_count", "dirty_count", "expected_min_wet", "note")
     _STATUSES = ("ok", "low", "unknown")
@@ -1278,9 +1304,10 @@ class BabyTrackerHouseholdSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{DOMAIN}_{coordinator.email}_system_{self._sensor_type}"
         self._attr_device_info = system_device_info(coordinator)
 
-    def _babies(self):
-        """[(baby name, that baby's data)] for every baby."""
-        return list(((self.coordinator.data or {}).get("baby_data") or {}).items())
+    def _babies(self, group=None):
+        """[(baby name, that baby's data)] for every baby (only those with the group tracked, if one is named)."""
+        babies = ((self.coordinator.data or {}).get("baby_data") or {}).items()
+        return [(name, data) for name, data in babies if group is None or is_tracked(data, group)]
 
     def _account(self):
         return (self.coordinator.data or {}).get("account") or {}
@@ -1288,7 +1315,7 @@ class BabyTrackerHouseholdSensor(CoordinatorEntity, SensorEntity):
     def _next_feed(self):
         """({baby name: predicted time} for every baby with one, (name, time) of the soonest or None)."""
         predictions = {}
-        for name, data in self._babies():
+        for name, data in self._babies("feeds"):
             moment = parse_time((((data.get("insights") or {}).get("next_feed")) or {}).get("predicted_at"))
             if moment:
                 predictions[name] = moment
@@ -1296,7 +1323,7 @@ class BabyTrackerHouseholdSensor(CoordinatorEntity, SensorEntity):
 
     def _last_fed(self):
         """(baby name, time) of whoever was fed most recently, else None."""
-        fed = [(name, parse_time((data.get("last_feeding") or {}).get("time"))) for name, data in self._babies()]
+        fed = [(name, parse_time((data.get("last_feeding") or {}).get("time"))) for name, data in self._babies("feeds")]
         fed = [item for item in fed if item[1]]
         return max(fed, key=lambda item: item[1]) if fed else None
 
@@ -1361,7 +1388,7 @@ class BabyTrackerBabiesAsleepSensor(BabyTrackerHouseholdSensor):
     _attr_native_unit_of_measurement = "babies"
 
     def _asleep(self):
-        return [name for name, data in self._babies() if (data.get("last_sleep") or {}).get("is_sleeping")]
+        return [name for name, data in self._babies("sleep") if (data.get("last_sleep") or {}).get("is_sleeping")]
 
     @property
     def native_value(self):
@@ -1380,7 +1407,7 @@ class BabyTrackerFeedsTodaySensor(BabyTrackerHouseholdSensor):
     _attr_native_unit_of_measurement = UNIT_FEEDINGS
 
     def _counts(self):
-        return {name: (data.get("daily_summary") or {}).get("total_feedings", 0) for name, data in self._babies()}
+        return {name: (data.get("daily_summary") or {}).get("total_feedings", 0) for name, data in self._babies("feeds")}
 
     @property
     def native_value(self):

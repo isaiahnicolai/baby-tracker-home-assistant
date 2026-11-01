@@ -30,6 +30,7 @@ from .services import (
     async_log_temperature,
     get_coordinator,
 )
+from .tracking import is_tracked, not_tracked_phrase
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -209,10 +210,10 @@ def sleep_speech(name, data, now):
 
 def summary_speech(coordinator, name, data, now):
     parts = (
-        last_feed_speech(coordinator, name, data, now),
-        last_diaper_speech(name, data, now),
-        sleep_speech(name, data, now),
-        next_feed_speech(name, data, now),
+        last_feed_speech(coordinator, name, data, now) if is_tracked(data, "feeds") else None,
+        last_diaper_speech(name, data, now) if is_tracked(data, "diapers") else None,
+        sleep_speech(name, data, now) if is_tracked(data, "sleep") else None,
+        next_feed_speech(name, data, now) if is_tracked(data, "feeds") else None,
     )
     return " ".join(part for part in parts if part) or f"I don't have anything logged for {name} yet."
 
@@ -286,6 +287,17 @@ class BabyIntent(intent.IntentHandler):
     def data(coordinator, baby):
         """What the coordinator keeps for a baby."""
         return ((coordinator.data or {}).get("baby_data") or {}).get(baby.name) or {}
+
+    #: For a question: the activity group it is about, which must be tracked for the baby to be asked
+    group = None
+
+    def asked(self, coordinator, slots):
+        """The baby a question is about, and their data. Says so (Spoken) when the group is not tracked."""
+        baby = self.baby(coordinator, slots)
+        data = self.data(coordinator, baby)
+        if self.group and not is_tracked(data, self.group):
+            raise Spoken(not_tracked_phrase(self.group, baby.name))
+        return baby, data
 
 
 BABY = {vol.Optional("baby"): cv.string}
@@ -407,67 +419,73 @@ class LogTemperatureIntent(BabyIntent):
 
 
 class LastFeedIntent(BabyIntent):
+    group = "feeds"
     intent_type = "BabyTrackerLastFeed"
     description = "Says when a baby last ate and what it was"
     slot_schema = BABY
 
     async def async_answer(self, hass, coordinator, slots):
-        baby = self.baby(coordinator, slots)
-        return last_feed_speech(coordinator, baby.name, self.data(coordinator, baby), dt_util.utcnow()) \
+        baby, data = self.asked(coordinator, slots)
+        return last_feed_speech(coordinator, baby.name, data, dt_util.utcnow()) \
             or f"I don't have any feeds logged for {baby.name}."
 
 
 class LastDiaperIntent(BabyIntent):
+    group = "diapers"
     intent_type = "BabyTrackerLastDiaper"
     description = "Says when a baby's diaper was last changed and what it was"
     slot_schema = BABY
 
     async def async_answer(self, hass, coordinator, slots):
-        baby = self.baby(coordinator, slots)
-        return last_diaper_speech(baby.name, self.data(coordinator, baby), dt_util.utcnow()) \
+        baby, data = self.asked(coordinator, slots)
+        return last_diaper_speech(baby.name, data, dt_util.utcnow()) \
             or f"I don't have any diaper changes logged for {baby.name}."
 
 
 class NextFeedIntent(BabyIntent):
+    group = "feeds"
     intent_type = "BabyTrackerNextFeed"
     description = "Says when a baby's next feed is expected"
     slot_schema = BABY
 
     async def async_answer(self, hass, coordinator, slots):
-        baby = self.baby(coordinator, slots)
-        return next_feed_speech(baby.name, self.data(coordinator, baby), dt_util.utcnow()) \
+        baby, data = self.asked(coordinator, slots)
+        return next_feed_speech(baby.name, data, dt_util.utcnow()) \
             or f"I don't have enough feeds logged to predict {baby.name}'s next feed yet."
 
 
 class NextSleepIntent(BabyIntent):
+    group = "sleep"
     intent_type = "BabyTrackerNextSleep"
     description = "Says when a baby is likely to need a nap next, or when a sleeping baby is expected to wake"
     slot_schema = BABY
 
     async def async_answer(self, hass, coordinator, slots):
-        baby = self.baby(coordinator, slots)
-        return next_sleep_speech(baby.name, self.data(coordinator, baby), dt_util.utcnow())             or f"I don't have enough sleep logged to predict {baby.name}'s next nap yet."
+        baby, data = self.asked(coordinator, slots)
+        return next_sleep_speech(baby.name, data, dt_util.utcnow())             or f"I don't have enough sleep logged to predict {baby.name}'s next nap yet."
 
 
 class IntakeTodayIntent(BabyIntent):
+    group = "feeds"
     intent_type = "BabyTrackerIntakeToday"
     description = "Says how much a baby has eaten in the last 24 hours and whether that is enough"
     slot_schema = BABY
 
     async def async_answer(self, hass, coordinator, slots):
-        baby = self.baby(coordinator, slots)
-        return intake_speech(coordinator, baby.name, self.data(coordinator, baby)) \
+        baby, data = self.asked(coordinator, slots)
+        return intake_speech(coordinator, baby.name, data) \
             or f"I don't have enough feeds logged to say how much {baby.name} has had."
 
 
 class SleepStatusIntent(BabyIntent):
+    group = "sleep"
     intent_type = "BabyTrackerSleepStatus"
     description = "Says whether a baby is asleep or awake and for how long"
     slot_schema = BABY
 
     async def async_answer(self, hass, coordinator, slots):
-        baby = self.baby(coordinator, slots)
-        return sleep_speech(baby.name, self.data(coordinator, baby), dt_util.utcnow()) \
+        baby, data = self.asked(coordinator, slots)
+        return sleep_speech(baby.name, data, dt_util.utcnow()) \
             or f"I don't have any sleep logged for {baby.name}."
 
 
