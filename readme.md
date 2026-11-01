@@ -294,7 +294,26 @@ Choose **Configure** on the integration to change:
 | Night starts at / Night ends at | The hours (0-23) Night Mode uses; default 19 and 7. Night can run past midnight |
 | Fever temperature | Fever turns on at or above this, in the unit chosen above. Leave blank for 100.4 °F (38.0 °C) |
 
-The options are saved as `scan_interval`, `unit_system`, `feeding_overdue_hours`, `low_wet_minimum`, `night_start_hour`, `night_end_hour` and `fever_threshold`. The integration reloads when you save them.
+The options are saved as `scan_interval`, `unit_system`, `feeding_overdue_hours`, `low_wet_minimum`, `night_start_hour`, `night_end_hour` and `fever_threshold`. The integration reloads when you save them. After these, a **Sleep source** step follows for each baby (see below).
+
+### Sleep from a Snoo, Owlet or another entity
+
+A baby's sleep can be recorded from another Home Assistant entity, such as the state sensor of a Snoo or an Owlet, a bed sensor or an `input_boolean`. It lands in Baby Tracker (and on the phone) like a sleep you logged by hand, with the note "From <the entity's name>".
+
+For each baby the options flow asks for:
+
+| Setting | What it does |
+| --- | --- |
+| Entity | The entity to follow. Leave it empty for no source |
+| States that mean asleep | The entity's state values that mean the baby is asleep (default `on`, `asleep`, `sleeping`). Any other state means awake. Check the entity's states in **Developer Tools > States** rather than guessing: the core `snoo` integration's state sensor and the Owlet custom integration each use their own values, and they can differ between versions |
+| A wake shorter than this does not end the sleep | Minutes (default 10). A baby who stirs and settles again is still in the same sleep |
+| Never log a sleep shorter than this | Minutes (default 5). Nothing is logged for a sleep that did not last this long |
+
+How it works: when the entity goes to an asleep state, the integration waits for the minimum, then starts a sleep dated when the entity went to sleep. When the entity leaves the asleep state it waits for the gap; if the baby has not gone back to sleep by then, the sleep ends, dated when the baby woke rather than when the gap ran out. `unavailable` and `unknown` are ignored: they neither start nor end a sleep. If Home Assistant restarts mid-sleep the sleep carries on; if the entity is already asleep when it starts, the sleep is counted from then.
+
+A sleep logged this way is an ordinary sleep: you can still end it with **End Sleep**, or undo it, by hand. If a sleep is already in progress in Baby Tracker (you pressed **Start Sleep** yourself), no second one is started, and the entity's wake still ends it. A **Sleep Source** diagnostic binary sensor appears for each baby with a source: it is on while the integration counts the baby as asleep through the entity, with the attributes `source_entity`, `since` and `pending_end`.
+
+The settings are saved in the `sleep_sources` option, keyed by baby ID, with `sleep_source_entity`, `sleep_source_asleep_states`, `sleep_gap_minutes` and `sleep_min_minutes` for each baby.
 
 ## Repairs
 
