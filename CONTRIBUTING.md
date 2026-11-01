@@ -114,12 +114,14 @@ release, which is what HACS installs.
 
 ## Brand images
 
-Home Assistant loads an integration's icon from the
-[home-assistant/brands](https://github.com/home-assistant/brands) repository,
-not from the integration folder, so the icon on the integration page only
-appears once `brands/custom_integrations/baby_tracker` from this repository
-has been submitted there (as `custom_integrations/baby_tracker/`). The files
-are the Baby Tracker app's own mark; the trademark belongs to its makers.
+The icon and logo Home Assistant shows for the integration are in
+`custom_components/baby_tracker/brand/` (`icon.png` 256x256, `icon@2x.png`
+512x512, and the same images as `logo.png` and `logo@2x.png`). Home Assistant
+2026.3 and later serve them from there through `/api/brands/integration/...`;
+older versions would need the images in the
+[home-assistant/brands](https://github.com/home-assistant/brands) repository
+instead. They are the Baby Tracker app's own mark; the trademark belongs to
+its makers.
 
 ## Adding a record type
 

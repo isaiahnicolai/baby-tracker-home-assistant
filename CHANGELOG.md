@@ -33,9 +33,8 @@ Fixes from the first run against a real account with two babies.
   rather than `0.300000011920929`).
 - `scripts/bootstrap` works on a Home Assistant that has already been
   onboarded (the onboarding endpoint answers 404 then).
-- The brand images for Home Assistant's integration page are in
-  `brands/custom_integrations/baby_tracker` for submission to
-  home-assistant/brands.
+- The integration ships its icon and logo in `brand/`, which Home Assistant
+  2026.3 and later show on the integration page.
 
 ## [0.3.0] - 2026-10-31
 
