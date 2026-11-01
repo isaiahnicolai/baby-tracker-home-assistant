@@ -216,10 +216,20 @@ def backend():
         calls.append(("delete_record", object_type, object_id))
         return {"status": "success", "object_type": object_type, "object_id": object_id, "queued": True}
 
+    def add_joy(self, baby_id, note="", time_str=None, photo_path=None, picture_dir=None):
+        calls.append(("add_joy", baby_id, note, time_str, photo_path, picture_dir))
+        return {"status": "success", "objectID": "JOY-1", "queued": False}
+
+    def attach_photo(self, object_type, object_id, photo_path, picture_dir=None):
+        calls.append(("attach_photo", object_type, object_id, photo_path, picture_dir))
+        return {"status": "success", "objectID": object_id, "pictureID": "PIC-1", "queued": False}
+
     with patch(f"{CORE}.authenticate", return_value={"status": "success"}), \
          patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fake_fetch), \
          patch(f"{CORE}.undo_last", undo_last), \
          patch(f"{CORE}.delete_record", delete_record), \
+         patch(f"{CORE}.add_joy", add_joy), \
+         patch(f"{CORE}.attach_photo", attach_photo), \
          patch(f"{CORE}.add_diaper", add_diaper), \
          patch(f"{CORE}.add_temperature", add_temperature), \
          patch(f"{CORE}.log_growth", log_growth), \
@@ -1732,6 +1742,193 @@ async def test_delete_record_reports_what_the_client_refused(hass, backend):
     assert err.value.translation_key == "delete_failed"
     assert err.value.translation_placeholders == {
         "object_type": "Diaper", "object_id": "NOPE", "error": "No Diaper record with ID NOPE"}
+
+
+# ----- photos on entries (log_joy, attach_photo) -----
+
+@pytest.fixture
+def photo_folder(hass):
+    """The integration's private folder, with a photo in it, and www / media allowed as Home Assistant has them."""
+    own = hass.config.path("baby_tracker")
+    os.makedirs(own, exist_ok=True)
+    path = os.path.join(own, "first-smile.jpg")
+    with open(path, "wb") as handle:
+        handle.write(b"jpeg bytes")
+    allowed = set(hass.config.allowlist_external_dirs)
+    hass.config.allowlist_external_dirs = {hass.config.path("www"), hass.config.path("media")}
+    yield path
+    hass.config.allowlist_external_dirs = allowed
+    os.remove(path)
+
+
+async def test_log_joy_service_without_a_photo(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+
+    await hass.services.async_call(
+        DOMAIN, "log_joy", {"baby_name": "Everly", "note": "giggles", "time": "2026-03-01 09:30:00"}, blocking=True)
+    call = backend[-1]
+    assert call[:3] == ("add_joy", "ID-EVERLY", "giggles")
+    assert call[3].endswith("+0000") and call[4] is None  # a sync-format time, and no photo
+    assert call[5] == coordinator.picture_dir  # where the client keeps the photos
+
+    with patch(f"{CORE}.add_joy", return_value={"status": "error", "message": "Not authenticated"}), \
+         pytest.raises(HomeAssistantError):
+        await hass.services.async_call(DOMAIN, "log_joy", {"baby_name": "Everly"}, blocking=True)
+
+
+async def test_log_joy_service_with_a_photo_file(hass, backend, photo_folder):
+    await setup(hass, make_entry())
+    await hass.services.async_call(
+        DOMAIN, "log_joy", {"baby_name": "Everly", "note": "smile", "photo": photo_folder}, blocking=True)
+    assert backend[-1][:3] == ("add_joy", "ID-EVERLY", "smile")
+    assert backend[-1][4] == os.path.realpath(photo_folder)
+
+    # www and media work when Home Assistant allows them
+    www = hass.config.path("www")
+    os.makedirs(www, exist_ok=True)
+    in_www = os.path.join(www, "snap.jpg")
+    with open(in_www, "wb") as handle:
+        handle.write(b"x")
+    try:
+        await hass.services.async_call(
+            DOMAIN, "log_joy", {"baby_name": "Everly", "photo": in_www}, blocking=True)
+        assert backend[-1][4] == os.path.realpath(in_www)
+        hass.config.allowlist_external_dirs = set()  # no longer an allowed path
+        with pytest.raises(ServiceValidationError) as err:
+            await hass.services.async_call(
+                DOMAIN, "log_joy", {"baby_name": "Everly", "photo": in_www}, blocking=True)
+        assert err.value.translation_key == "photo_path_not_allowed"
+    finally:
+        os.remove(in_www)
+
+
+async def test_photo_paths_outside_the_allowed_folders_are_refused(hass, backend, photo_folder, tmp_path):
+    await setup(hass, make_entry())
+    outside = tmp_path / "elsewhere.jpg"
+    outside.write_bytes(b"x")
+    sneaky = os.path.join(os.path.dirname(photo_folder), "..", "secrets.yaml")
+    calls_before = len(backend)
+    for path in (str(outside), sneaky, "/etc/passwd"):
+        with pytest.raises(ServiceValidationError) as err:
+            await hass.services.async_call(DOMAIN, "log_joy", {"baby_name": "Everly", "photo": path}, blocking=True)
+        assert err.value.translation_key == "photo_path_not_allowed"
+        assert err.value.translation_placeholders == {"path": path}
+    with pytest.raises(ServiceValidationError) as err:
+        await hass.services.async_call(DOMAIN, "attach_photo", {
+            "object_type": "Diaper", "object_id": "DIAPER-1", "photo": str(outside)}, blocking=True)
+    assert err.value.translation_key == "photo_path_not_allowed"
+    assert len(backend) == calls_before  # nothing reached the client
+
+    with pytest.raises(ServiceValidationError) as err:  # allowed place, no such file
+        await hass.services.async_call(DOMAIN, "log_joy", {
+            "baby_name": "Everly", "photo": os.path.join(os.path.dirname(photo_folder), "nope.jpg")}, blocking=True)
+    assert err.value.translation_key == "photo_not_found"
+
+
+async def test_log_joy_takes_a_camera_snapshot_and_cleans_up(hass, backend):
+    from homeassistant.components.camera import Image
+
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    seen = {}
+
+    def add_joy(baby_id, note, time_str, photo_path, picture_dir):
+        seen["path"] = photo_path
+        with open(photo_path, "rb") as handle:  # the client reads the file during the call
+            seen["bytes"] = handle.read()
+        return {"status": "success", "objectID": "JOY-1", "queued": False}
+
+    with patch("homeassistant.components.camera.async_get_image",
+               return_value=Image("image/jpeg", b"snapshot bytes")) as snapshot, \
+         patch(f"{CORE}.add_joy", side_effect=add_joy):
+        await hass.services.async_call(
+            DOMAIN, "log_joy", {"baby_name": "Everly", "note": "front door", "camera_entity": "camera.nursery"},
+            blocking=True)
+    snapshot.assert_awaited_once_with(hass, "camera.nursery")
+    assert seen["bytes"] == b"snapshot bytes"
+    assert seen["path"].startswith(coordinator.photo_dir)  # the private folder, not a public one
+    assert not os.path.exists(seen["path"])  # a snapshot is only needed while the entry is made
+
+    # A camera that can't produce a picture is a clear error, and nothing is logged
+    with patch("homeassistant.components.camera.async_get_image", side_effect=HomeAssistantError("offline")), \
+         pytest.raises(ServiceValidationError) as err:
+        await hass.services.async_call(
+            DOMAIN, "log_joy", {"baby_name": "Everly", "camera_entity": "camera.nursery"}, blocking=True)
+    assert err.value.translation_key == "photo_snapshot_failed"
+    assert err.value.translation_placeholders["entity_id"] == "camera.nursery"
+
+
+async def test_attach_photo_service_with_an_image_entity(hass, backend):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    entity = SimpleNamespace(async_image=AsyncMock(return_value=b"png bytes"))
+    component = SimpleNamespace(get_entity=lambda entity_id: entity if entity_id == "image.doorbell" else None)
+    seen = {}
+
+    def attach(object_type, object_id, photo_path, picture_dir):
+        with open(photo_path, "rb") as handle:
+            seen["bytes"] = handle.read()
+        seen["args"] = (object_type, object_id, picture_dir)
+        return {"status": "success", "objectID": object_id, "pictureID": "PIC-1", "queued": False}
+
+    with patch.dict(hass.data, {"image": component}), patch(f"{CORE}.attach_photo", side_effect=attach):
+        await hass.services.async_call(DOMAIN, "attach_photo", {
+            "object_type": "Diaper", "object_id": "DIAPER-1", "image_entity": "image.doorbell"}, blocking=True)
+        assert seen == {"bytes": b"png bytes", "args": ("Diaper", "DIAPER-1", coordinator.picture_dir)}
+
+        with pytest.raises(ServiceValidationError) as err:  # an image entity with nothing to show
+            await hass.services.async_call(DOMAIN, "attach_photo", {
+                "object_type": "Diaper", "object_id": "DIAPER-1", "image_entity": "image.other"}, blocking=True)
+        assert err.value.translation_key == "photo_snapshot_failed"
+
+
+async def test_attach_photo_service_arguments(hass, backend, photo_folder):
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+
+    await hass.services.async_call(DOMAIN, "attach_photo", {
+        "object_type": "Diaper", "object_id": "DIAPER-1", "photo": photo_folder}, blocking=True)
+    assert backend[-1] == ("attach_photo", "Diaper", "DIAPER-1", os.path.realpath(photo_folder),
+                           coordinator.picture_dir)
+
+    for data, key in (
+        ({"object_type": "Diaper", "object_id": "D"}, "photo_required"),
+        ({"object_type": "Diaper", "object_id": "D", "photo": photo_folder, "camera_entity": "camera.a"},
+         "photo_one_source"),
+    ):
+        with pytest.raises(ServiceValidationError) as err:
+            await hass.services.async_call(DOMAIN, "attach_photo", data, blocking=True)
+        assert err.value.translation_key == key
+
+    with pytest.raises(vol.Invalid):  # doctor visits are never synced, so they can't carry a photo
+        await hass.services.async_call(DOMAIN, "attach_photo", {
+            "object_type": "DoctorVisit", "object_id": "D", "photo": photo_folder}, blocking=True)
+
+    with patch(f"{CORE}.attach_photo", return_value={"status": "error", "message": "Diaper X not found"}), \
+         pytest.raises(HomeAssistantError, match="Diaper X not found"):
+        await hass.services.async_call(DOMAIN, "attach_photo", {
+            "object_type": "Diaper", "object_id": "X", "photo": photo_folder}, blocking=True)
+
+
+async def test_photo_services_ask_for_a_debounced_refresh(hass, backend, photo_folder):
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    with patch.object(coordinator, "async_request_refresh") as request, \
+         patch.object(coordinator, "async_refresh") as refresh:
+        await hass.services.async_call(DOMAIN, "log_joy", {"baby_name": "Everly", "photo": photo_folder}, blocking=True)
+        await hass.services.async_call(DOMAIN, "attach_photo", {
+            "object_type": "Diaper", "object_id": "DIAPER-1", "photo": photo_folder}, blocking=True)
+    assert request.await_count == 2
+    refresh.assert_not_called()
 
 
 async def test_undo_and_delete_ask_for_a_debounced_refresh(hass, backend):
