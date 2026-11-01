@@ -49,11 +49,13 @@ from .const import (
     NIGHT_END_HOUR,
     NIGHT_START_HOUR,
     NO_POOP_THRESHOLDS,
+    REASON_NOT_TRACKED,
     UNIT_SYSTEM_METRIC,
     WAKE_OVERDUE_GRACE_MINUTES,
 )
 from .entity import ClockTickMixin, baby_device_info, baby_unique_id, hours_since_feeding
 from .sensor import parse_time
+from .tracking import is_tracked
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -133,6 +135,7 @@ class BabyTrackerAlert(CoordinatorEntity, BinarySensorEntity):
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_has_entity_name = True
     _alert_type = None  # the unique ID suffix and translation key, set by each alert
+    _group = None  # the activity group the alert is about; it stays off while the baby's group is not tracked
 
     def __init__(self, coordinator, baby_name):
         """Initialize the alert."""
@@ -180,10 +183,14 @@ class BabyTrackerAlert(CoordinatorEntity, BinarySensorEntity):
         """Return (threshold_value, bracket_label) for this alert."""
         return None, None
 
+    def _quiet(self):
+        """True when this alert's activity is not being logged for the baby (see tracking.py)."""
+        return self._group is not None and not is_tracked(self._get_baby_data(), self._group)
+
     @property
     def is_on(self):
         """Return True if alert is active (condition met and not dismissed)."""
-        raw_condition = self._evaluate_condition()
+        raw_condition = False if self._quiet() else self._evaluate_condition()
 
         if not raw_condition:
             # Condition is OFF - mark as clear, reset dismissed for next episode
@@ -208,8 +215,10 @@ class BabyTrackerAlert(CoordinatorEntity, BinarySensorEntity):
         baby_info = self._get_baby_info()
         age_days = _get_baby_age_days(baby_info)
         threshold, bracket = self._get_threshold_info()
+        quiet = self._quiet()
 
         return {
+            **({"reason": REASON_NOT_TRACKED} if quiet else {}),
             ATTR_ALERT_TYPE: self._alert_type,
             ATTR_BABY_NAME: self._baby_name,
             ATTR_THRESHOLD: threshold,
@@ -217,7 +226,7 @@ class BabyTrackerAlert(CoordinatorEntity, BinarySensorEntity):
             ATTR_BABY_AGE_DAYS: age_days,
             ATTR_AGE_BRACKET: bracket,
             ATTR_DISMISSED: self._dismissed,
-            "raw_condition": self._evaluate_condition(),
+            "raw_condition": False if quiet else self._evaluate_condition(),
         }
 
     def dismiss(self):
@@ -235,6 +244,7 @@ class FeedingOverdueAlert(ClockTickMixin, BabyTrackerAlert):
     """Alert when feeding is overdue based on age thresholds."""
 
     _alert_type = ALERT_TYPE_FEEDING_OVERDUE
+    _group = "feeds"
 
     def _get_hours_since_feeding(self):
         baby_data = self._get_baby_data()
@@ -266,6 +276,7 @@ class NoPoopAlert(BabyTrackerAlert):
     """Alert when baby hasn't pooped for too long based on age thresholds."""
 
     _alert_type = ALERT_TYPE_NO_POOP
+    _group = "diapers"
 
     def _get_hours_since_poop(self):
         baby_data = self._get_baby_data()
@@ -296,6 +307,7 @@ class LowWetDiapersAlert(ClockTickMixin, BabyTrackerAlert):
     """Alert when wet diaper count is low, checked after 8pm for babies > 3 days old."""
 
     _alert_type = ALERT_TYPE_LOW_WET_DIAPERS
+    _group = "diapers"
 
     def _get_today_wet_count(self):
         baby_data = self._get_baby_data()
@@ -338,6 +350,7 @@ class FeverAlert(ClockTickMixin, BabyTrackerAlert):
     """
 
     _alert_type = ALERT_TYPE_FEVER
+    _group = "temperature"
 
     def _is_metric(self):
         return self.coordinator.unit_system == UNIT_SYSTEM_METRIC
@@ -375,6 +388,7 @@ class LongSleepAlert(ClockTickMixin, BabyTrackerAlert):
     """Alert when baby has been sleeping too long based on age thresholds."""
 
     _alert_type = ALERT_TYPE_LONG_SLEEP
+    _group = "sleep"
 
     def _get_sleep_info(self):
         """Return (is_sleeping, current_duration_hours) or (False, None)."""
@@ -431,6 +445,7 @@ class IntakeLowAlert(InsightAlert):
     """Alert when the last 24 hours of bottle milk is under 150 ml/kg."""
 
     _alert_type = ALERT_TYPE_INTAKE_LOW
+    _group = "feeds"
 
     def _get_threshold_info(self):
         return self._get_insight("intake").get("expected_min_ml"), "ml in 24h"
@@ -447,6 +462,7 @@ class FeedDueAlert(ClockTickMixin, InsightAlert):
     """Alert when the predicted time of the next feed has passed."""
 
     _alert_type = ALERT_TYPE_FEED_DUE
+    _group = "feeds"
 
     def _get_current_value(self):
         return self._get_insight("next_feed").get("predicted_at")
@@ -459,6 +475,7 @@ class WakeToFeedAlert(ClockTickMixin, InsightAlert):
     """Alert when a baby who should be woken to feed has gone past the longest sensible gap."""
 
     _alert_type = ALERT_TYPE_WAKE_TO_FEED
+    _group = "feeds"
 
     def _get_threshold_info(self):
         return self._get_insight("next_feed").get("max_gap_hours"), "hours between feeds"
@@ -474,6 +491,7 @@ class SleepDueAlert(ClockTickMixin, InsightAlert):
     """Alert when an awake baby has reached the end of their usual wake window."""
 
     _alert_type = ALERT_TYPE_SLEEP_DUE
+    _group = "sleep"
 
     def _get_threshold_info(self):
         return self._get_insight("next_sleep").get("wake_window_hours"), "hours awake"
@@ -500,6 +518,7 @@ class WakeOverdueAlert(ClockTickMixin, InsightAlert):
     """Alert when a sleep has run well past the usual length (Nap Running Long)."""
 
     _alert_type = ALERT_TYPE_WAKE_OVERDUE
+    _group = "sleep"
 
     def _get_threshold_info(self):
         return WAKE_OVERDUE_GRACE_MINUTES, "minutes past the expected wake time"
