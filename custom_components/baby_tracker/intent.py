@@ -151,6 +151,27 @@ def next_feed_speech(name, data, now):
     return f"{name} is due for a feed. It was expected around {clock(moment)}."
 
 
+def next_sleep_speech(name, data, now):
+    sleep = (data.get("insights") or {}).get("next_sleep") or {}
+    if sleep.get("is_asleep"):
+        wake = parse_time(sleep.get("expected_wake_at"))
+        if not wake:
+            return None
+        since = parse_time(sleep.get("asleep_since"))
+        lead = f"{name} has been asleep for {duration((now - since).total_seconds() // 60)}" if since else f"{name} is asleep"
+        if wake - now > timedelta(minutes=1):
+            return f"{lead} and is expected to wake around {clock(wake)}."
+        return f"{lead} and was expected to wake around {clock(wake)}."
+    moment = parse_time(sleep.get("next_sleep_at"))
+    if not moment:
+        return None
+    since = parse_time(sleep.get("awake_since"))
+    lead = f"{name} has been awake for {duration((now - since).total_seconds() // 60)}; " if since else f"{name} is awake; "
+    if moment - now > timedelta(minutes=1):
+        return f"{lead}the next nap is expected around {clock(moment)}, in {duration((moment - now).total_seconds() // 60)}."
+    return f"{lead}a nap is due. It was expected around {clock(moment)}."
+
+
 def intake_speech(coordinator, name, data):
     intake = (data.get("insights") or {}).get("intake") or {}
     if intake.get("actual_ml") is None:
@@ -418,6 +439,16 @@ class NextFeedIntent(BabyIntent):
             or f"I don't have enough feeds logged to predict {baby.name}'s next feed yet."
 
 
+class NextSleepIntent(BabyIntent):
+    intent_type = "BabyTrackerNextSleep"
+    description = "Says when a baby is likely to need a nap next, or when a sleeping baby is expected to wake"
+    slot_schema = BABY
+
+    async def async_answer(self, hass, coordinator, slots):
+        baby = self.baby(coordinator, slots)
+        return next_sleep_speech(baby.name, self.data(coordinator, baby), dt_util.utcnow())             or f"I don't have enough sleep logged to predict {baby.name}'s next nap yet."
+
+
 class IntakeTodayIntent(BabyIntent):
     intent_type = "BabyTrackerIntakeToday"
     description = "Says how much a baby has eaten in the last 24 hours and whether that is enough"
@@ -457,7 +488,7 @@ class SummaryIntent(BabyIntent):
 HANDLERS = (
     LogDiaperIntent, LogBottleIntent, StartSleepIntent, EndSleepIntent, StartNursingIntent, EndNursingIntent,
     LogTemperatureIntent, LastFeedIntent, LastDiaperIntent, NextFeedIntent, IntakeTodayIntent,
-    SleepStatusIntent, SummaryIntent,
+    NextSleepIntent, SleepStatusIntent, SummaryIntent,
 )
 
 

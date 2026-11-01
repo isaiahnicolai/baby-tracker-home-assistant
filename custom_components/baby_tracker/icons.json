@@ -6,6 +6,9 @@
       "daily_summary": {"default": "mdi:clipboard-list"},
       "feeding_timer": {"default": "mdi:timer-outline"},
       "next_feed": {"default": "mdi:baby-bottle"},
+      "next_sleep": {"default": "mdi:sleep"},
+      "expected_wake": {"default": "mdi:alarm"},
+      "wake_window": {"default": "mdi:timer-sand"},
       "intake_24h": {"default": "mdi:baby-bottle-outline"},
       "diaper_adequacy": {"default": "mdi:baby-face-outline"},
       "weight_percentile": {"default": "mdi:scale-bathroom"},
@@ -39,6 +42,8 @@
       "intake_low": {"default": "mdi:baby-bottle-outline"},
       "feed_due": {"default": "mdi:clock-alert-outline"},
       "wake_to_feed": {"default": "mdi:alarm-bell"},
+      "sleep_due": {"default": "mdi:sleep"},
+      "wake_overdue": {"default": "mdi:alarm-snooze"},
       "night_mode": {
         "default": "mdi:white-balance-sunny",
         "state": {"on": "mdi:moon-waning-crescent"}

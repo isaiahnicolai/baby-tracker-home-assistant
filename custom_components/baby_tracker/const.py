@@ -2,7 +2,7 @@
 
 DOMAIN = "baby_tracker"
 CONFIG_ENTRY_VERSION = 2  # the config flow's VERSION; async_migrate_entry brings older entries up to it
-VERSION = "0.3.1"  # keep in sync with manifest.json and client/__init__.py
+VERSION = "0.4.0"  # keep in sync with manifest.json and client/__init__.py
 
 # Configuration
 CONF_EMAIL = "email"
@@ -90,6 +90,11 @@ ALERT_TYPE_LONG_SLEEP = "long_sleep"
 ALERT_TYPE_INTAKE_LOW = "intake_low"
 ALERT_TYPE_FEED_DUE = "feed_due"
 ALERT_TYPE_WAKE_TO_FEED = "wake_to_feed"
+ALERT_TYPE_SLEEP_DUE = "sleep_due"
+ALERT_TYPE_WAKE_OVERDUE = "wake_overdue"
+
+# Nap Running Long turns on this long after the expected wake time
+WAKE_OVERDUE_GRACE_MINUTES = 30
 
 # Alert thresholds - (min_days, max_days, value)
 FEEDING_THRESHOLDS = [

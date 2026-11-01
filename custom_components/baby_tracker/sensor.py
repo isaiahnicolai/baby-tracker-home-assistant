@@ -1009,6 +1009,51 @@ class BabyTrackerFeedIntervalSensor(BabyTrackerInsightSensor):
         return _round(record.get("interval_hours"), 2)
 
 
+class BabyTrackerNextSleepSensor(BabyTrackerInsightSensor):
+    """When the baby will probably need sleep next, from their own recent wake windows."""
+
+    _sensor_type = "next_sleep"
+    _section = "next_sleep"
+    _attribute_keys = ("awake_since", "wake_window_hours", "window_min_hours", "window_max_hours",
+                       "max_awake_hours", "basis", "sample_count", "bucket", "overdue")
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def _value(self, record):
+        return None if record.get("is_asleep") else parse_time(record.get("next_sleep_at"))
+
+    def _attributes(self, record):
+        attrs = super()._attributes(record)
+        attrs["wake_window_hours"] = _round(attrs["wake_window_hours"], 2)
+        return attrs
+
+
+class BabyTrackerExpectedWakeSensor(BabyTrackerInsightSensor):
+    """When a sleeping baby is expected to wake, from the usual length of their sleeps."""
+
+    _sensor_type = "expected_wake"
+    _section = "next_sleep"
+    _attribute_keys = ("asleep_since", "basis", "sample_count", "bucket")
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def _value(self, record):
+        return parse_time(record.get("expected_wake_at")) if record.get("is_asleep") else None
+
+
+class BabyTrackerWakeWindowSensor(BabyTrackerInsightSensor):
+    """How long the baby usually stays awake between sleeps right now."""
+
+    _sensor_type = "wake_window"
+    _section = "next_sleep"
+    _attribute_keys = ("window_min_hours", "window_max_hours", "basis")
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTime.HOURS
+    _attr_suggested_display_precision = 1
+
+    def _value(self, record):
+        return _round(record.get("wake_window_hours"), 2)
+
+
 class BabyTrackerIntakeSensor(BabyTrackerInsightSensor):
     """Bottle milk (formula and pumped) in the last 24 hours."""
 
@@ -1433,6 +1478,9 @@ PER_BABY_SENSORS = (
     BabyTrackerBedtimeAnalysisSensor,
     BabyTrackerNextFeedSensor,
     BabyTrackerFeedIntervalSensor,
+    BabyTrackerNextSleepSensor,
+    BabyTrackerExpectedWakeSensor,
+    BabyTrackerWakeWindowSensor,
     BabyTrackerIntakeSensor,
     BabyTrackerIntakeStatusSensor,
     BabyTrackerDiaperAdequacySensor,

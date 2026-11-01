@@ -784,6 +784,8 @@ dismiss_alert:
             - "intake_low"
             - "feed_due"
             - "wake_to_feed"
+            - "sleep_due"
+            - "wake_overdue"
 
 dismiss_all_alerts:
   fields:
