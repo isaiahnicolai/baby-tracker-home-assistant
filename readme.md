@@ -2,6 +2,8 @@
 
 This custom component integrates the Baby Tracker app data with Home Assistant, allowing you to monitor and update your baby's activities through Home Assistant.
 
+> **Unofficial.** This is an independent project, not affiliated with or endorsed by the makers of Baby Tracker. The sync protocol was worked out by the maintainer from how the official app talks to its server, and much of the code was then written with an AI coding assistant (Claude) working to that design, with the maintainer reviewing the results. It is tested against a faked copy of the sync server rather than certified against the real one. Treat it like any other hobby integration: read what it does before pointing it at your account, keep the app's own backups, and report anything odd.
+
 ## Features
 
 - **Multi-Baby Support**: Track multiple babies with separate sensors and data for each child
@@ -1479,6 +1481,10 @@ For issues and feature requests, please submit them through the GitHub repositor
 ## Credits
 
 This integration provides a local interface to the Baby Tracker app (https://www.baby-tracker.com/). All trademarks belong to their respective owners. It is an independent project and is not affiliated with or endorsed by the makers of Baby Tracker.
+
+The makers of Baby Tracker do not publish their sync protocol. The maintainer worked it out by studying how the official Android app talks to the server: the endpoints, the record formats, and the rules for merge order and conflicts. This client follows those same rules so that records stay consistent across your devices. It contains no code from the app. If the protocol changes, this integration may stop working until it is updated.
+
+With that groundwork in place, much of the code was written with an AI coding assistant (Claude, via Claude Code), with the maintainer setting the direction, checking the work against the app's behaviour and reviewing the results. Bugs are the maintainer's responsibility, not the model's; please report them on the issue tracker.
 
 The growth percentiles use the [WHO Child Growth Standards](https://www.who.int/tools/child-growth-standards/standards) (2006) for 0 to 24 months, as published by the US CDC. The tables are bundled unmodified in [`custom_components/baby_tracker/client/data`](custom_components/baby_tracker/client/data), which lists their sources.
 
