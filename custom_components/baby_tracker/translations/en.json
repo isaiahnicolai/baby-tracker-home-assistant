@@ -39,5 +39,844 @@
         }
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "baby_info": {
+        "name": "Info"
+      },
+      "last_feeding": {
+        "name": "Last Feeding",
+        "state": {
+          "nursing": "Nursing",
+          "formula": "Formula",
+          "pumped": "Pumped",
+          "supplement": "Supplement"
+        }
+      },
+      "last_feeding_time": {
+        "name": "Last Feeding Time"
+      },
+      "last_diaper": {
+        "name": "Last Diaper",
+        "state": {
+          "wet": "Wet",
+          "poopy": "Poopy",
+          "mixed": "Mixed",
+          "dry": "Dry"
+        }
+      },
+      "last_diaper_time": {
+        "name": "Last Diaper Time"
+      },
+      "last_sleep": {
+        "name": "Last Sleep"
+      },
+      "last_sleep_time": {
+        "name": "Last Sleep Time"
+      },
+      "last_nursing": {
+        "name": "Last Nursing"
+      },
+      "last_bath": {
+        "name": "Last Bath"
+      },
+      "last_pump": {
+        "name": "Last Pump"
+      },
+      "pump_summary": {
+        "name": "Pump Summary"
+      },
+      "last_medicine": {
+        "name": "Last Medicine"
+      },
+      "last_milestone": {
+        "name": "Last Milestone"
+      },
+      "last_doctor_visit": {
+        "name": "Last Doctor Visit"
+      },
+      "last_vaccine": {
+        "name": "Last Vaccine"
+      },
+      "weight": {
+        "name": "Weight"
+      },
+      "length": {
+        "name": "Length"
+      },
+      "head": {
+        "name": "Head Circumference"
+      },
+      "last_temperature": {
+        "name": "Temperature"
+      },
+      "feeding_count": {
+        "name": "Feedings"
+      },
+      "nursing_minutes": {
+        "name": "Nursing Minutes"
+      },
+      "bottle_ml": {
+        "name": "Bottle Volume"
+      },
+      "diaper_count": {
+        "name": "Diapers"
+      },
+      "poopy_count": {
+        "name": "Poopy Diapers"
+      },
+      "wet_count": {
+        "name": "Wet Diapers"
+      },
+      "time_since_last_feeding": {
+        "name": "Time Since Last Feeding"
+      },
+      "daily_summary": {
+        "name": "Daily Summary"
+      },
+      "feeding_timer": {
+        "name": "Next Feeding"
+      },
+      "bedtime_analysis": {
+        "name": "Average Bedtime"
+      },
+      "next_feed": {
+        "name": "Next Feed"
+      },
+      "feed_interval": {
+        "name": "Feed Interval"
+      },
+      "intake_24h": {
+        "name": "Intake 24h"
+      },
+      "intake_status": {
+        "name": "Intake Status",
+        "state": {
+          "low": "Low",
+          "ok": "OK",
+          "high": "High",
+          "unknown": "Unknown"
+        }
+      },
+      "diaper_adequacy": {
+        "name": "Diaper Adequacy",
+        "state": {
+          "ok": "OK",
+          "low": "Low",
+          "unknown": "Unknown"
+        }
+      },
+      "weight_percentile": {
+        "name": "Weight Percentile"
+      },
+      "length_percentile": {
+        "name": "Length Percentile"
+      },
+      "head_percentile": {
+        "name": "Head Percentile"
+      },
+      "weight_gain": {
+        "name": "Weight Gain"
+      },
+      "corrected_age": {
+        "name": "Corrected Age"
+      }
+    },
+    "binary_sensor": {
+      "feeding_overdue": {
+        "name": "Feeding Overdue"
+      },
+      "no_poop": {
+        "name": "No Poop"
+      },
+      "low_wet_diapers": {
+        "name": "Low Wet Diapers"
+      },
+      "fever": {
+        "name": "Fever"
+      },
+      "long_sleep": {
+        "name": "Long Sleep"
+      },
+      "intake_low": {
+        "name": "Intake Low"
+      },
+      "feed_due": {
+        "name": "Feed Due"
+      },
+      "wake_to_feed": {
+        "name": "Wake To Feed"
+      },
+      "night_mode": {
+        "name": "Night Mode"
+      }
+    },
+    "button": {
+      "add_bottle": {
+        "name": "Add {size} Bottle"
+      },
+      "add_diaper": {
+        "name": "Add {type} Diaper"
+      },
+      "log_bath": {
+        "name": "Log Bath"
+      },
+      "start_sleep": {
+        "name": "Start Sleep"
+      },
+      "end_sleep": {
+        "name": "End Sleep"
+      },
+      "give_medicine": {
+        "name": "Give {medicine}"
+      },
+      "sync_now": {
+        "name": "Sync Now"
+      },
+      "force_resync": {
+        "name": "Force Resync"
+      }
+    },
+    "image": {
+      "baby_photo": {
+        "name": "Photo"
+      }
+    }
+  },
+  "exceptions": {
+    "no_entry": {
+      "message": "No Baby Tracker account is set up"
+    },
+    "device_not_a_baby": {
+      "message": "That device isn't one of your Baby Tracker babies"
+    },
+    "baby_not_found": {
+      "message": "Baby {baby_name} not found"
+    },
+    "no_babies": {
+      "message": "No babies found in Baby Tracker"
+    },
+    "baby_required": {
+      "message": "baby_name is required when there are multiple babies ({names})"
+    },
+    "medicine_not_found": {
+      "message": "Medicine {name} not found"
+    },
+    "milestone_not_found": {
+      "message": "Milestone {name} not found"
+    },
+    "vaccine_not_found": {
+      "message": "Vaccine {name} not found"
+    },
+    "action_failed": {
+      "message": "Failed to {action}: {error}"
+    }
+  },
+  "services": {
+    "add_diaper": {
+      "name": "Add Diaper",
+      "description": "Adds a diaper change record to Baby Tracker.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "pee": {
+          "name": "Pee",
+          "description": "Whether the diaper was wet."
+        },
+        "poo": {
+          "name": "Poo",
+          "description": "Whether the diaper was dirty."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it happened (defaults to now)."
+        }
+      }
+    },
+    "add_nursing": {
+      "name": "Add Nursing",
+      "description": "Adds a nursing session record to Baby Tracker.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "left_duration": {
+          "name": "Left Duration",
+          "description": "Duration on the left side (minutes)."
+        },
+        "right_duration": {
+          "name": "Right Duration",
+          "description": "Duration on the right side (minutes)."
+        },
+        "both_duration": {
+          "name": "Both Duration",
+          "description": "Duration on both sides (minutes)."
+        },
+        "finish_side": {
+          "name": "Finish Side",
+          "description": "Which side the session finished on."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it started (defaults to now)."
+        }
+      }
+    },
+    "add_formula": {
+      "name": "Add Formula",
+      "description": "Adds a formula feeding record to Baby Tracker.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "Amount in ml (or oz if English Measure is on)."
+        },
+        "is_english_measure": {
+          "name": "English Measure",
+          "description": "Whether the amount is in oz (on) or ml (off). Defaults to the integration's unit setting."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it happened (defaults to now)."
+        }
+      }
+    },
+    "add_pumped": {
+      "name": "Add Pumped Milk",
+      "description": "Adds a pumped milk feeding record to Baby Tracker.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "Amount in ml (or oz if English Measure is on)."
+        },
+        "is_english_measure": {
+          "name": "English Measure",
+          "description": "Whether the amount is in oz (on) or ml (off). Defaults to the integration's unit setting."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it happened (defaults to now)."
+        }
+      }
+    },
+    "add_temperature": {
+      "name": "Add Temperature",
+      "description": "Adds a temperature record to Baby Tracker.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "temperature": {
+          "name": "Temperature",
+          "description": "Temperature value."
+        },
+        "is_fahrenheit": {
+          "name": "Fahrenheit",
+          "description": "Whether the temperature is in Fahrenheit (on) or Celsius (off). Defaults to the integration's unit setting."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it was taken (defaults to now)."
+        }
+      }
+    },
+    "log_bath": {
+      "name": "Log Bath",
+      "description": "Logs a bath to Baby Tracker.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "bath_type": {
+          "name": "Bath Type",
+          "description": "Type of bath (optional)."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it happened (defaults to now)."
+        }
+      }
+    },
+    "log_pump": {
+      "name": "Log Pump Session",
+      "description": "Logs a pumping session to Baby Tracker.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Not used; pump sessions belong to the account, not a baby."
+        },
+        "left_duration": {
+          "name": "Left Duration",
+          "description": "Duration on the left side (minutes)."
+        },
+        "right_duration": {
+          "name": "Right Duration",
+          "description": "Duration on the right side (minutes)."
+        },
+        "left_amount": {
+          "name": "Left Amount",
+          "description": "Amount from the left side (ml, or oz if English Measure is on)."
+        },
+        "right_amount": {
+          "name": "Right Amount",
+          "description": "Amount from the right side (ml, or oz if English Measure is on)."
+        },
+        "is_english_scale": {
+          "name": "English Measure",
+          "description": "Whether the amounts are in oz (on) or ml (off). Defaults to the integration's unit setting."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it happened (defaults to now)."
+        }
+      }
+    },
+    "log_medicine": {
+      "name": "Log Medicine",
+      "description": "Logs a medicine dose to Baby Tracker.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "medicine_name": {
+          "name": "Medicine Name",
+          "description": "Name of the medicine, as it is in the app (for example \"Gas Drops\", \"Gripe Water\" or \"Vitamin D\")."
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "Amount given."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it was given (defaults to now)."
+        }
+      }
+    },
+    "log_growth": {
+      "name": "Log Growth Measurement",
+      "description": "Logs a growth measurement (weight, length and head circumference) to Baby Tracker.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "weight": {
+          "name": "Weight",
+          "description": "Weight (pounds or kilograms, see Weight in Pounds)."
+        },
+        "length": {
+          "name": "Length/Height",
+          "description": "Length or height (inches or centimeters, see Length in Inches)."
+        },
+        "head": {
+          "name": "Head Circumference",
+          "description": "Head circumference (inches or centimeters, see Length in Inches)."
+        },
+        "is_english_weight_scale": {
+          "name": "Weight in Pounds",
+          "description": "Whether the weight is in pounds (on) or kilograms (off). Defaults to the integration's unit setting."
+        },
+        "is_english_length_scale": {
+          "name": "Length in Inches",
+          "description": "Whether the length and head circumference are in inches (on) or centimeters (off). Defaults to the integration's unit setting."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it was measured (defaults to now)."
+        }
+      }
+    },
+    "log_milestone": {
+      "name": "Log Milestone",
+      "description": "Logs a milestone to Baby Tracker.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "milestone_name": {
+          "name": "Milestone Name",
+          "description": "Name of the milestone, as it is in the app (for example \"First smile\", \"Raise head\" or \"First laugh\")."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it happened (defaults to now)."
+        }
+      }
+    },
+    "log_doctor_visit": {
+      "name": "Log Doctor Visit",
+      "description": "Logs a doctor visit or appointment. It is saved in Home Assistant only; it is not synced to the app, which has no doctor visit format Home Assistant can send safely.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "is_appointment": {
+          "name": "Is Appointment",
+          "description": "Whether this is a scheduled appointment (rather than a sick visit)."
+        },
+        "visit_type": {
+          "name": "Visit Type",
+          "description": "Type of visit (0 is a general checkup)."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "doctor_note": {
+          "name": "Doctor's Notes",
+          "description": "Notes from the doctor."
+        },
+        "symptom": {
+          "name": "Symptoms",
+          "description": "Symptoms noted during the visit."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When the visit was or will be (defaults to now)."
+        }
+      }
+    },
+    "log_vaccine": {
+      "name": "Log Vaccine",
+      "description": "Logs a vaccine to Baby Tracker.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "vaccine_name": {
+          "name": "Vaccine Name",
+          "description": "Name of the vaccine, as it is in the app (for example \"HepB\", \"DTaP\" or \"MMR\")."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it was given (defaults to now)."
+        }
+      }
+    },
+    "log_sleep": {
+      "name": "Log Sleep",
+      "description": "Logs the start or the end of a sleep to Baby Tracker.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "is_start": {
+          "name": "Is Start",
+          "description": "Whether the baby is going to sleep (on) or waking up (off)."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When the baby fell asleep or woke up (defaults to now)."
+        }
+      }
+    },
+    "list_babies": {
+      "name": "List Babies",
+      "description": "Lists the babies in Baby Tracker, with their names and IDs."
+    },
+    "sync": {
+      "name": "Sync",
+      "description": "Syncs data with the Baby Tracker server."
+    },
+    "force_resync": {
+      "name": "Force Resync",
+      "description": "Deletes the local copy of the data and downloads everything from the Baby Tracker server again. Use it when the sync group was reset in the app. Records that were never uploaded are uploaded first; if that fails, nothing is deleted."
+    },
+    "add_4oz_bottle": {
+      "name": "Add 4oz Bottle",
+      "description": "Adds a 4 oz (120 ml) bottle feeding, in the unit set for the integration.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it happened (defaults to now)."
+        }
+      }
+    },
+    "add_6oz_bottle": {
+      "name": "Add 6oz Bottle",
+      "description": "Adds a 6 oz (180 ml) bottle feeding, in the unit set for the integration.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it happened (defaults to now)."
+        }
+      }
+    },
+    "add_8oz_bottle": {
+      "name": "Add 8oz Bottle",
+      "description": "Adds an 8 oz (240 ml) bottle feeding, in the unit set for the integration.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it happened (defaults to now)."
+        }
+      }
+    },
+    "add_small_bottle": {
+      "name": "Add Small Bottle (2oz)",
+      "description": "Adds a 2 oz (60 ml) bottle feeding, in the unit set for the integration.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it happened (defaults to now)."
+        }
+      }
+    },
+    "add_medium_bottle": {
+      "name": "Add Medium Bottle (4oz)",
+      "description": "Adds a 4 oz (120 ml) bottle feeding, in the unit set for the integration.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it happened (defaults to now)."
+        }
+      }
+    },
+    "add_large_bottle": {
+      "name": "Add Large Bottle (6oz)",
+      "description": "Adds a 6 oz (180 ml) bottle feeding, in the unit set for the integration.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it happened (defaults to now)."
+        }
+      }
+    },
+    "add_xlarge_bottle": {
+      "name": "Add Extra Large Bottle (8oz)",
+      "description": "Adds an 8 oz (240 ml) bottle feeding, in the unit set for the integration.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby (required when you have more than one baby)."
+        },
+        "device_id": {
+          "name": "Baby",
+          "description": "The baby's Baby Tracker device (instead of Baby Name)."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note for this record."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it happened (defaults to now)."
+        }
+      }
+    },
+    "dismiss_alert": {
+      "name": "Dismiss Alert",
+      "description": "Dismisses a health alert until its condition clears and comes back.",
+      "fields": {
+        "entity_id": {
+          "name": "Entity ID",
+          "description": "The alert to dismiss (for example binary_sensor.everly_feeding_overdue)."
+        },
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby to dismiss alerts for."
+        },
+        "alert_type": {
+          "name": "Alert Type",
+          "description": "Type of alert to dismiss."
+        }
+      }
+    },
+    "dismiss_all_alerts": {
+      "name": "Dismiss All Alerts",
+      "description": "Dismisses all active health alerts, optionally only a baby's.",
+      "fields": {
+        "baby_name": {
+          "name": "Baby Name",
+          "description": "Name of the baby to dismiss alerts for (leave empty for all babies)."
+        }
+      }
+    }
   }
 }

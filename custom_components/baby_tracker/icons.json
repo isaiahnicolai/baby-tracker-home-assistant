@@ -1,0 +1,69 @@
+{
+  "entity": {
+    "sensor": {
+      "baby_info": {"default": "mdi:baby-face"},
+      "bedtime_analysis": {"default": "mdi:weather-night"},
+      "daily_summary": {"default": "mdi:clipboard-list"},
+      "feeding_timer": {"default": "mdi:timer-outline"},
+      "next_feed": {"default": "mdi:baby-bottle"},
+      "intake_24h": {"default": "mdi:baby-bottle-outline"},
+      "diaper_adequacy": {"default": "mdi:baby-face-outline"},
+      "weight_percentile": {"default": "mdi:scale-bathroom"},
+      "length_percentile": {"default": "mdi:human-male-height"},
+      "head_percentile": {"default": "mdi:head"},
+      "weight_gain": {"default": "mdi:trending-up"},
+      "corrected_age": {"default": "mdi:calendar-clock"}
+    },
+    "binary_sensor": {
+      "feeding_overdue": {"default": "mdi:baby-bottle"},
+      "no_poop": {"default": "mdi:emoticon-poop"},
+      "low_wet_diapers": {"default": "mdi:water-alert"},
+      "fever": {"default": "mdi:thermometer-alert"},
+      "long_sleep": {"default": "mdi:sleep"},
+      "intake_low": {"default": "mdi:baby-bottle-outline"},
+      "feed_due": {"default": "mdi:clock-alert-outline"},
+      "wake_to_feed": {"default": "mdi:alarm-bell"},
+      "night_mode": {
+        "default": "mdi:white-balance-sunny",
+        "state": {"on": "mdi:moon-waning-crescent"}
+      }
+    },
+    "button": {
+      "add_bottle": {"default": "mdi:bottle-tonic-plus"},
+      "add_diaper": {"default": "mdi:baby-carriage"},
+      "log_bath": {"default": "mdi:shower"},
+      "start_sleep": {"default": "mdi:sleep"},
+      "end_sleep": {"default": "mdi:sleep-off"},
+      "give_medicine": {"default": "mdi:medical-bag"},
+      "sync_now": {"default": "mdi:sync"},
+      "force_resync": {"default": "mdi:database-sync"}
+    }
+  },
+  "services": {
+    "add_diaper": {"service": "mdi:baby-carriage"},
+    "add_nursing": {"service": "mdi:mother-nurse"},
+    "add_formula": {"service": "mdi:baby-bottle"},
+    "add_pumped": {"service": "mdi:baby-bottle-outline"},
+    "add_temperature": {"service": "mdi:thermometer"},
+    "log_bath": {"service": "mdi:shower"},
+    "log_pump": {"service": "mdi:pump"},
+    "log_medicine": {"service": "mdi:pill"},
+    "log_growth": {"service": "mdi:human-male-height"},
+    "log_milestone": {"service": "mdi:star-circle"},
+    "log_doctor_visit": {"service": "mdi:doctor"},
+    "log_vaccine": {"service": "mdi:needle"},
+    "log_sleep": {"service": "mdi:sleep"},
+    "list_babies": {"service": "mdi:account-child"},
+    "sync": {"service": "mdi:sync"},
+    "force_resync": {"service": "mdi:database-sync"},
+    "add_4oz_bottle": {"service": "mdi:bottle-tonic-plus"},
+    "add_6oz_bottle": {"service": "mdi:bottle-tonic-plus"},
+    "add_8oz_bottle": {"service": "mdi:bottle-tonic-plus"},
+    "add_small_bottle": {"service": "mdi:bottle-tonic-plus"},
+    "add_medium_bottle": {"service": "mdi:bottle-tonic-plus"},
+    "add_large_bottle": {"service": "mdi:bottle-tonic-plus"},
+    "add_xlarge_bottle": {"service": "mdi:bottle-tonic-plus"},
+    "dismiss_alert": {"service": "mdi:bell-off"},
+    "dismiss_all_alerts": {"service": "mdi:bell-off-outline"}
+  }
+}

@@ -126,42 +126,74 @@ All services accept an optional `baby_name` parameter. If not specified, the ser
 
 ## Available Sensors
 
-After setting up the integration, the following sensors will be created **for each baby**:
+After setting up the integration, the following entities will be created **for each baby**. States are numbers or timestamps (not text) wherever they can be, so history graphs, statistics and automations work on them directly. The details are in attributes: times of the record as text, notes, durations per side, and so on.
+
+The integration's **Units** setting (imperial or metric, changeable in the options) decides how volumes, weights, lengths and temperatures are shown. Volumes, weights and lengths are stored as mL, kg and cm and displayed in fl oz, lb and in for imperial; you can still pick another unit in the entity's settings.
 
 ### Activity Sensors
 
-- **Last Feeding** - Time and type of last feeding (nursing, formula, or pumped)
-- **Last Diaper** - Time and status of last diaper change
-- **Last Sleep** - Time and duration of last sleep session
-- **Last Nursing** - Details of last nursing session (left/right duration)
-- **Last Bath** - Time of last bath
-- **Last Temperature** - Most recent temperature reading
-- **Currently Sleeping** - Binary sensor indicating if baby is currently asleep
+| Sensor | State | Unit and class |
+| --- | --- | --- |
+| Last Feeding | Type of the last feeding: `nursing`, `formula`, `pumped` or `supplement` | enum |
+| Last Feeding Time | When the last feeding was | timestamp |
+| Last Diaper | Status of the last change: `wet`, `poopy`, `mixed` or `dry` | enum |
+| Last Diaper Time | When the last diaper change was | timestamp |
+| Last Sleep | Minutes slept, or so far if the baby is asleep now (the `sleeping` attribute says which) | min, duration |
+| Last Sleep Time | When the last sleep started | timestamp |
+| Last Nursing | Minutes of the last nursing session (left, right and both in attributes) | min, duration |
+| Last Bath | Type of the last bath | text |
+| Temperature | Most recent temperature, in the entry's unit | °F or °C, temperature |
+| Time Since Last Feeding | Minutes since the last feeding; `feeding_status` and `needs_feeding` are attributes | min, duration |
+| Next Feeding | Minutes until the age-based feeding limit (negative once overdue) | min, duration |
+| Average Bedtime | Average night bedtime of the last two weeks, with a per-day list in the attributes | text |
+| Daily Summary | Feedings so far today; formula, nursing minutes, diapers and sleep hours in attributes | feedings |
 
 ### Summary Sensors (Last 7 Days)
 
-- **Feeding Count** - Total number of feedings
-- **Nursing Minutes** - Total nursing time
-- **Bottle Oz** - Total bottle feeding in oz
-- **Bottle ML** - Total bottle feeding in ml
-- **Diaper Count** - Total diaper changes
-- **Poopy Count** - Number of dirty diapers
-- **Wet Count** - Number of wet diapers
+These are totals over a rolling 7 days (the `window_days` attribute says so), updated on every refresh.
+
+| Sensor | State | Unit and class |
+| --- | --- | --- |
+| Feedings | Total number of feedings | feedings |
+| Nursing Minutes | Total nursing time | min, duration |
+| Bottle Volume | Formula and pumped milk from the bottle (oz equivalents in the attributes). Replaces the old *Bottle oz* and *Bottle ml* sensors; it keeps the entity of *Bottle ml* | mL, volume |
+| Diapers | Total diaper changes | diapers |
+| Poopy Diapers | Dirty diapers, mixed ones included | diapers |
+| Wet Diapers | Wet diapers, mixed ones included | diapers |
 
 ### Health & Growth Sensors
 
-- **Last Medicine** - Last medication administered
-- **Last Pump** - Last pumping session details
-- **Pump Summary** - 7-day pumping totals
-- **Weight** - Most recent weight measurement
-- **Length** - Most recent length/height measurement
-- **Head Circumference** - Most recent head circumference
+| Sensor | State | Unit and class |
+| --- | --- | --- |
+| Last Medicine | Name of the last medicine given | text |
+| Last Pump | Total from the last pump session, whichever unit it was logged in | mL, volume |
+| Pump Summary (diagnostic) | 7-day pumping total; sessions and durations in attributes | mL, volume |
+| Weight | Most recent weight | kg, weight |
+| Length | Most recent length/height | cm, distance |
+| Head Circumference | Most recent head circumference | cm, distance |
 
 ### Milestone & Medical Sensors
 
-- **Last Milestone** - Most recent developmental milestone achieved
-- **Last Doctor Visit** - Most recent doctor appointment or visit
-- **Last Vaccine** - Most recent vaccine administered
+| Sensor | State | Unit and class |
+| --- | --- | --- |
+| Last Milestone | Name of the most recent milestone | text |
+| Last Doctor Visit | When the most recent doctor appointment or visit was | timestamp |
+| Last Vaccine | Name of the most recent vaccine | text |
+
+### Alerts, Night Mode and Housekeeping
+
+- **Alerts** (`binary_sensor`): Feeding Overdue, No Poop, Low Wet Diapers, Fever, Long Sleep, plus the three insight alerts below
+- **Night Mode** (`binary_sensor`): on while the baby sleeps between 19:00 and 07:00
+- **Info** (diagnostic sensor): the baby's age, with date of birth and other details in attributes
+- **Photo** (`image`): the baby's photo from the app. See [Photos](#photos)
+- **Sync Now** and **Force Resync** (configuration buttons on the *Baby Tracker* device)
+- **Buttons** for quick logging: bottles of 3 to 8 oz, wet/dirty/mixed diapers, bath, start/end sleep and Tylenol
+
+### Photos
+
+Each baby's photo is shown by its **Photo** image entity (for example `image.baby_name_photo`), for dashboards and picture cards. The files are kept in a private `baby_tracker` folder in your Home Assistant configuration directory (photos attached to activities go in its `pictures` subfolder) and are only served through the image entity, which needs a login or the entity's access token. They are **not** under `www`, so nobody can fetch them without logging in.
+
+Earlier versions saved photos in `www/baby_tracker`, where anyone who could reach Home Assistant could fetch them without logging in. Those old copies are not deleted for you: remove the `www/baby_tracker` folder, and Home Assistant logs a warning at startup while it exists.
 
 ## Insights
 
@@ -188,6 +220,18 @@ The three binary sensors work like the other alerts: they can be dismissed with 
 ## Service Calls
 
 All services support multi-baby tracking with an optional `baby_name` parameter.
+
+Every service that adds a record (all of the ones below except the utility services) also takes an optional **`time`**: when it happened, for logging something afterwards. Without it the record is dated now. A time without a time zone is in Home Assistant's time zone. In the UI it is a date and time picker.
+
+```yaml
+service: baby_tracker.add_diaper
+data:
+  baby_name: "Your Baby Name"
+  poo: true
+  time: "2026-03-01 09:30:00" # Optional - an hour ago, say, instead of now
+```
+
+Where a service takes a unit (oz or ml, pounds or kilograms, inches or centimeters, Fahrenheit or Celsius) and you leave it out, it follows the integration's **Units** setting.
 
 ### Basic Activities
 
@@ -226,7 +270,7 @@ service: baby_tracker.add_formula
 data:
   baby_name: "Your Baby Name" # Optional
   amount: 120 # Amount in ml (or oz if is_english_measure is true)
-  is_english_measure: false # Optional (default: false)
+  is_english_measure: false # Optional (default: follows the Units setting)
   note: "Optional note"
 ```
 
@@ -237,7 +281,7 @@ service: baby_tracker.add_pumped
 data:
   baby_name: "Your Baby Name" # Optional
   amount: 90 # Amount in ml (or oz if is_english_measure is true)
-  is_english_measure: false # Optional (default: false)
+  is_english_measure: false # Optional (default: follows the Units setting)
   note: "Optional note"
 ```
 
@@ -248,7 +292,7 @@ service: baby_tracker.add_temperature
 data:
   baby_name: "Your Baby Name" # Optional
   temperature: 98.6
-  is_fahrenheit: true # Optional (default: true)
+  is_fahrenheit: true # Optional (default: follows the Units setting)
   note: "Optional note"
 ```
 
@@ -274,7 +318,7 @@ data:
   right_duration: 15 # Minutes
   left_amount: 3.5 # ml or oz
   right_amount: 4.0 # ml or oz
-  is_english_scale: true # true for oz, false for ml
+  is_english_scale: true # true for oz, false for ml (default: follows the Units setting)
   note: "Optional note"
 ```
 
@@ -298,8 +342,8 @@ data:
   weight: 15.5 # lbs or kg
   length: 24.0 # inches or cm
   head: 16.5 # inches or cm
-  is_english_weight_scale: true # true for lbs, false for kg
-  is_english_length_scale: true # true for inches, false for cm
+  is_english_weight_scale: true # true for lbs, false for kg (default: follows the Units setting)
+  is_english_length_scale: true # true for inches, false for cm (default: follows the Units setting)
   note: "Doctor visit measurements"
 ```
 
@@ -357,6 +401,26 @@ service: baby_tracker.sync
 ```
 
 Manually triggers a sync with Baby Tracker servers.
+
+#### Force Resync
+
+```yaml
+service: baby_tracker.force_resync
+```
+
+Deletes the local copy of the data and downloads everything again, for when the sync group was reset in the app. Records that were never uploaded are sent first; if that fails nothing is deleted. The **Force Resync** button does the same.
+
+#### Dismiss Alerts
+
+```yaml
+service: baby_tracker.dismiss_alert
+data:
+  baby_name: "Your Baby Name" # Optional
+  alert_type: feed_due # Optional: feeding_overdue, no_poop, low_wet_diapers, fever, long_sleep, intake_low, feed_due or wake_to_feed
+  entity_id: binary_sensor.baby_name_feed_due # Optional - dismiss one alert by its entity
+```
+
+Dismissed until the condition clears and comes back. `baby_tracker.dismiss_all_alerts` dismisses every active alert (a baby's, with `baby_name`).
 
 ## Google Home Integration
 
@@ -558,8 +622,8 @@ entities:
     name: Diapers
   - entity: sensor.baby_name_nursing_minutes
     name: Nursing
-  - entity: sensor.baby_name_bottle_oz
-    name: Bottle (oz)
+  - entity: sensor.baby_name_bottle_volume
+    name: Bottle (7 days)
 ```
 
 ### Growth Tracking Card
@@ -792,7 +856,7 @@ automation:
             - Feedings: {{ states('sensor.baby_name_feeding_count') }}
             - Diapers: {{ states('sensor.baby_name_diaper_count') }}
             - Nursing minutes: {{ states('sensor.baby_name_nursing_minutes') }}
-            - Current weight: {{ states('sensor.baby_name_weight') }} lbs
+            - Current weight: {{ states('sensor.baby_name_weight') }} {{ state_attr('sensor.baby_name_weight', 'unit_of_measurement') }}
 ```
 
 ### Reminder to Feed Baby
@@ -1161,9 +1225,11 @@ automation:
 - **Multi-Baby Issues**: Use the `list_babies` service to see all babies and their names
 - **Google Home Not Working**: Ensure scenes are exposed in Google Assistant configuration and routines are set up correctly
 
+- **Reporting a Problem**: Use **Download diagnostics** on the integration's page and attach the file to your issue. Your email, password and device ID are removed from it
+
 ## Privacy Notice
 
-This integration stores your Baby Tracker credentials locally to sync with the Baby Tracker servers. No data is sent to third parties. All data is stored in a local SQLite database in your Home Assistant configuration directory.
+This integration stores your Baby Tracker credentials locally to sync with the Baby Tracker servers. No data is sent to third parties. All data is stored in a local SQLite database in your Home Assistant configuration directory. Baby and activity photos are kept in a private `baby_tracker` folder there and are only shown by the Photo image entities, which need a login.
 
 ## Database Location
 

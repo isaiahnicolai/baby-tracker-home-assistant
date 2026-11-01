@@ -1,6 +1,7 @@
 """Constants for the Baby Tracker integration."""
 
 DOMAIN = "baby_tracker"
+CONFIG_ENTRY_VERSION = 2  # the config flow's VERSION; async_migrate_entry brings older entries up to it
 VERSION = "0.2.0"  # keep in sync with manifest.json and client/__init__.py
 
 # Configuration
@@ -35,8 +36,10 @@ SENSOR_TYPE_HEAD = "head"
 SENSOR_TYPE_LAST_TEMPERATURE = "last_temperature"
 SENSOR_TYPE_FEEDING_COUNT = "feeding_count"
 SENSOR_TYPE_NURSING_MINUTES = "nursing_minutes"
-SENSOR_TYPE_BOTTLE_OZ = "bottle_oz"
-SENSOR_TYPE_BOTTLE_ML = "bottle_ml"
+SENSOR_TYPE_BOTTLE_VOLUME = "bottle_ml"  # keeps the unique ID of the old "Bottle ml" sensor
+SENSOR_TYPE_LAST_FEEDING_TIME = "last_feeding_time"
+SENSOR_TYPE_LAST_DIAPER_TIME = "last_diaper_time"
+SENSOR_TYPE_LAST_SLEEP_TIME = "last_sleep_time"
 SENSOR_TYPE_DIAPER_COUNT = "diaper_count"
 SENSOR_TYPE_POOPY_COUNT = "poopy_count"
 SENSOR_TYPE_WET_COUNT = "wet_count"
@@ -45,13 +48,15 @@ SENSOR_TYPE_TIME_SINCE_FEEDING = "time_since_last_feeding"
 SENSOR_TYPE_IS_SLEEPING = "is_sleeping"
 
 # Units
-UNIT_MINUTES = "min"
 UNIT_FEEDINGS = "feedings"
 UNIT_DIAPERS = "diapers"
-UNIT_OZ = "oz"
-UNIT_ML = "ml"
-UNIT_F = "°F"
-UNIT_C = "°C"
+
+# Days covered by the feeding, diaper and pump summaries
+SUMMARY_DAYS = 7
+
+# Directory (under the Home Assistant config directory) for baby and activity photos.
+# Private: served only through the image entities, which need a login.
+PHOTO_DIR_NAME = "baby_tracker"
 
 # Attribute keys
 ATTR_BABY_NAME = "baby_name"

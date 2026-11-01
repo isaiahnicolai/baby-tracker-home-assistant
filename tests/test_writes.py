@@ -1,4 +1,6 @@
 """Logging records: the right baby, the app's formats, and the upload queue."""
+from datetime import UTC
+
 from helpers import EVERLY, IPHONE, MILESTONE, OURS, TWIN, VACCINE
 
 
@@ -97,3 +99,38 @@ def test_timezone_is_the_standard_offset(tracker, server):
 def test_other_devices_sync_position_is_untouched(tracker, query):
     tracker.add_diaper(EVERLY, None)
     assert query("SELECT last_sync_id FROM DeviceSyncInfo WHERE device_uuid=?", (IPHONE,)) in ([], [(0,)])
+
+
+def test_sleep_can_be_dated_when_it_happened(tracker, server, query):
+    from datetime import datetime, timedelta
+
+    fell_asleep = datetime(2026, 3, 1, 9, 0, tzinfo=UTC)
+    assert tracker.log_sleep_event(TWIN, is_start=True, time=fell_asleep)["status"] == "success"
+    assert query("SELECT Time, Duration FROM Sleep WHERE BabyID=? ORDER BY Time DESC LIMIT 1",
+                 (TWIN,)) == [(fell_asleep.timestamp(), 0)]
+
+    # The end can be given as the sync format's text, and works out the duration from the start
+    woke = (fell_asleep + timedelta(minutes=90)).strftime("%Y-%m-%d %H:%M:%S +0000")
+    assert tracker.log_sleep_event(TWIN, is_start=False, time=woke)["status"] == "success"
+    assert server.uploads[-1]["record"]["duration"] == 90
+    assert server.uploads[-1]["record"]["time"] == "2026-03-01 09:00:00 +0000"
+
+
+def test_sleep_cannot_end_before_it_started(tracker):
+    from datetime import datetime, timedelta
+
+    started = datetime(2026, 3, 1, 9, 0, tzinfo=UTC)
+    assert tracker.log_sleep_event(TWIN, is_start=True, time=started)["status"] == "success"
+    result = tracker.log_sleep_event(TWIN, is_start=False, time=started - timedelta(minutes=5))
+    assert result["status"] == "error"
+
+
+def test_pending_upload_count_is_what_has_not_been_sent(tracker, server):
+    assert tracker.pending_upload_count() == 0
+    server.online = False
+    tracker.add_diaper(EVERLY, None, pee=True)
+    tracker.add_diaper(TWIN, None, pee=True)
+    assert tracker.pending_upload_count() == 2
+    server.online = True
+    tracker.sync()
+    assert tracker.pending_upload_count() == 0

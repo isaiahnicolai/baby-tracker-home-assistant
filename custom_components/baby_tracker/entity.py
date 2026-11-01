@@ -47,13 +47,29 @@ def _legacy_key(name):
     return name.lower().replace(" ", "_")
 
 
+# Sensors that were merged into others; their registry entries would otherwise stay behind as orphans
+RETIRED_SENSOR_SUFFIXES = ("_bottle_oz",)  # the oz half of Bottle Volume (the ml half kept its ID)
+
+
+def remove_retired_entities(hass, entry):
+    """Delete the registry entries of sensors that no longer exist. Safe to run repeatedly."""
+    from homeassistant.helpers import entity_registry as er
+
+    ent_reg = er.async_get(hass)
+    for entity in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+        if entity.domain == "sensor" and entity.unique_id.endswith(RETIRED_SENSOR_SUFFIXES):
+            _LOGGER.info(f"Removing {entity.entity_id}, which was merged into another sensor")
+            ent_reg.async_remove(entity.entity_id)
+
+
 def migrate_to_baby_ids(hass, entry, email, babies):
     """
     Re-key entities and devices created when IDs were based on the baby's
     name ("{email}_{name}") to use the baby's ID instead. Entity IDs,
     history and dashboards are unchanged. Safe to run repeatedly.
     """
-    from homeassistant.helpers import device_registry as dr, entity_registry as er
+    from homeassistant.helpers import device_registry as dr
+    from homeassistant.helpers import entity_registry as er
 
     # Longest names first, so "ann_marie" isn't mistaken for "ann"
     keys = sorted(((_legacy_key(b.name), b.object_id) for b in babies if b.name),

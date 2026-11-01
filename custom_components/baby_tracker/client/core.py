@@ -204,6 +204,16 @@ class BabyTracker:
         self.last_sync_time = result["last_sync_time"]
         return result
 
+    def pending_upload_count(self):
+        """How many records were logged here but haven't been uploaded to the server yet."""
+        if not self.db:
+            if self.db_path and os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
+                self.api.local_db = self.db
+            else:
+                return 0
+        return len(self.db.get_pending_transactions())
+
     def force_resync(self, email, password, device_uuid=None):
         """
         Force a complete resync by deleting the local database and re-downloading
@@ -1533,7 +1543,7 @@ class BabyTracker:
             _LOGGER.error(f"Failed to add medicine record: {str(e)}")
             return {"status": "error", "message": f"Failed to add medicine record: {str(e)}"}
 
-    def log_sleep_event(self, baby_id, is_start=True, note=""):
+    def log_sleep_event(self, baby_id, is_start=True, note="", time=None):
         """
         Log a sleep start or end event.
 
@@ -1541,6 +1551,8 @@ class BabyTracker:
             baby_id: Baby's ID
             is_start: True for sleep start, False for sleep end/wake up
             note: Optional note text
+            time: When it happened, a datetime or "YYYY-MM-DD HH:MM:SS +0000"
+                (defaults to now)
 
         Returns:
             dict: Result of the operation
@@ -1551,8 +1563,10 @@ class BabyTracker:
         try:
             from datetime import datetime, timezone
 
-            # Get current timestamp
-            current_time = datetime.now(timezone.utc)
+            # The event's timestamp: when it was said to happen, else now
+            if time and not isinstance(time, datetime):
+                time = datetime.strptime(time, "%Y-%m-%d %H:%M:%S %z")
+            current_time = time.astimezone(timezone.utc) if time else datetime.now(timezone.utc)
             time_unix = int(current_time.timestamp())
             time_str = current_time.strftime("%Y-%m-%d %H:%M:%S +0000")
 
@@ -1596,6 +1610,8 @@ class BabyTracker:
                 if row:
                     sleep_object_id, start_time = row
                     duration_seconds = time_unix - start_time
+                    if duration_seconds < 0:
+                        return {"status": "error", "message": "The sleep can't end before it started"}
                     # Convert to minutes (API uses minutes, not seconds)
                     duration_minutes = duration_seconds // 60
 
