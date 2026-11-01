@@ -23,6 +23,10 @@ This custom component integrates the Baby Tracker app data with Home Assistant, 
 
 ### HACS (Recommended)
 
+[![Open this repository in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=isaiahnicolai&repository=baby-tracker-home-assistant&category=integration)
+
+The button adds this repository to HACS and opens it there, so you only have to click **Download**. To do the same by hand:
+
 1. Open HACS in your Home Assistant instance
 2. Go to "Integrations"
 3. Click the three dots in the top right corner
@@ -39,6 +43,14 @@ This custom component integrates the Baby Tracker app data with Home Assistant, 
 3. Restart Home Assistant
 
 Requires Home Assistant 2024.12 or newer.
+
+### Set up
+
+After a restart, add the integration and sign in with your Baby Tracker account:
+
+[![Add Baby Tracker to Home Assistant](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=baby_tracker)
+
+or go to **Settings > Devices & services > Add integration** and search for *Baby Tracker*. Signing in joins your account as a new device and fetches the seed database; the first refresh then replays the account's history, which takes a few seconds per few thousand records. See [Configuration](#configuration) for the options.
 
 ### Upgrading from 0.2
 
