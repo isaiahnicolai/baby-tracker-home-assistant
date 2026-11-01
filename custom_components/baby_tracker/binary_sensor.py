@@ -9,6 +9,7 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
@@ -124,6 +125,14 @@ async def async_setup_entry(
         entities.append(BabyTrackerNursingSensor(coordinator, baby_name))
         if coordinator.sleep_source and coordinator.baby_id_for(baby_name) in coordinator.sleep_source.sources:
             entities.append(BabyTrackerSleepSourceSensor(coordinator, baby_name))
+        else:
+            # A source that was cleared leaves a registry entry behind; drop it rather than
+            # keeping a permanently unavailable Sleep Source entity
+            ent_reg = er.async_get(hass)
+            stale = ent_reg.async_get_entity_id(
+                "binary_sensor", DOMAIN, baby_unique_id(coordinator, baby_name, "sleep_source_active"))
+            if stale:
+                ent_reg.async_remove(stale)
 
     coordinator._alert_entities.extend(entities)
     async_add_entities(entities)

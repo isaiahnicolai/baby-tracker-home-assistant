@@ -2487,14 +2487,15 @@ SNOO = "binary_sensor.snoo_asleep"
 SNOO_SOURCES = {"sleep_sources": {"ID-EVERLY": {"sleep_source_entity": SNOO}}}
 NIGHT = datetime(2026, 3, 1, 22, 0, tzinfo=UTC)
 # Everly is awake as far as Baby Tracker knows (the shared test data has her asleep)
-AWAKE = {"last_sleep": {"time": "2026-03-01 18:00:00 +0000", "is_sleeping": False, "duration": 60,
+SOURCE_AWAKE = {  # Everly awake as far as Baby Tracker knows (the nap fixture above is AWAKE)
+    "last_sleep": {"time": "2026-03-01 18:00:00 +0000", "is_sleeping": False, "duration": 60,
                         "current_duration": 0, "status": "awake"}}
 
 
 @contextmanager
 def logged_sleeps(**changes):
     """Everly's sleep as Baby Tracker has it (awake unless changed), with log_sleep_event recorded."""
-    fetch = fetch_with(**{**AWAKE, **changes})
+    fetch = fetch_with(**{**SOURCE_AWAKE, **changes})
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch), \
          patch(f"{CORE}.log_sleep_event", return_value={"status": "success"}) as log_sleep:
         yield log_sleep
@@ -2841,13 +2842,13 @@ async def test_sleep_and_diaper_alerts_follow_their_own_groups(hass, backend, fr
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
                quiet_fetch(feeds=True, sleep=True)):
         await setup(hass, entry)
-    assert hass.states.get("binary_sensor.everly_wake_overdue").state == "on"
+    assert hass.states.get("binary_sensor.everly_nap_running_long").state == "on"
 
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
                quiet_fetch(feeds=True, sleep=False, diapers=False)):
         await coordinator_for(hass, entry).async_refresh()
         await hass.async_block_till_done()
-    for alert in ("wake_overdue", "long_sleep", "sleep_due", "no_poop", "low_wet_diapers"):
+    for alert in ("nap_running_long", "long_sleep", "sleep_due", "no_poop", "low_wet_diapers"):
         state = hass.states.get(f"binary_sensor.everly_{alert}")
         assert state.state == "off" and state.attributes["reason"] == "not_tracked", alert
 
