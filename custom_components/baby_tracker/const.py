@@ -11,6 +11,8 @@ CONF_SCAN_INTERVAL = "scan_interval"
 CONF_UNIT_SYSTEM = "unit_system"
 CONF_DEVICE_UUID = "device_uuid"  # This integration's own device identity on the sync server
 DEFAULT_SCAN_INTERVAL = 15  # minutes
+DEFAULT_TITLE = "Baby Tracker"  # until the first sync names the babies
+FIRST_SYNC_RETRY_SECONDS = 60  # wait before trying a failed first sync again
 DEFAULT_UNIT_SYSTEM = "imperial"  # "imperial" (oz, lbs, F) or "metric" (ml, kg, C)
 
 # Unit system options

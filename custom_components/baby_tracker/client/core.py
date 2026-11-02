@@ -1,6 +1,6 @@
 """Baby Tracker core functionality."""
 
-from .api import AccountResetError, AuthenticationError, BabyTrackerAPI
+from .api import JOIN_PENDING, AccountResetError, AuthenticationError, BabyTrackerAPI
 from .database import IN_PROGRESS_SLEEP_SECONDS, BabyTrackerLocalDatabase
 import os
 from datetime import datetime, timedelta, timezone
@@ -324,6 +324,21 @@ class BabyTracker:
             _LOGGER.error(f"Force resync failed: {str(e)}")
             return {"status": "error", "message": f"Force resync failed: {str(e)}"}
     
+    def needs_first_sync(self):
+        """
+        Whether this client has not finished joining the account yet: there is no
+        local database, or the account's history has not been fully replayed into it.
+        The next authenticate() and sync() do (or finish) that, which can take a while.
+        """
+        if not self.is_in_group():
+            return True
+        try:
+            db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
+            return db.get_sync_state(JOIN_PENDING) is not None
+        except Exception as e:  # noqa: BLE001 - an unreadable database needs the join redone
+            _LOGGER.warning(f"Could not read the join state of {self.db_path}: {e}")
+            return True
+
     # === Data Access Methods ===
     # These methods read from the local database
     def is_in_group(self):

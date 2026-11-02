@@ -116,3 +116,13 @@ def test_connections_use_normal_synchronous_in_wal_mode(app_db):
     assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1  # NORMAL
     conn.close()
+
+
+def test_needs_first_sync_until_the_history_is_imported(tmp_path, tracker):
+    from babytracker_client import BabyTracker
+    from babytracker_client.api import JOIN_PENDING
+
+    assert BabyTracker(db_path=str(tmp_path / "none.db")).needs_first_sync() is True  # no database yet
+    assert tracker.needs_first_sync() is False  # a joined, fully synced database
+    tracker.db.set_sync_state(JOIN_PENDING, "1")  # joined, history not replayed yet
+    assert tracker.needs_first_sync() is True

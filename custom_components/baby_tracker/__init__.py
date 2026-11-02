@@ -1,4 +1,5 @@
 """Baby Tracker integration for Home Assistant."""
+import asyncio
 import logging
 import os
 import time
@@ -6,6 +7,7 @@ import uuid
 from datetime import datetime, timedelta
 
 import homeassistant.helpers.config_validation as cv
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -27,11 +29,13 @@ from .const import (
     CONF_UNIT_SYSTEM,
     CONFIG_ENTRY_VERSION,
     DEFAULT_SCAN_INTERVAL,
+    DEFAULT_TITLE,
     DEFAULT_UNIT_SYSTEM,
     DOMAIN,
     EVENT_DIAPER,
     EVENT_FEEDING,
     EVENT_SLEEP,
+    FIRST_SYNC_RETRY_SECONDS,
     ISSUE_ACCOUNT_RESET,
     ISSUE_CUSTOM_SENTENCES,
     ISSUE_UPLOADS_PENDING,
@@ -90,6 +94,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     # A nursing session timed before a restart or reload carries on
     await coordinator.async_load_nursing()
 
+    # The first sync joins the account and replays its whole history, which can take minutes.
+    # Home Assistant keeps the add-integration dialog open until setup returns, so on a first
+    # setup (or one interrupted mid-import) that runs in the background, and the entry reloads
+    # with the babies' devices and entities once it is done.
+    if await hass.async_add_executor_job(coordinator.baby_tracker.needs_first_sync):
+        hass.data[DOMAIN][entry.entry_id] = coordinator
+        coordinator.importing = True
+        entry.async_create_background_task(
+            hass, _async_first_sync(hass, entry, coordinator), f"{DOMAIN} first sync")
+        return True
+
     # Raises ConfigEntryNotReady (retry later) or ConfigEntryAuthFailed (re-login)
     await coordinator.async_config_entry_first_refresh()
 
@@ -125,6 +140,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     return True
 
 
+def _first_sync_notification_id(entry: ConfigEntry) -> str:
+    return f"{DOMAIN}_{entry.entry_id}_first_sync"
+
+
+async def _async_first_sync(hass: HomeAssistant, entry: ConfigEntry, coordinator) -> None:
+    """Join the account and import its history, then reload so the babies' entities are created."""
+    notification_id = _first_sync_notification_id(entry)
+    persistent_notification.async_create(
+        hass,
+        "Baby Tracker is importing your account's history in the background. Each baby's device "
+        "and entities appear when it finishes, usually within a few minutes.",
+        title="Baby Tracker",
+        notification_id=notification_id,
+    )
+    _LOGGER.info("Importing the Baby Tracker account's history in the background")
+    # A rejected password raises ConfigEntryAuthFailed here, which starts a re-authentication
+    await coordinator.async_refresh()
+    if not coordinator.last_update_success:
+        _LOGGER.warning("Importing the Baby Tracker history failed; trying again in %s seconds",
+                        FIRST_SYNC_RETRY_SECONDS)
+        await asyncio.sleep(FIRST_SYNC_RETRY_SECONDS)
+        hass.config_entries.async_schedule_reload(entry.entry_id)
+        return
+
+    persistent_notification.async_dismiss(hass, notification_id)
+    names = " & ".join(baby.name for baby in coordinator.data.get("babies") or [] if baby.name)
+    if names and entry.title == DEFAULT_TITLE:
+        hass.config_entries.async_update_entry(entry, title=f"{DEFAULT_TITLE} ({names})")
+    _LOGGER.info("Baby Tracker history imported; setting up the babies' entities")
+    hass.config_entries.async_schedule_reload(entry.entry_id)
+
+
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Bring a config entry made by an older version up to the current one."""
     if entry.version > CONFIG_ENTRY_VERSION:
@@ -147,6 +194,12 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Unload a config entry."""
+    coordinator = hass.data[DOMAIN].get(entry.entry_id)
+    if coordinator is not None and coordinator.importing:
+        # Still importing the history: no platforms were set up (the background task is cancelled with the entry)
+        hass.data[DOMAIN].pop(entry.entry_id)
+        return True
+
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if unload_ok:
@@ -225,6 +278,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         self.password = password
         self.device_uuid = device_uuid
         self.authenticated = False
+        self.importing = False  # the first sync is running in the background; no entities yet
         self.db_path = db_path
         self.alert_dismiss_state = {}
         self._alert_entities = []

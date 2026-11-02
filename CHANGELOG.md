@@ -12,10 +12,11 @@ app uses, and was tested against a real account with two babies.
 
 ### Syncing
 
-- Signs in with your Baby Tracker account and joins it as a new device. Set
-  up only signs in and fetches the seed database; the first refresh replays
-  the account's history (about 3,000 records in 14 seconds) with progress in
-  the log, and a replay interrupted by a restart picks up where it left off.
+- Signs in with your Baby Tracker account and joins it as a new device. The
+  add-integration dialog only checks the password; joining the account and
+  importing its history (about 3,000 records in 14 seconds) run in the
+  background with a notification, the babies' entities appear when it is
+  done, and an import interrupted by a restart picks up where it left off.
 - Downloads are paged and resumable. Failures are retried and then skipped
   with a log entry, updates only overwrite older rows, and name clashes,
   conflicts, relives and repeated deletes are resolved as the Android app
