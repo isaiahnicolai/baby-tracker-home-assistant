@@ -6,7 +6,7 @@ import pytest
 
 from babytracker_client import BabyTrackerLocalDatabase
 from babytracker_client.api import _get_local_timezone_offset_seconds
-from helpers import COMMON, EVERLY, TWIN
+from helpers import COMMON, AVA, TWIN
 
 CHICAGO = ZoneInfo("America/Chicago")
 
@@ -21,24 +21,24 @@ def baby_record(baby, object_type, object_id, utc_time, **fields):
 
 
 def test_growth_is_read_per_baby(apply, tracker):
-    apply(baby_record(EVERLY, "Growth", "G-E", "2026-10-01 10:00:00", weight={"value": 12.5, "englishMeasure": True}))
+    apply(baby_record(AVA, "Growth", "G-E", "2026-10-01 10:00:00", weight={"value": 12.5, "englishMeasure": True}))
     apply(baby_record(TWIN, "Growth", "G-T", "2026-10-02 10:00:00", weight={"value": 5.1, "englishMeasure": False},
                       length={"value": 55, "englishMeasure": False}))
-    apply(baby_record(EVERLY, "Growth", "G-E2", "2026-09-01 10:00:00", weight={"value": 9.0, "englishMeasure": True}))
+    apply(baby_record(AVA, "Growth", "G-E2", "2026-09-01 10:00:00", weight={"value": 9.0, "englishMeasure": True}))
 
-    everly, twin = tracker.get_last_growth(EVERLY), tracker.get_last_growth(TWIN)
-    assert (everly["id"], everly["weight"], everly["weight_unit"]) == ("G-E", 12.5, "lbs")
+    ava, twin = tracker.get_last_growth(AVA), tracker.get_last_growth(TWIN)
+    assert (ava["id"], ava["weight"], ava["weight_unit"]) == ("G-E", 12.5, "lbs")
     assert (twin["id"], twin["weight"], twin["weight_unit"], twin["length_unit"]) == ("G-T", 5.1, "kg", "cm")
-    assert [r["id"] for r in tracker.get_growth_records(baby_id=EVERLY)] == ["G-E", "G-E2"]
+    assert [r["id"] for r in tracker.get_growth_records(baby_id=AVA)] == ["G-E", "G-E2"]
     assert [r["id"] for r in tracker.get_growth_records(baby_id=TWIN)] == ["G-T"]
 
 
 def test_a_head_only_visit_does_not_blank_the_other_measures(apply, tracker):
-    apply(baby_record(EVERLY, "Growth", "G1", "2026-09-01 10:00:00", weight={"value": 9.0, "englishMeasure": True},
+    apply(baby_record(AVA, "Growth", "G1", "2026-09-01 10:00:00", weight={"value": 9.0, "englishMeasure": True},
                       length={"value": 21, "englishMeasure": True}))
-    apply(baby_record(EVERLY, "Growth", "G2", "2026-10-01 10:00:00", head={"value": 36, "englishMeasure": False}))
+    apply(baby_record(AVA, "Growth", "G2", "2026-10-01 10:00:00", head={"value": 36, "englishMeasure": False}))
 
-    growth = tracker.get_last_growth(EVERLY)
+    growth = tracker.get_last_growth(AVA)
 
     assert growth["id"] == "G2"
     assert (growth["weight"], growth["weight_unit"], growth["weight_time"]) == (9.0, "lbs", at("2026-09-01 10:00:00"))
@@ -48,16 +48,16 @@ def test_a_head_only_visit_does_not_blank_the_other_measures(apply, tracker):
 
 
 def test_baby_without_growth_has_none(apply, tracker):
-    apply(baby_record(EVERLY, "Growth", "G-E", "2026-10-01 10:00:00", weight={"value": 12.5, "englishMeasure": True}))
+    apply(baby_record(AVA, "Growth", "G-E", "2026-10-01 10:00:00", weight={"value": 12.5, "englishMeasure": True}))
     assert tracker.get_last_growth(TWIN) is None
 
 
 def test_other_activities_are_read_per_baby(apply, tracker):
-    for baby, object_id in ((EVERLY, "OA-E"), (TWIN, "OA-T")):
+    for baby, object_id in ((AVA, "OA-E"), (TWIN, "OA-T")):
         apply(baby_record(baby, "OtherActivity", object_id, "2026-10-01 10:00:00",
                           desc={"objectID": "DESC", "name": "Tummy time"}, duration=5))
     assert [r["id"] for r in tracker.get_activity_records(baby_id=TWIN)] == ["OA-T"]
-    assert [r["id"] for r in tracker.get_activity_records(baby_id=EVERLY)] == ["OA-E"]
+    assert [r["id"] for r in tracker.get_activity_records(baby_id=AVA)] == ["OA-E"]
 
 
 @pytest.mark.parametrize("value, english, expected", [
@@ -66,9 +66,9 @@ def test_other_activities_are_read_per_baby(apply, tracker):
     (100.4, True, ("°F", 100.4, 38.0)),
 ])
 def test_temperature_carries_its_unit_and_both_conversions(apply, tracker, value, english, expected):
-    apply(baby_record(EVERLY, "Temperature", "T1", "2026-10-30 10:00:00",
+    apply(baby_record(AVA, "Temperature", "T1", "2026-10-30 10:00:00",
                       temperature={"value": value, "englishMeasure": english}))
-    reading = tracker.get_last_temperature(EVERLY)
+    reading = tracker.get_last_temperature(AVA)
     assert (reading["unit"], reading["fahrenheit"], reading["celsius"]) == expected
     assert reading["temp"] == value
 
@@ -99,25 +99,25 @@ def chicago_db(app_db, monkeypatch):
 
 def test_today_starts_at_local_midnight(apply, chicago_db):
     # 03:00 UTC on the 31st is 22:00 on the 30th in Chicago: today
-    apply(baby_record(EVERLY, "Diaper", "D-TODAY", "2026-10-31 03:00:00", status=0, amount=2))
+    apply(baby_record(AVA, "Diaper", "D-TODAY", "2026-10-31 03:00:00", status=0, amount=2))
     # 04:00 UTC on the 30th is 23:00 on the 29th: yesterday
-    apply(baby_record(EVERLY, "Diaper", "D-YESTERDAY", "2026-10-30 04:00:00", status=0, amount=2))
+    apply(baby_record(AVA, "Diaper", "D-YESTERDAY", "2026-10-30 04:00:00", status=0, amount=2))
     # 01:00 UTC on the 30th is 20:00 on the 29th: yesterday
-    apply(baby_record(EVERLY, "Diaper", "D-EARLIER", "2026-10-30 01:00:00", status=0, amount=2))
+    apply(baby_record(AVA, "Diaper", "D-EARLIER", "2026-10-30 01:00:00", status=0, amount=2))
     # 06:00 UTC on the 30th is 01:00 on the 30th: today
-    apply(baby_record(EVERLY, "Diaper", "D-MORNING", "2026-10-30 06:00:00", status=0, amount=2))
+    apply(baby_record(AVA, "Diaper", "D-MORNING", "2026-10-30 06:00:00", status=0, amount=2))
 
-    assert chicago_db.get_today_wet_diaper_count(EVERLY) == 2
-    assert chicago_db.get_daily_summary(EVERLY)["diaper_count"] == 2
+    assert chicago_db.get_today_wet_diaper_count(AVA) == 2
+    assert chicago_db.get_daily_summary(AVA)["diaper_count"] == 2
 
 
 def test_night_sleep_is_judged_in_local_time(apply, chicago_db):
     # 01:00 UTC is 20:00 on the 28th in Chicago (CDT): bedtime
-    apply(baby_record(EVERLY, "Sleep", "S-NIGHT", "2026-10-29 01:00:00", duration=600))
+    apply(baby_record(AVA, "Sleep", "S-NIGHT", "2026-10-29 01:00:00", duration=600))
     # 18:00 UTC is 13:00 in Chicago: a nap, although it is evening in UTC
-    apply(baby_record(EVERLY, "Sleep", "S-NAP", "2026-10-29 18:00:00", duration=60))
+    apply(baby_record(AVA, "Sleep", "S-NAP", "2026-10-29 18:00:00", duration=60))
 
-    analysis = chicago_db.get_sleep_analysis(EVERLY)
+    analysis = chicago_db.get_sleep_analysis(AVA)
     assert analysis["days_analyzed"] == 1
     night = analysis["per_day"][0]
     assert (night["date"], night["bedtime"], night["bedtime_minutes"]) == ("2026-10-28", "8:00 PM", 20 * 60)

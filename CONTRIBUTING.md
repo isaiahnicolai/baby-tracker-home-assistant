@@ -1,183 +1,95 @@
 # Contributing
 
-Thanks for helping. This file covers how the repository is laid out, how to run
-it and its tests, and how to add support for a new kind of record. User
-documentation is in [readme.md](readme.md); what changed between releases is in
-[CHANGELOG.md](CHANGELOG.md).
+Thanks for taking a look. Bug reports, small fixes and new features are all
+welcome, and you don't need to ask before opening a pull request. This page is
+a map of the code and how to run it, not a set of rules. The user
+documentation is in [readme.md](readme.md).
 
-## Layout
+## How the code fits together
 
-There are two layers, and the split matters:
+There are two layers:
 
-```
-custom_components/baby_tracker/      the Home Assistant integration (what HACS installs)
-    __init__.py                      setup, migration and the DataUpdateCoordinator
-    config_flow.py, const.py         config/options/reauth flows, constants
-    sensor.py, binary_sensor.py,     entities (one platform per file)
-    button.py, number.py, select.py,
-    image.py, calendar.py, event.py
-    services.py, services.yaml       service calls (and the writes the buttons and Assist intents share)
-    intent.py, sentences.py,         Assist: intents, the sentence template and the repair that installs it
-    repairs.py, custom_sentences/
-    diagnostics.py, strings.json,    diagnostics, English strings, icons
-    icons.json, translations/
-    client/                          the sync client: no Home Assistant imports
-        core.py                      BabyTracker: the public API (get_*, add_*, log_*, sync)
-        api.py                       the Baby Tracker web API: login, sync, post_* records
-        database.py                  read queries over the local SQLite database
-        records.py                   wire format -> table mapping for every record type
-        transaction.py               applies downloaded/queued transactions to the database
-        insights.py                  pure functions: next feed, intake, percentiles
-        cli.py                       the `babytracker` command
-        data/                        WHO growth tables (see data/README.md)
-blueprints/                          automation blueprints
-tests/                               client tests (run anywhere)
-tests/ha/                            integration tests (need Home Assistant)
-scripts/                             dev container and dev Home Assistant helpers
-```
+- **`custom_components/baby_tracker/client/`** is a plain-Python client for
+  the Baby Tracker sync service. It keeps a local SQLite copy of the account in
+  the Android app's own schema and syncs it the way the app does. It has no
+  Home Assistant imports, which is what lets it ship on its own as
+  `babytracker_client` with the `babytracker` command.
+- **`custom_components/baby_tracker/`** is the Home Assistant integration on
+  top of it: the coordinator in `__init__.py`, one file per entity platform,
+  `services.py` and `services.yaml`, the Assist intents in `intent.py`, and the
+  strings and icons.
 
-The client keeps a local SQLite copy of your account in the Android app's own
-schema and syncs it the way the app does. Anything in `client/` must stay free
-of Home Assistant imports: `pyproject.toml` publishes that folder on its own as
-`babytracker_client`, and the CLI and the tests rely on it. The integration
-imports the client as `custom_components.baby_tracker.client`; everything
-Home Assistant specific (entities, units, translations) belongs outside it.
+Inside the client, `core.py` is the public `BabyTracker` API, `api.py` talks to
+the server, `database.py` holds the read queries, `records.py` maps every
+record type between the wire format and the tables, `transaction.py` applies
+synced changes, `insights.py` has the predictions and percentiles, and
+`cli.py` is the command line.
 
-## Setting up
+The decompiled Android app was the reference for the protocol and the record
+formats. When something about the wire format looks odd, it is usually
+copying what the app does.
 
-The easiest way is the dev container: open the repository in VS Code and choose
-**Reopen in Container** (needs Docker). It runs `scripts/setup`, which installs
-the pinned Home Assistant, the test harness and the client package.
+## Running it
 
-| Script | What it does |
-| --- | --- |
-| `scripts/setup` | installs `requirements.txt` (Home Assistant, test harness, ruff, the client) |
-| `scripts/develop` | runs Home Assistant on http://localhost:8123 with the integration loaded from the repo; data lives in `config/` (git-ignored apart from `configuration.yaml`) |
-| `scripts/test` | runs pytest over `tests` (pass extra arguments, for example `scripts/test -k diaper`) |
-| `scripts/lint` | `ruff format` and `ruff check --fix` |
-| `scripts/bootstrap` | finishes onboarding on a fresh dev Home Assistant (user `dev` / `dev`) and adds Baby Tracker using the account in `.env` |
+The quickest way to a working setup is the dev container: open the repository
+in VS Code and choose **Reopen in Container**. `scripts/develop` then starts
+Home Assistant on http://localhost:8123 with the integration loaded from the
+repo.
 
-Without VS Code, `docker-compose.yml` runs the same pinned Home Assistant image
-with `config/` and the integration mounted from the repo:
+Without VS Code, Docker Compose runs the same Home Assistant:
 
 ```bash
-cp .env.example .env              # fill in your Baby Tracker login (.env is git-ignored)
+cp .env.example .env              # your Baby Tracker login (.env is git-ignored)
 docker compose up -d
-python scripts/bootstrap          # onboarding + adds the integration
+python scripts/bootstrap          # finishes onboarding (user dev / dev) and adds the integration
 docker compose restart            # after changing integration code
 ```
 
-Open http://localhost:8123. The dev instance joins your real account as a new
-device, like any other Home Assistant install, so use a test account if you
-can.
+The dev instance joins your real account as a new device, like any other
+install, so a test account is a good idea if you have one.
 
 ## Tests
 
-There are two suites.
+- **Client tests** (`tests/`) run anywhere, Windows included, against the
+  app's real schema with the server faked:
+  `pip install -e . pytest tzdata && pytest tests --ignore=tests/ha -q`.
+- **Integration tests** (`tests/ha`) need the Home Assistant test harness and
+  run on Linux and macOS (the dev container or WSL):
+  `pip install -r requirements_test.txt -e . && scripts/test -q`.
 
-**Client tests** (`tests/`, everything except `tests/ha`) exercise the sync
-client against the Android app's real schema (`tests/fixtures/app_schema.sql`,
-no data) with the sync server faked (`tests/conftest.py`). They need only
-pytest and work on Windows, macOS and Linux:
+If you can't run the integration tests, open the pull request anyway: CI runs
+both suites, hassfest and HACS validation. `scripts/lint` runs ruff with the
+settings in `.ruff.toml`.
 
-```bash
-pip install -e . pytest tzdata
-pytest tests --ignore=tests/ha -q
-```
+## Adding something new
 
-**Integration tests** (`tests/ha`) start an in-memory Home Assistant with
-[`pytest-homeassistant-custom-component`](https://github.com/MatthewFlamm/pytest-homeassistant-custom-component).
-They run on Linux and macOS only: use the dev container, WSL, or let CI run them.
+There is no fixed recipe, but a new kind of record usually touches these
+places, from the bottom up:
 
-```bash
-pip install -r requirements_test.txt -e .
-scripts/test -q              # runs both suites
-```
+1. `client/records.py`: map the record's fields to its table (the Android
+   app's `putValues` for that class is the reference).
+2. `client/api.py` and `client/core.py`: a `post_<kind>` that builds the wire
+   record, and a public `add_<kind>` or `get_last_<kind>`.
+3. The integration: load it in the coordinator, then add a sensor, a service
+   (with `services.yaml` and `strings.json` entries) or whatever fits.
+4. A test or two, and a line in the readme and `CHANGELOG.md`.
 
-Each release of the test harness matches one Home Assistant release. When you
-bump Home Assistant, change `homeassistant` in `requirements.txt`, the
-harness pin in `requirements_test.txt` and the image tag in
-`docker-compose.yml` together.
+Neighbouring code is the best guide: most things have a close cousin already.
+A few things are worth keeping in mind:
 
-GitHub Actions runs the client tests on Python 3.11 to 3.14, the integration
-tests, hassfest and (for public repositories) HACS validation. Run
-`scripts/lint` before you push; the ruff settings are in `.ruff.toml`.
-
-## Versions and releases
-
-The version appears in four places that must agree: `manifest.json`,
-`pyproject.toml`, `client/__init__.py` (`__version__`) and `const.py`
-(`VERSION`). Add an entry to `CHANGELOG.md` for every user-visible change.
-Publishing a GitHub release runs `.github/workflows/release.yml`, which checks
-that the tag matches the version, zips `custom_components/baby_tracker` into
-`baby_tracker.zip` (what HACS installs) and builds the `babytracker-client`
-wheel and sdist, and attaches all three to the release. The package is not
-on PyPI; it installs from the repository or the release wheel.
-
-## Brand images
-
-The icon and logo Home Assistant shows for the integration are in
-`custom_components/baby_tracker/brand/` (`icon.png` 256x256, `icon@2x.png`
-512x512, and the same images as `logo.png` and `logo@2x.png`). Home Assistant
-2026.3 and later serve them from there through `/api/brands/integration/...`;
-older versions would need the images in the
-[home-assistant/brands](https://github.com/home-assistant/brands) repository
-instead. They are the Baby Tracker app's own mark; the trademark belongs to
-its makers.
-
-## Adding a record type
-
-Say the app gains a record type, or you want a new kind of log. Work from the
-bottom up.
-
-1. **Store it: `client/records.py`.** Add a `RecordType` to `RECORD_TYPES`
-   mapping the transaction's JSON to the table's columns. Copy the Android
-   app's `putValues` for that class, and say so in a comment where the
-   mapping is not obvious. `baby=True` if it carries a `BabyID`,
-   `activity=False` for a plain selection, and `embedded` for nested
-   selections that should be stored if missing. Add an entry to `ALIASES`
-   for alternative wire names, and to `BABY_REFERENCE_TABLES` if the table
-   has a `BabyID` (baby merges re-point it). The sync engine then merges
-   downloaded records of this type with no further code.
-2. **Read it: `client/database.py`.** Add a `get_last_<kind>_direct` (and any
-   summary) query to `BabyTrackerLocalDatabase`, following a neighbouring
-   one such as `get_last_bath_direct`. Times are stored as Unix seconds, and "today"
-   and day buckets use the time zone the database was created with.
-3. **Write it: `client/api.py`.** Add `post_<kind>` to the API class. It
-   builds the wire JSON the apps send and calls `_post_record`, which saves
-   the record locally, queues it in `TransactionLog` and uploads it, leaving
-   it queued when the server is unreachable.
-4. **Expose it: `client/core.py`.** Add a `get_last_<kind>` that opens the
-   database, and an `add_<kind>` or `log_<kind>` that checks
-   `is_authenticated`, defaults the time to now and calls the API. Methods
-   named `add_*` and `log_*` are wrapped in the tracker's lock
-   automatically. Add the kind to `LAST` in `client/cli.py` if it makes
-   sense on the command line.
-5. **Surface it in Home Assistant.** Load the data in the coordinator's
-   `_async_update_data` (`__init__.py`), add a sensor class in `sensor.py`
-   (and to the list at the bottom), a service in `services.py` with a schema,
-   a description in `services.yaml` and names in `strings.json`, and an icon
-   in `icons.json`. Every entity needs a `translation_key` with its English
-   name in `strings.json`. Add the English text to `translations/en.json` too.
-6. **Test it.** A client test in `tests/` using the `tracker`, `server` and
-   `app_db` fixtures (look at `tests/test_writes.py` and
-   `tests/test_records.py`), and, if it adds entities or services, a test in
-   `tests/ha/test_integration.py`.
-7. **Document it:** the readme's sensor and service tables and a CHANGELOG
-   line.
-
-## Code style
-
-- Python 3.11 or newer for the client; the integration follows the Python of
-  the pinned Home Assistant release. Line length is 120.
-- Keep files' existing line endings; do not reformat files you are not
-  otherwise changing.
 - Keep Home Assistant imports out of `client/`.
-- Entity IDs and unique IDs are part of the public interface: do not rename
-  them without a migration.
+- Entity and unique IDs are what people's dashboards and automations point
+  at, so renaming one needs a registry migration.
+- Files keep their existing line endings.
 
-## Commit messages and pull requests
+## Releases
 
-Write the subject in the imperative and explain why in the body. In the pull
-request, say what you changed and how you tested it. If you could not run the
-`tests/ha` suite locally, say so and let CI run it.
+For maintainers: the version lives in `manifest.json`, `pyproject.toml`,
+`client/__init__.py` and `const.py`. Publishing a GitHub release runs
+`.github/workflows/release.yml`, which checks the tag against the version and
+attaches `baby_tracker.zip` (what HACS installs) and the client wheel. When
+bumping Home Assistant, change `requirements.txt`, the harness pin in
+`requirements_test.txt` and the image tag in `docker-compose.yml` together.
+
+The integration's icon and logo are in `custom_components/baby_tracker/brand/`,
+which Home Assistant 2026.3 and later show on the integration page.

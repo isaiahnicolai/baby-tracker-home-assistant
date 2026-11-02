@@ -46,8 +46,8 @@ for baby in tracker.get_all_babies():
     print(baby.name, tracker.get_last_diaper(baby.object_id))
     print(tracker.get_insights(baby.object_id)["next_feed"])
 
-everly = tracker.get_baby_by_name("Everly")
-tracker.add_diaper(everly.object_id)            # a wet diaper now; poo=True for a dirty one
+ava = tracker.get_baby_by_name("Ava")
+tracker.add_diaper(ava.object_id)            # a wet diaper now; poo=True for a dirty one
 ```
 
 Each client registers as its own device on the account, identified by the
@@ -88,18 +88,18 @@ session) and `AccountResetError` (the account was reset on the server;
 ```bash
 export BABYTRACKER_EMAIL=you@example.com   # the password is asked for, or read from BABYTRACKER_PASSWORD
 babytracker babies
-babytracker last diaper --baby Everly
-babytracker add-diaper wet --baby Everly
-babytracker add-bottle --baby Everly --amount 4 --unit oz --type formula
-babytracker add-nursing --baby Everly --left 10 --right 8
-babytracker add-joy --baby Everly --note "First smile" --photo smile.jpg
+babytracker last diaper --baby Ava
+babytracker add-diaper wet --baby Ava
+babytracker add-bottle --baby Ava --amount 4 --unit oz --type formula
+babytracker add-nursing --baby Ava --left 10 --right 8
+babytracker add-joy --baby Ava --note "First smile" --photo smile.jpg
 babytracker attach-photo Diaper <object-id> bath.png
-babytracker insights --baby Everly
+babytracker insights --baby Ava
 babytracker next
-babytracker calendar --baby Everly --days 2
-babytracker recent --baby Everly --limit 10
+babytracker calendar --baby Ava --days 2
+babytracker recent --baby Ava --limit 10
 babytracker delete Diaper <object-id> --yes
-babytracker undo --baby Everly --yes
+babytracker undo --baby Ava --yes
 babytracker inventory
 babytracker create-medicine Tylenol --amount 2.5 --unit ml --interval 6
 babytracker create-food Banana
@@ -112,13 +112,13 @@ the account has only one baby; `--offline` skips the sync that normally runs
 first. The CLI keeps its device ID and local database in `~/.babytracker`
 (`--state-dir` changes that).
 
-Run `babytracker` with no command for an **interactive shell** (built on [cmd2](https://cmd2.readthedocs.io/)): it signs in and syncs once, then takes the same commands with tab completion for commands, options and baby names, `help` and `help <command>`, a history kept between sessions (up and down arrows, `history`), and `set baby Everly` so `--baby` can be left out. In the shell the commands are spelled with underscores (`add_diaper wet`), and the hyphenated spellings work too.
+Run `babytracker` with no command for an **interactive shell** (built on [cmd2](https://cmd2.readthedocs.io/)): it signs in and syncs once, then takes the same commands with tab completion for commands, options and baby names, `help` and `help <command>`, a history kept between sessions (up and down arrows, `history`), and `set baby Ava` so `--baby` can be left out. In the shell the commands are spelled with underscores (`add_diaper wet`), and the hyphenated spellings work too.
 
 ```
 $ babytracker
-Baby Tracker shell. Babies: Everly, Elijah.
+Baby Tracker shell. Babies: Ava, Noah.
 Type help for the commands, help <command> for its options, set baby <name> to pick a baby, quit to leave.
-babytracker> set baby Elijah
+babytracker> set baby Noah
 babytracker> add_diaper wet
 babytracker> last feeding
 babytracker> quit

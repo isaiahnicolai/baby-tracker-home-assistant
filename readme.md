@@ -8,16 +8,20 @@ This custom component integrates the Baby Tracker app data with Home Assistant, 
 
 ## Features
 
-- **Multi-Baby Support**: Track multiple babies with separate sensors and data for each child
-- **Automatic Syncing**: Synchronizes with the Baby Tracker servers to fetch the latest data
-- **Comprehensive Sensors**: 20+ sensors per baby tracking feeding, diapers, sleep, growth, medicine, and more
-- **Household view, calendar and events**: sensors across all babies, a calendar and an Activity event entity per baby, and [blueprints](#blueprints) for notifications
-- **Service Calls**: Add new records through Home Assistant service calls
-- **Controls**: Set a bottle size, bottle type, medicine and amount once, then log with one button; time nursing with Start/End buttons
-- **Undo**: An Undo Last Entry button per baby, and `undo_last` and `delete_record` services, take back a mis-pressed button
-- **Alert settings and repairs**: Tune the alert thresholds in the options, and see sync problems on Home Assistant's Repairs page
-- **Google Home Integration**: Log activities using voice commands through Google Home routines
-- **Complete Activity Tracking**: Diapers, feeding (nursing/formula/pumped), sleep, temperature, bath, medicine, growth measurements, milestones, doctor visits, and vaccines
+- **Sensors for every baby**: feeding, diapers, sleep, nursing, bath, pumping, medicine, growth, milestones, doctor visits and vaccines, with the last record and 7-day totals
+- **Insights and predictions**: next feed, next nap and expected wake, wake windows, milk intake against the baby's weight, diaper adequacy, and WHO growth percentiles. See [Insights](#insights)
+- **Alerts**: feeding overdue, no poop, low wet diapers, fever, long sleep, feed due, sleep due and more, with thresholds you can set and a service to dismiss them
+- **Household view, calendar and events**: sensors across all babies, a calendar and an Activity event entity per baby
+- **Controls and nursing timer**: set a bottle size, bottle type, medicine and dose once, then log with one button; time nursing with Start and End buttons
+- **Undo**: an Undo Last Entry button per baby, and `undo_last` and `delete_record` services
+- **Photos**: each baby's photo and the latest picture as image entities, and photos added to entries from Home Assistant cameras and files
+- **Sleep from another entity**: record sleep from a Snoo, an Owlet, a bed sensor or any other entity
+- **Quiet mode**: alerts and predictions switch off for a child who is no longer logged for feeds or diapers
+- **Services**: add every kind of record from Home Assistant, with an optional time for logging after the fact
+- **Assist voice control**, and a short [Google Home](#google-home) note
+- **Blueprints** for notifications
+- **A Python library and command line** that talk to Baby Tracker without Home Assistant
+- **Repairs and diagnostics** for sync problems
 
 ## Installation
 
@@ -50,11 +54,13 @@ After a restart, add the integration and sign in with your Baby Tracker account:
 
 [![Add Baby Tracker to Home Assistant](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=baby_tracker)
 
-or go to **Settings > Devices & services > Add integration** and search for *Baby Tracker*. Signing in joins your account as a new device and fetches the seed database; the first refresh then replays the account's history, which takes a few seconds per few thousand records. See [Configuration](#configuration) for the options.
+or go to **Settings > Devices & services > Add integration** and search for *Baby Tracker*. Signing in joins your account as a new device and fetches the seed database; the first refresh then replays the account's history, which takes a few seconds per few thousand records. See [Options](#options) for what you can change.
 
 ### Two or more babies
 
-Each baby gets its own device with its own sensors and buttons (for example "Add Wet Diaper", "Add Dirty Diaper" and "Add Mixed Diaper"). When calling a service yourself, choose the baby with the **Baby** device picker or `baby_name`; one of them is required when the account has more than one baby. Pump sessions belong to the account rather than a baby.
+Each baby gets its own device with its own sensors and buttons (for example "Add Wet Diaper", "Add Dirty Diaper" and "Add Mixed Diaper"). Entity IDs follow `<domain>.<baby name>_<entity name>`, such as `sensor.ava_last_diaper`, `sensor.ava_weight`, `sensor.ava_last_feeding` and `button.ava_add_bottle`. The examples in this readme use a baby called Ava (and Ann Marie as a second baby); use your own baby's name.
+
+All services take an optional `baby_name` (or the baby's device, from the **Baby** device picker). If you leave it out, the service uses the baby when there is only one, and refuses to guess when there are several. Pump sessions belong to the account rather than a baby.
 
 ### Using it from Python or the command line
 
@@ -98,18 +104,18 @@ Every write is stored locally first and uploaded by `sync` (which the write call
 ```bash
 export BABYTRACKER_EMAIL=you@example.com   # the password is asked for, or read from BABYTRACKER_PASSWORD
 babytracker babies
-babytracker last diaper --baby Everly
-babytracker add-diaper wet --baby Everly
-babytracker add-bottle --baby Everly --amount 4 --unit oz --type formula   # or --unit ml, --type pumped
-babytracker add-nursing --baby Everly --left 10 --right 8                  # minutes per side
-babytracker add-joy --baby Everly --note "First smile" --photo smile.jpg    # needs Pillow: pip install 'babytracker-client[photos]'
+babytracker last diaper --baby Ava
+babytracker add-diaper wet --baby Ava
+babytracker add-bottle --baby Ava --amount 4 --unit oz --type formula   # or --unit ml, --type pumped
+babytracker add-nursing --baby Ava --left 10 --right 8                  # minutes per side
+babytracker add-joy --baby Ava --note "First smile" --photo smile.jpg    # needs Pillow: pip install 'babytracker-client[photos]'
 babytracker attach-photo Diaper <object-id> bath.png                        # add a photo to an existing entry
-babytracker insights --baby Everly          # next feed, 24 hour intake, diapers, growth percentiles
+babytracker insights --baby Ava          # next feed, 24 hour intake, diapers, growth percentiles
 babytracker next                            # each baby's predicted next feed, and who is due first
-babytracker calendar --baby Everly --days 2 # feeds, sleeps, baths, visits and medicines
-babytracker recent --baby Everly --limit 10 # newest records, with the type and ID `delete` takes
+babytracker calendar --baby Ava --days 2 # feeds, sleeps, baths, visits and medicines
+babytracker recent --baby Ava --limit 10 # newest records, with the type and ID `delete` takes
 babytracker delete Diaper <object-id> --yes # delete a record on every device
-babytracker undo --baby Everly --yes        # delete the newest record from the last day
+babytracker undo --baby Ava --yes        # delete the newest record from the last day
 babytracker inventory                       # pumped milk in store
 babytracker create-medicine Tylenol --amount 2.5 --unit ml --interval 6   # add a medicine to the app's list
 babytracker create-food Banana                                           # add a food to the solids list
@@ -119,13 +125,13 @@ babytracker raw <device-uuid> --since 100   # decoded records exactly as the ser
 
 Every command prints JSON. `--baby` is a baby's name and can be left out when the account has only one baby; `--offline` skips the sync that normally runs first.
 
-Run `babytracker` with no command for an **interactive shell** (built on [cmd2](https://cmd2.readthedocs.io/)): it signs in and syncs once, then takes the same commands with tab completion for commands, options and baby names, `help` and `help <command>`, a history kept between sessions (up and down arrows, `history`), and `set baby Everly` so `--baby` can be left out. In the shell the commands are spelled with underscores (`add_diaper wet`), and the hyphenated spellings work too.
+Run `babytracker` with no command for an **interactive shell** (built on [cmd2](https://cmd2.readthedocs.io/)): it signs in and syncs once, then takes the same commands with tab completion for commands, options and baby names, `help` and `help <command>`, a history kept between sessions (up and down arrows, `history`), and `set baby Ava` so `--baby` can be left out. In the shell the commands are spelled with underscores (`add_diaper wet`), and the hyphenated spellings work too.
 
 ```
 $ babytracker
-Baby Tracker shell. Babies: Everly, Elijah.
+Baby Tracker shell. Babies: Ava, Noah.
 Type help for the commands, help <command> for its options, set baby <name> to pick a baby, quit to leave.
-babytracker> set baby Elijah
+babytracker> set baby Noah
 babytracker> add_diaper wet
 babytracker> last feeding
 babytracker> quit
@@ -157,39 +163,6 @@ Tests:
 - `tests/ha` starts an in-memory Home Assistant with `pytest-homeassistant-custom-component`. It only runs on Linux/macOS (the dev container or CI), and each harness version matches one Home Assistant release: bump `requirements_test.txt` and `requirements.txt` together.
 
 GitHub Actions runs both, plus hassfest and HACS validation.
-
-## Configuration
-
-### Through the UI
-
-1. Go to Configuration > Integrations
-2. Click on the "+ Add Integration" button
-3. Search for "Baby Tracker"
-4. Enter your Baby Tracker email and password
-5. The integration will automatically sync and create sensors for each baby
-
-### Through YAML (legacy method)
-
-```yaml
-# Example configuration.yaml entry
-baby_tracker:
-  email: your-email@example.com
-  password: your-password
-  scan_interval: 15 # Optional: minutes between updates (default: 15)
-```
-
-## Multi-Baby Support
-
-The integration automatically creates sensors for **each baby** in your Baby Tracker account. Each baby gets their own set of sensors with unique entity IDs:
-
-- **Entity ID format**: `<domain>.<baby name>_<entity name>`. The examples in this README use a baby called Everly (and Ann Marie as a second baby); use your own baby's name.
-- **Examples**:
-  - `sensor.everly_last_diaper`
-  - `sensor.everly_weight`
-  - `sensor.everly_last_feeding`
-  - `button.everly_add_bottle`
-
-All services take an optional `baby_name` parameter (or pick the baby's device). If you leave it out, the service uses the baby when there is only one, and refuses to guess when there are several.
 
 ## Available Sensors
 
@@ -224,7 +197,7 @@ These are totals over a rolling 7 days (the `window_days` attribute says so), up
 | --- | --- | --- |
 | Feedings | Total number of feedings | feedings |
 | Nursing Minutes | Total nursing time | min, duration |
-| Bottle Volume | Formula and pumped milk from the bottle (oz equivalents in the attributes). Replaces the old *Bottle oz* and *Bottle ml* sensors; it keeps the entity of *Bottle ml* | mL, volume |
+| Bottle Volume | Formula and pumped milk from the bottle (oz equivalents in the attributes) | mL, volume |
 | Diapers | Total diaper changes | diapers |
 | Poopy Diapers | Dirty diapers, mixed ones included; `last_poopy_time` and `hours_since_last_poopy` in the attributes | diapers |
 | Wet Diapers | Wet diapers, mixed ones included | diapers |
@@ -259,11 +232,11 @@ These are totals over a rolling 7 days (the `window_days` attribute says so), up
 - **Recent Entries** (diagnostic sensor): the baby's newest records, with the type and ID that `delete_record` takes. See [Undoing a mistake](#undoing-a-mistake)
 - **Sync Now** and **Force Resync** (configuration buttons on the *Baby Tracker* device)
 - **Buttons** for quick logging: wet/dirty/mixed diapers, bath, start/end sleep, and the [controls and buttons](#controls-and-buttons) below (bottle, medicine, nursing timer, tummy time)
-- **Fixed-size bottle buttons** (3 to 8 oz) and **Give Tylenol**: still available, and kept on installs that already have them. They are switched off by default on new installs now that *Add Bottle* and *Give Medicine* cover them; turn them on from the entity settings if you want them
+- **Fixed-size bottle buttons** (3 to 8 oz) and **Give Tylenol**: switched off by default, since *Add Bottle* and *Give Medicine* cover them; turn them on from the entity settings if you want them
 
 ### Photos
 
-Each baby's photo is shown by its **Photo** image entity (for example `image.everly_photo`), for dashboards and picture cards. If the app also has a landscape (wide) version of the photo, the baby gets a **Photo Landscape** entity (`image.everly_photo_landscape`) too, which suits banner cards; it is created when the integration is set up, so reload it after adding a landscape photo in the app. The files are kept in a private `baby_tracker` folder in your Home Assistant configuration directory (photos attached to activities go in its `pictures` subfolder) and are only served through the image entity, which needs a login or the entity's access token. They are **not** under `www`, so nobody can fetch them without logging in.
+Each baby's photo is shown by its **Photo** image entity (for example `image.ava_photo`), for dashboards and picture cards. If the app also has a landscape (wide) version of the photo, the baby gets a **Photo Landscape** entity (`image.ava_photo_landscape`) too, which suits banner cards; it is created when the integration is set up, so reload it after adding a landscape photo in the app. The files are kept in a private `baby_tracker` folder in your Home Assistant configuration directory (photos attached to activities go in its `pictures` subfolder) and are only served through the image entity, which needs a login or the entity's access token. They are not under `www`, so nobody can fetch them without logging in.
 
 #### Photos from Home Assistant
 
@@ -285,32 +258,30 @@ automation:
     actions:
       - action: baby_tracker.log_joy
         data:
-          baby_name: "Everly"
+          baby_name: "Ava"
           note: "Good morning!"
           camera_entity: camera.nursery
 ```
 
 To add a snapshot to the diaper you just logged, find its ID in the Recent Entries sensor and call `baby_tracker.attach_photo` with `object_type: Diaper`, that `object_id` and a `camera_entity`. The Latest Photo entity and the Activity event's `photo` type then report it like any other new picture.
 
-Development builds before 1.0 saved photos in `www/baby_tracker`, where anyone who could reach Home Assistant could fetch them without logging in. Those old copies are not deleted for you: remove the `www/baby_tracker` folder. Home Assistant shows a [repair](#repairs) on *Settings > Repairs* while it exists.
-
 ## Controls and Buttons
 
 Each baby has a few settings that the logging buttons use, so a bottle of any size or any medicine is one tap:
 
-| Entity (for Everly) | What it is |
+| Entity (for Ava) | What it is |
 | --- | --- |
-| `number.everly_bottle_size` | How much the Add Bottle button logs. Ounces in 0.5 steps from 1 to 12 for an imperial entry; mL in steps of 10 from 30 to 360 for a metric one. Starts at 4 oz / 120 mL |
-| `select.everly_bottle_type` | `formula` or `pumped`: which kind of bottle Add Bottle logs |
-| `button.everly_add_bottle` | Logs a bottle of the Bottle Size, as formula or pumped milk (Bottle Type) |
-| `select.everly_medicine` | Which of your account's medicines (the ones in the app) Give Medicine logs. Starts on the first |
-| `number.everly_medicine_amount` | The dose Give Medicine logs, in 0.1 steps. Choosing a medicine sets it to that medicine's usual amount from the app (when it has one), and its `unit` attribute shows the medicine's unit. Give Medicine uses the usual amount if this is 0 or unset |
-| `button.everly_give_medicine` | Logs a dose of the selected medicine |
-| `number.everly_tummy_time_minutes` | How long Log Tummy Time logs. Starts at 15 |
-| `button.everly_log_tummy_time` | Logs that much tummy time |
-| `button.everly_undo_last_entry` | Deletes the baby's newest record from the last 24 hours. See [Undoing a mistake](#undoing-a-mistake) |
+| `number.ava_bottle_size` | How much the Add Bottle button logs. Ounces in 0.5 steps from 1 to 12 for an imperial entry; mL in steps of 10 from 30 to 360 for a metric one. Starts at 4 oz / 120 mL |
+| `select.ava_bottle_type` | `formula` or `pumped`: which kind of bottle Add Bottle logs |
+| `button.ava_add_bottle` | Logs a bottle of the Bottle Size, as formula or pumped milk (Bottle Type) |
+| `select.ava_medicine` | Which of your account's medicines (the ones in the app) Give Medicine logs. Starts on the first |
+| `number.ava_medicine_amount` | The dose Give Medicine logs, in 0.1 steps. Choosing a medicine sets it to that medicine's usual amount from the app (when it has one), and its `unit` attribute shows the medicine's unit. Give Medicine uses the usual amount if this is 0 or unset |
+| `button.ava_give_medicine` | Logs a dose of the selected medicine |
+| `number.ava_tummy_time_minutes` | How long Log Tummy Time logs. Starts at 15 |
+| `button.ava_log_tummy_time` | Logs that much tummy time |
+| `button.ava_undo_last_entry` | Deletes the baby's newest record from the last 24 hours. See [Undoing a mistake](#undoing-a-mistake) |
 
-The settings are remembered across restarts. A bottle size saved in the other unit (after switching the entry between imperial and metric) is not reused. Under the same device you will also find the existing *Add Wet/Dirty/Mixed Diaper*, *Log Bath* and *Start/End Sleep* buttons.
+The settings are remembered across restarts. A bottle size saved in the other unit (after switching the entry between imperial and metric) is not reused. Under the same device you will also find the *Add Wet/Dirty/Mixed Diaper*, *Log Bath* and *Start/End Sleep* buttons.
 
 A second press of the same button within 3 seconds is ignored (it is logged at info level), so a double tap or an automation that fires twice does not log a record twice. Logging a record asks for a refresh of the sensors, which Home Assistant spreads out if several come together.
 
@@ -318,30 +289,30 @@ A dashboard card for a baby:
 
 ```yaml
 type: entities
-title: Everly
+title: Ava
 entities:
-  - select.everly_bottle_type
-  - number.everly_bottle_size
-  - button.everly_add_bottle
-  - select.everly_medicine
-  - number.everly_medicine_amount
-  - button.everly_give_medicine
-  - button.everly_log_tummy_time
+  - select.ava_bottle_type
+  - number.ava_bottle_size
+  - button.ava_add_bottle
+  - select.ava_medicine
+  - number.ava_medicine_amount
+  - button.ava_give_medicine
+  - button.ava_log_tummy_time
 ```
 
 ### Undoing a mistake
 
-**Undo Last Entry** (`button.everly_undo_last_entry`) deletes the newest record of any kind for that baby, as long as it is less than 24 hours old, and it is removed on your other devices too the next time they sync. It does nothing but report "Nothing to undo" when there is no such record, and a double tap deletes only one. Home Assistant logs what was deleted at info level, fires a `baby_tracker_undo` event on the bus and an `undo` event on the baby's Activity event entity.
+**Undo Last Entry** (`button.ava_undo_last_entry`) deletes the newest record of any kind for that baby, as long as it is less than 24 hours old, and it is removed on your other devices too the next time they sync. It does nothing but report "Nothing to undo" when there is no such record, and a double tap deletes only one. Home Assistant logs what was deleted at info level, fires a `baby_tracker_undo` event on the bus and an `undo` event on the baby's Activity event entity.
 
-The **Recent Entries** sensor (`sensor.everly_recent_entries`, a diagnostic entity) shows the newest record in its state, for example `wet diaper` or `formula 4 oz`, and the last ten in its `records` attribute, each with `object_type`, `object_id`, `time`, `kind` and `note`. Use the `object_type` and `object_id` with the [`delete_record` service](#undo-last-and-delete-record) to delete an older record.
+The **Recent Entries** sensor (`sensor.ava_recent_entries`, a diagnostic entity) shows the newest record in its state, for example `wet diaper` or `formula 4 oz`, and the last ten in its `records` attribute, each with `object_type`, `object_id`, `time`, `kind` and `note`. Use the `object_type` and `object_id` with the [`delete_record` service](#undo-last-and-delete-record) to delete an older record.
 
 ### Nursing Timer
 
 Like Start/End Sleep, the nursing buttons time a session and log it when it ends:
 
-- `button.everly_start_nursing_left` and `button.everly_start_nursing_right` start the timer on that side. Pressing the other side while it runs switches over and keeps the time so far.
-- `button.everly_end_nursing` stops the timer and logs one nursing record, dated when the session started, with the minutes spent on each side (at least one minute in total) and the side you finished on.
-- `binary_sensor.everly_nursing` is on while a timer runs, with the `side` being nursed and `started_at` as attributes.
+- `button.ava_start_nursing_left` and `button.ava_start_nursing_right` start the timer on that side. Pressing the other side while it runs switches over and keeps the time so far.
+- `button.ava_end_nursing` stops the timer and logs one nursing record, dated when the session started, with the minutes spent on each side (at least one minute in total) and the side you finished on.
+- `binary_sensor.ava_nursing` is on while a timer runs, with the `side` being nursed and `started_at` as attributes.
 
 The running timer is kept in Home Assistant, not in the Baby Tracker app, so it is lost if Home Assistant restarts. If logging fails (for example, the server is down), the timer keeps running and you can press End Nursing again.
 
@@ -388,7 +359,7 @@ For an activity that is not tracked:
 - its alerts (for feeds: Feeding Overdue, Feed Due, Wake To Feed, Intake Low; for diapers: No Poop, Low Wet Diapers; for sleep: Long Sleep, Sleep Due, Nap Running Long; for temperature: Fever) are off, with the attribute `reason: not_tracked`;
 - its predictions and rates (Next Feed, Feed Interval, Intake, Intake Status, Time Since Last Feeding, Feeding Timer, Diaper Adequacy, Next Sleep, Expected Wake, Wake Window) read unknown, with the same attribute;
 - the household sensors (Next Feed Baby, Last Fed Baby, Babies Asleep, Feeds Today) leave that baby out;
-- Assist answers "Feeds aren't being tracked for Everly" to questions about it.
+- Assist answers "Feeds aren't being tracked for Ava" to questions about it.
 
 What was logged is kept: Last Feeding, Last Diaper and Last Sleep still show their old values, and the counts for today stay. Logging something again (by hand, button or voice) makes the activity tracked again at the next refresh. The baby's Info sensor shows the verdict in its `tracking` attribute, and `tracking_mode` says whether it is `auto` or `manual`.
 
@@ -398,7 +369,6 @@ To override the automatic choice, open **Configure**; the step for each baby has
 
 Problems you can act on show up on *Settings > Repairs*:
 
-- **Old baby photos are publicly readable**: the `www/baby_tracker` folder from a development build before 1.0 still exists. Delete it; the photos are kept privately now. The repair goes away on its own after you delete it and restart or reload the integration.
 - **Baby Tracker records aren't reaching the server**: records logged in Home Assistant have stayed unsent for more than 3 refreshes in a row. They are kept and sent when the server accepts them; the repair clears once they have gone.
 - **Baby Tracker account was reset**: the account was reset or recreated in the app, so the data here belongs to the old group and syncing has stopped. Press Force Resync. The repair clears after the next successful sync.
 - **Install the Baby Tracker voice commands**: the Assist sentence file with your babies' names is missing or out of date. Confirm the repair to write it (see [Voice control](#voice-control-assist)).
@@ -438,7 +408,7 @@ The five binary sensors work like the other alerts: they can be dismissed with `
 
 Feed Due, Wake To Feed, Sleep Due, Nap Running Long, Feeding Overdue, Night Mode, Time Since Last Feeding and Next Feeding depend on the time of day, not only on new records, so they are re-evaluated **every minute** rather than once per refresh. Feed Due turns on at the predicted time, and Sleep Due at the end of the wake window, even if the next refresh is fifteen minutes away. Every alert also has a `baby_name` attribute, handy in notification templates.
 
-## Derived sensors
+### Other derived sensors
 
 These are worked out from the records the app already stores, on every refresh.
 
@@ -481,7 +451,7 @@ triggers:
     to: sleep_end
 ```
 
-The `baby_tracker_feeding`, `baby_tracker_diaper` and `baby_tracker_sleep` events on the event bus are still fired as before. Nothing fires on the first refresh after startup.
+The `baby_tracker_feeding`, `baby_tracker_diaper` and `baby_tracker_sleep` events are also fired on the event bus. Nothing fires on the first refresh after startup.
 
 ## Blueprints
 
@@ -577,6 +547,17 @@ data:
 ```
 
 ### Additional Activities
+
+#### Log Sleep
+
+```yaml
+service: baby_tracker.log_sleep
+data:
+  baby_name: "Your Baby Name" # Optional
+  is_start: true # true starts a sleep, false ends the one in progress
+  time: "2026-03-01 21:00:00" # Optional
+  note: "Optional note"
+```
 
 #### Log Bath
 
@@ -792,10 +773,12 @@ service: baby_tracker.dismiss_alert
 data:
   baby_name: "Your Baby Name" # Optional
   alert_type: feed_due # Optional: feeding_overdue, no_poop, low_wet_diapers, fever, long_sleep, intake_low, feed_due, wake_to_feed, sleep_due or wake_overdue
-  entity_id: binary_sensor.everly_feed_due # Optional - dismiss one alert by its entity
+  entity_id: binary_sensor.ava_feed_due # Optional - dismiss one alert by its entity
 ```
 
 Dismissed until the condition clears and comes back. `baby_tracker.dismiss_all_alerts` dismisses every active alert (a baby's, with `baby_name`).
+
+The fixed-size bottle services (`add_4oz_bottle`, `add_6oz_bottle`, `add_8oz_bottle`, `add_small_bottle`, `add_medium_bottle`, `add_large_bottle` and `add_xlarge_bottle`) log a formula bottle of that size. For any other size use `add_formula` or the Add Bottle button.
 
 ## Voice control (Assist)
 
@@ -805,836 +788,193 @@ Home Assistant's Assist (the voice assistant on phones, satellites and the dashb
 
 | Say | What it does |
 | --- | --- |
-| "Everly had a wet diaper", "log a dirty diaper for Everly", "Everly pooped" | Logs a wet, dirty, mixed or dry diaper |
-| "log a 120 ml bottle for Everly", "Everly drank 4 ounces of pumped milk", "I gave Everly a 4 oz formula bottle" | Logs a bottle of formula or pumped milk. Without a unit it is in the unit chosen for the integration; without a type it is the baby's Bottle Type |
-| "Everly is asleep", "Everly went to sleep", "start a nap for Everly" | Logs the start of a sleep |
-| "Everly woke up", "end Everly's nap" | Ends the sleep in progress |
-| "start nursing Everly on the left", "Everly is nursing on the right side" | Starts the nursing timer on a side (the other side switches the timer) |
-| "stop nursing Everly", "Everly is done nursing" | Logs the session, dated when it started |
-| "log a temperature of 98.6 for Everly", "Everly's temperature is 37.2" | Logs a temperature. 90 to 110 is taken as Fahrenheit and 34 to 43 as Celsius, whatever the units setting |
+| "Ava had a wet diaper", "log a dirty diaper for Ava", "Ava pooped" | Logs a wet, dirty, mixed or dry diaper |
+| "log a 120 ml bottle for Ava", "Ava drank 4 ounces of pumped milk", "I gave Ava a 4 oz formula bottle" | Logs a bottle of formula or pumped milk. Without a unit it is in the unit chosen for the integration; without a type it is the baby's Bottle Type |
+| "Ava is asleep", "Ava went to sleep", "start a nap for Ava" | Logs the start of a sleep |
+| "Ava woke up", "end Ava's nap" | Ends the sleep in progress |
+| "start nursing Ava on the left", "Ava is nursing on the right side" | Starts the nursing timer on a side (the other side switches the timer) |
+| "stop nursing Ava", "Ava is done nursing" | Logs the session, dated when it started |
+| "log a temperature of 98.6 for Ava", "Ava's temperature is 37.2" | Logs a temperature. 90 to 110 is taken as Fahrenheit and 34 to 43 as Celsius, whatever the units setting |
 
 **Questions**
 
 | Ask | Answer |
 | --- | --- |
-| "when did Everly last eat", "when was Everly's last feed" | "Everly last ate 2 hours ago, a 4 oz bottle." |
-| "when was Everly's last diaper change" | "Everly's last diaper was wet, 45 minutes ago." |
-| "when is Everly's next feed" | The predicted time from the [insights](#insights) |
-| "when should Everly nap", "when is Everly's next nap", "when will Everly wake up" | "Everly has been awake for 1 h 20 min; the next nap is expected around 3:15 PM, in 25 minutes." Or, when asleep, "Everly has been asleep for 40 minutes and is expected to wake around 3:40 PM." |
-| "how much has Everly eaten today", "is Everly eating enough" | The last 24 hours of intake against the expected range |
-| "is Everly sleeping", "is Everly awake", "how long has Everly been asleep" | Asleep since, or awake since |
-| "how is Everly doing", "baby status" | A short status: last feed, last diaper, sleep and next feed (every baby when none is named) |
+| "when did Ava last eat", "when was Ava's last feed" | "Ava last ate 2 hours ago, a 4 oz bottle." |
+| "when was Ava's last diaper change" | "Ava's last diaper was wet, 45 minutes ago." |
+| "when is Ava's next feed" | The predicted time from the [insights](#insights) |
+| "when should Ava nap", "when is Ava's next nap", "when will Ava wake up" | "Ava has been awake for 1 h 20 min; the next nap is expected around 3:15 PM, in 25 minutes." Or, when asleep, "Ava has been asleep for 40 minutes and is expected to wake around 3:40 PM." |
+| "how much has Ava eaten today", "is Ava eating enough" | The last 24 hours of intake against the expected range |
+| "is Ava sleeping", "is Ava awake", "how long has Ava been asleep" | Asleep since, or awake since |
+| "how is Ava doing", "baby status" | A short status: last feed, last diaper, sleep and next feed (every baby when none is named) |
 
 The sentences are in the English file `custom_components/baby_tracker/custom_sentences/en/baby_tracker.yaml`. Home Assistant only reads sentence files from `<config>/custom_sentences/<language>/`, and the file needs your babies' names, so there is a one-time step: after the integration is set up, a repair appears in *Settings > Repairs* ("Install the Baby Tracker voice commands"). Select it and confirm, and the integration writes `<config>/custom_sentences/en/baby_tracker.yaml` with your babies' names filled in, then asks the conversation agent to reload. If a command is not recognised straight away, restart Home Assistant. Nothing is written to your configuration folder until you confirm. The repair comes back when a baby is added or renamed, or if the file changes, so the names stay current.
 
 Assist can only run the sentences if its language is English and Home Assistant's own conversation agent handles them. With an AI conversation agent that has *Control Home Assistant* turned on, the same actions are available to it as tools (`BabyTrackerLogDiaper`, `BabyTrackerLastFeed` and so on) without the sentence file.
 
-## Google Home Integration
+## Google Home
 
-You can use Google Home voice commands to log baby activities by creating Home Assistant scenes and exposing them to Google Assistant.
+Home Assistant's Google Assistant integration can expose buttons and scripts to Google Home, so you can log with a voice command or a routine. Assist (see [Voice control](#voice-control-assist)) does the same without Google.
 
-### Setup Instructions
+1. Set up the Google Assistant integration in Home Assistant and expose the entities you want.
+2. Expose the **Add Wet Diaper**, **Add Dirty Diaper** and **Add Bottle** buttons, or a script like the one below. Set the Bottle Size and Bottle Type controls once; Add Bottle then logs that bottle every time.
+3. In the Google Home app, create a routine whose command ("log a dirty diaper") activates the button or script.
 
-1. **Enable Google Assistant integration** in Home Assistant
-2. **Create scenes** for common activities (see examples below)
-3. **Expose scenes to Google** in Configuration > Google Assistant
-4. **Create Google Home routines** that trigger these scenes
-5. **Use natural voice commands** to log activities
-
-### Scene Examples
-
-Create these scenes in your `scenes.yaml` or through the UI:
-
-#### Diaper Scenes
+A script that logs a bottle of a set size:
 
 ```yaml
-# Wet Diaper
-- id: baby_wet_diaper
-  name: "Wet Diaper"
-  entities:
-    script.log_wet_diaper:
-      state: "on"
-
-# Dirty Diaper
-- id: baby_dirty_diaper
-  name: "Dirty Diaper"
-  entities:
-    script.log_dirty_diaper:
-      state: "on"
-
-# Mixed Diaper
-- id: baby_mixed_diaper
-  name: "Mixed Diaper"
-  entities:
-    script.log_mixed_diaper:
-      state: "on"
+script:
+  log_bottle_6oz:
+    alias: Log 6 oz bottle
+    sequence:
+      - action: baby_tracker.add_formula
+        data:
+          baby_name: "Ava"
+          amount: 6
+          is_english_measure: true
 ```
-
-#### Bottle Feeding Scenes
-
-**Note**: Google Assistant doesn't parse numbers well (like "6 oz" or "8 oz"), so we use size names instead:
-
-```yaml
-# Small Bottle (4 oz)
-- id: baby_small_bottle
-  name: "Small Bottle"
-  entities:
-    script.log_small_bottle:
-      state: "on"
-
-# Medium Bottle (6 oz)
-- id: baby_medium_bottle
-  name: "Medium Bottle"
-  entities:
-    script.log_medium_bottle:
-      state: "on"
-
-# Large Bottle (7 oz)
-- id: baby_large_bottle
-  name: "Large Bottle"
-  entities:
-    script.log_large_bottle:
-      state: "on"
-
-# Extra Large Bottle (8 oz)
-- id: baby_extra_large_bottle
-  name: "Extra Large Bottle"
-  entities:
-    script.log_extra_large_bottle:
-      state: "on"
-```
-
-### Script Examples
-
-Create corresponding scripts in `scripts.yaml`:
-
-```yaml
-log_wet_diaper:
-  alias: Log Wet Diaper
-  sequence:
-    - service: baby_tracker.add_diaper
-      data:
-        pee: true
-        poo: false
-
-log_dirty_diaper:
-  alias: Log Dirty Diaper
-  sequence:
-    - service: baby_tracker.add_diaper
-      data:
-        pee: false
-        poo: true
-
-log_mixed_diaper:
-  alias: Log Mixed Diaper
-  sequence:
-    - service: baby_tracker.add_diaper
-      data:
-        pee: true
-        poo: true
-
-log_small_bottle:
-  alias: Log Small Bottle
-  sequence:
-    - service: baby_tracker.add_formula
-      data:
-        amount: 4
-        is_english_measure: true
-
-log_medium_bottle:
-  alias: Log Medium Bottle
-  sequence:
-    - service: baby_tracker.add_formula
-      data:
-        amount: 6
-        is_english_measure: true
-
-log_large_bottle:
-  alias: Log Large Bottle
-  sequence:
-    - service: baby_tracker.add_formula
-      data:
-        amount: 7
-        is_english_measure: true
-
-log_extra_large_bottle:
-  alias: Log Extra Large Bottle
-  sequence:
-    - service: baby_tracker.add_formula
-      data:
-        amount: 8
-        is_english_measure: true
-```
-
-### Google Home Routine Setup
-
-In the Google Home app, create routines like:
-
-**Diaper Change Routine:**
-
-- **When**: "Add a dirty diaper" OR "Log a dirty diaper" OR "Record a dirty diaper" OR "Baby had a dirty diaper"
-- **Action**: Activate scene "Dirty Diaper"
-
-**Bottle Feeding Routine:**
-
-- **When**: "Add an extra large bottle" OR "Log an extra large bottle" OR "Record an extra large bottle"
-- **Action**: Activate scene "Extra Large Bottle"
-
-### Example Voice Commands
-
-Once set up, you can say:
-
-- "Hey Google, add a dirty diaper"
-- "Hey Google, log a wet diaper"
-- "Hey Google, record a mixed diaper"
-- "Hey Google, add a medium bottle"
-- "Hey Google, log an extra large bottle"
-- "Hey Google, record a small bottle"
 
 ## Dashboard Card Examples
 
-Here are ready-to-use Lovelace card configurations you can add to your dashboard. Simply copy and paste into your dashboard YAML or use the visual editor.
+Cards to copy into a dashboard (replace `ava` with your baby's name).
 
-### Quick Overview Card
-
-A compact card showing the most important information:
+An overview:
 
 ```yaml
 type: entities
-title: Baby Status
+title: Ava
 entities:
-  - entity: sensor.everly_last_feeding
-    name: Last Feeding
-  - entity: sensor.everly_last_diaper
-    name: Last Diaper
-  - entity: sensor.everly_last_sleep
-    name: Last Sleep
-  - type: attribute
-    entity: sensor.everly_last_sleep
-    attribute: sleeping
-    name: Sleeping Now
-  - entity: sensor.everly_temperature
-    name: Temperature
+  - sensor.ava_last_feeding
+  - sensor.ava_last_diaper
+  - sensor.ava_last_sleep
+  - sensor.ava_next_feed
+  - sensor.ava_next_sleep
+  - sensor.ava_temperature
+  - binary_sensor.ava_feed_due
+  - binary_sensor.ava_sleep_due
 ```
 
-### Daily Summary Glance Card
-
-Shows the 7-day totals at a glance (for today's alone, use the attributes of `sensor.everly_daily_summary`):
+Quick actions, using the [controls](#controls-and-buttons):
 
 ```yaml
-type: glance
-title: Last 7 Days
-entities:
-  - entity: sensor.everly_feedings
-    name: Feedings
-  - entity: sensor.everly_diapers
-    name: Diapers
-  - entity: sensor.everly_nursing_minutes
-    name: Nursing
-  - entity: sensor.everly_bottle_volume # sensor.everly_bottle_ml if you upgraded from 0.2
-    name: Bottles
-```
-
-### Growth Tracking Card
-
-Monitor your baby's growth measurements:
-
-```yaml
-type: entities
-title: Growth Measurements
-entities:
-  - entity: sensor.everly_weight
-    name: Weight
-  - entity: sensor.everly_length
-    name: Length
-  - entity: sensor.everly_head_circumference
-    name: Head Circumference
-  - type: attribute
-    entity: sensor.everly_weight
-    attribute: time
-    name: Last Measured
-```
-
-### Medical History Card
-
-Track medical information:
-
-```yaml
-type: entities
-title: Medical History
-entities:
-  - entity: sensor.everly_last_doctor_visit
-    name: Last Doctor Visit
-  - entity: sensor.everly_last_vaccine
-    name: Last Vaccine
-  - entity: sensor.everly_last_medicine
-    name: Last Medicine
-```
-
-### Milestone Tracker Card
-
-Celebrate developmental milestones:
-
-```yaml
-type: entities
-title: Milestones
-entities:
-  - entity: sensor.everly_last_milestone
-    name: Latest Milestone
-  - type: attribute
-    entity: sensor.everly_last_milestone
-    attribute: time
-    name: Achieved On
-  - type: attribute
-    entity: sensor.everly_last_milestone
-    attribute: note
-    name: Notes
-```
-
-### Quick Action Buttons Card
-
-Add buttons for common tasks (requires custom:button-card or use scripts):
-
-```yaml
-type: vertical-stack
+type: grid
+columns: 3
+square: false
 cards:
-  - type: horizontal-stack
-    cards:
-      - type: button
-        name: Wet Diaper
-        tap_action:
-          action: call-service
-          service: script.log_wet_diaper
-        icon: mdi:water
-
-      - type: button
-        name: Dirty Diaper
-        tap_action:
-          action: call-service
-          service: script.log_dirty_diaper
-        icon: mdi:emoticon-poop
-
-  - type: horizontal-stack
-    cards:
-      - type: button
-        name: Small Bottle
-        tap_action:
-          action: call-service
-          service: script.log_small_bottle
-        icon: mdi:baby-bottle
-
-      - type: button
-        name: Medium Bottle
-        tap_action:
-          action: call-service
-          service: script.log_medium_bottle
-        icon: mdi:baby-bottle-outline
+  - type: button
+    entity: button.ava_add_wet_diaper
+  - type: button
+    entity: button.ava_add_dirty_diaper
+  - type: button
+    entity: button.ava_add_bottle
+  - type: button
+    entity: button.ava_start_sleep
+  - type: button
+    entity: button.ava_end_sleep
+  - type: button
+    entity: button.ava_undo_last_entry
 ```
 
-### Complete Baby Dashboard Card
-
-A comprehensive card showing all activity:
+Two babies side by side:
 
 ```yaml
-type: vertical-stack
-title: Baby Tracker - Everly
+type: horizontal-stack
 cards:
-  - type: glance
-    entities:
-      - sensor.everly_feedings
-      - sensor.everly_diapers
-      - sensor.everly_nursing_minutes
-    show_name: true
-    show_icon: true
-
   - type: entities
-    title: Recent Activity
+    title: Ava
     entities:
-      - sensor.everly_last_feeding
-      - sensor.everly_last_diaper
-      - sensor.everly_last_sleep
-      - sensor.everly_last_bath
-
+      - sensor.ava_last_feeding
+      - sensor.ava_last_diaper
+      - sensor.ava_feedings
   - type: entities
-    title: Health & Growth
+    title: Ann Marie
     entities:
-      - sensor.everly_weight
-      - sensor.everly_length
-      - sensor.everly_temperature
-      - sensor.everly_last_medicine
+      - sensor.ann_marie_last_feeding
+      - sensor.ann_marie_last_diaper
+      - sensor.ann_marie_feedings
 ```
 
-### Multi-Baby Dashboard
-
-If you have multiple babies, create tabs or use conditional cards:
-
-```yaml
-type: vertical-stack
-cards:
-  - type: markdown
-    content: "# Baby Tracker"
-
-  - type: horizontal-stack
-    cards:
-      - type: entities
-        title: Everly
-        entities:
-          - sensor.everly_last_feeding
-          - sensor.everly_last_diaper
-          - sensor.everly_feedings
-
-      - type: entities
-        title: Ann Marie
-        entities:
-          - sensor.ann_marie_last_feeding
-          - sensor.ann_marie_last_diaper
-          - sensor.ann_marie_feedings
-```
-
-### Auto-Entities Card (Dynamic)
-
-Automatically shows all sensors for a baby (requires HACS custom:auto-entities):
-
-```yaml
-type: custom:auto-entities
-card:
-  type: entities
-  title: All Baby Sensors
-filter:
-  include:
-    - entity_id: "sensor.everly_*"
-    - entity_id: "binary_sensor.everly_*"
-  exclude:
-    - state: "unknown"
-    - state: "unavailable"
-sort:
-  method: name
-```
-
-### Feeding Timeline Card
-
-Track feeding patterns (requires custom:apexcharts-card):
-
-```yaml
-type: custom:apexcharts-card
-header:
-  show: true
-  title: Feeding Timeline
-series:
-  - entity: sensor.everly_daily_summary # feedings so far today, so each day's highest value is its total
-    type: column
-    name: Daily Feedings
-    group_by:
-      func: max
-      duration: 1d
-```
+The photo entities also work in a picture card (`image.ava_photo`), and the [household sensors](#household-view) suit a card of their own.
 
 ## Automation Examples
 
-### Notification When Baby Wakes Up
+For alerts, start with the [blueprints](#blueprints): they cover feed due, wake to feed, sleep due, new photos and a daily intake summary. Here are a few of your own.
+
+Tell someone when the baby wakes up, using the Activity event entity:
 
 ```yaml
 automation:
-  - alias: "Baby Woke Up"
-    trigger:
-      platform: state
-      entity_id: sensor.everly_last_sleep
-      attribute: sleeping # true while the baby is asleep
-      from: true
-      to: false
-    action:
-      - service: notify.mobile_app
+  - alias: "Ava woke up"
+    triggers:
+      - trigger: state
+        entity_id: event.ava_activity
+        attribute: event_type
+        to: sleep_end
+    actions:
+      - action: notify.notify
         data:
-          title: "Baby's Awake!"
-          message: "Everly just woke up after {{ states('sensor.everly_last_sleep') }} minutes of sleep"
+          message: "Ava woke up"
 ```
 
-### Daily Summary Notification
+Send a message when the fever alert turns on:
 
 ```yaml
 automation:
-  - alias: "Daily Baby Report"
-    trigger:
-      platform: time
-      at: "20:00:00"
-    action:
-      - service: notify.mobile_app
+  - alias: "Ava has a fever"
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.ava_fever
+        to: "on"
+    actions:
+      - action: notify.notify
         data:
-          title: "Daily Baby Summary"
-          message: >
-            Today's totals for Everly:
-            - Feedings: {{ states('sensor.everly_daily_summary') }}
-            - Diapers: {{ state_attr('sensor.everly_daily_summary', 'diaper_count') }}
-            - Nursing minutes: {{ state_attr('sensor.everly_daily_summary', 'nursing_minutes') }}
-            - Sleep hours: {{ state_attr('sensor.everly_daily_summary', 'sleep_hours') }}
-            - Current weight: {{ states('sensor.everly_weight') }} {{ state_attr('sensor.everly_weight', 'unit_of_measurement') }}
+          message: "Ava's temperature is {{ states('sensor.ava_temperature') }}. Call the doctor if you are worried."
 ```
 
-### Reminder to Feed Baby
-
-The *Last Feeding Time* sensor is a timestamp, so it needs no parsing. (The *Feed Due* alert and the [blueprints](#blueprints) do this from a prediction instead of a fixed three hours.)
+Log a dirty diaper when a diaper bin sensor opens at night:
 
 ```yaml
 automation:
-  - alias: "Feeding Reminder"
-    trigger:
-      platform: template
-      value_template: >
-        {{ has_value('sensor.everly_last_feeding_time')
-           and (now() - states('sensor.everly_last_feeding_time') | as_datetime).total_seconds() > 10800 }}
-    action:
-      - service: notify.mobile_app
-        data:
-          title: "Feeding Time!"
-          message: "It's been over 3 hours since Everly's last feeding"
+  - alias: "Log a diaper from the bin"
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.diaper_bin
+        to: "on"
+    conditions:
+      - condition: state
+        entity_id: binary_sensor.ava_night_mode
+        state: "on"
+    actions:
+      - action: button.press
+        target:
+          entity_id: button.ava_add_dirty_diaper
 ```
 
-### Medicine Logged Notification
-
-The sensor's state is the medicine's name; the `time` attribute is when it was given, in UTC (`2026-10-30 11:00:00 +0000`).
-
-```yaml
-automation:
-  - alias: "Medicine Reminder"
-    trigger:
-      platform: state
-      entity_id: sensor.everly_last_medicine
-    condition:
-      - condition: template
-        value_template: >
-          {{ 'Vitamin D' in states('sensor.everly_last_medicine') }}
-    action:
-      - service: notify.mobile_app
-        data:
-          title: "Vitamin D Given"
-          message: >
-            Vitamin D logged at
-            {{ strptime(state_attr('sensor.everly_last_medicine', 'time'), '%Y-%m-%d %H:%M:%S %z') | as_local }}
-```
-
-### Age-Based Sleep Monitoring
-
-Monitor if your baby got enough sleep based on their age. Today's hours of sleep are in the `sleep_hours` attribute of the Daily Summary sensor; a small helper sensor makes them easy to use:
-
-**Step 1: Create a template sensor for daily sleep (add to `configuration.yaml`):**
-
-```yaml
-template:
-  - sensor:
-      - name: "Everly Total Sleep Today"
-        unique_id: everly_total_sleep_today
-        unit_of_measurement: "hours"
-        state: "{{ state_attr('sensor.everly_daily_summary', 'sleep_hours') | float(0) }}"
-```
-
-**Step 2: Create automation to check sleep at end of day:**
-
-```yaml
-automation:
-  - alias: "Check Baby Sleep - Age Based"
-    trigger:
-      - platform: time
-        at: "21:00:00"  # Check at 9 PM
-    action:
-      - variables:
-          # Calculate baby's age in months
-          age_days: "{{ state_attr('sensor.everly_info', 'age_days') | int(0) }}"
-          age_months: "{{ (age_days / 30.44) | round(0, 'floor') | int }}"
-
-          # Get today's total sleep hours
-          sleep_hours: "{{ states('sensor.everly_total_sleep_today') | float(0) }}"
-
-          # Determine recommended sleep based on age
-          recommended_sleep: >
-            {% if age_months < 1 %}
-              16
-            {% elif age_months < 3 %}
-              15.5
-            {% elif age_months < 6 %}
-              15
-            {% elif age_months < 9 %}
-              14
-            {% elif age_months < 12 %}
-              14
-            {% elif age_months < 18 %}
-              14
-            {% elif age_months < 24 %}
-              13.5
-            {% else %}
-              13
-            {% endif %}
-
-          # Get age-based sleep breakdown for message
-          sleep_breakdown: >
-            {% if age_months < 1 %}
-              8-9 hours at night, 8 hours during the day
-            {% elif age_months < 3 %}
-              8-9 hours at night, 7 hours during the day
-            {% elif age_months < 6 %}
-              9-10 hours at night, 4-5 hours during the day
-            {% elif age_months < 9 %}
-              10 hours at night, 4 hours during the day
-            {% elif age_months < 12 %}
-              11 hours at night, 3 hours during the day
-            {% elif age_months < 18 %}
-              11 hours at night, 3 hours during the day
-            {% elif age_months < 24 %}
-              11 hours at night, 2.5 hours during the day
-            {% else %}
-              11 hours at night, 2 hours during the day
-            {% endif %}
-
-      - condition: template
-        value_template: "{{ sleep_hours < (recommended_sleep | float) }}"
-
-      - service: notify.mobile_app
-        data:
-          title: "⚠️ Low Sleep Alert"
-          message: >
-            Everly ({{ age_months }} months old) only slept {{ sleep_hours }} hours today.
-
-            Recommended: {{ recommended_sleep }} hours total
-            ({{ sleep_breakdown }})
-
-            Deficit: {{ (recommended_sleep | float - sleep_hours) | round(1) }} hours
-          data:
-            priority: high
-            tag: "baby_sleep_alert"
-```
-
-**Simpler Version (using estimated age):**
-
-If you'd rather not work the age out from the Info sensor, you can set it by hand:
-
-```yaml
-automation:
-  - alias: "Sleep Check - 6 Month Old"
-    trigger:
-      - platform: time
-        at: "21:00:00"
-    variables:
-      # Manually set your baby's age in months
-      baby_age_months: 6
-      recommended_hours: 14  # For 6-month-old
-      nighttime_hours: 10
-      daytime_hours: 4
-    condition:
-      - condition: template
-        # Assuming you track daily sleep somehow
-        value_template: "{{ states('sensor.everly_total_sleep_today') | float < 14 }}"
-    action:
-      - service: notify.mobile_app
-        data:
-          title: "Sleep Reminder"
-          message: >
-            Baby didn't get enough sleep today!
-            Recommended for {{ baby_age_months }} months:
-            • Total: {{ recommended_hours }} hours
-            • Night: {{ nighttime_hours }} hours
-            • Day: {{ daytime_hours }} hours
-```
-
-**Sleep Recommendations by Age:**
-
-| Age | Total Hours | Night Sleep | Day Sleep |
-|-----|-------------|-------------|-----------|
-| Newborn | 16 | 8-9 | 8 |
-| 1 month | 15.5 | 8-9 | 7 |
-| 3 months | 15 | 9-10 | 4-5 |
-| 6 months | 14 | 10 | 4 |
-| 9 months | 14 | 11 | 3 |
-| 1 year | 14 | 11 | 3 |
-| 1.5 years | 13.5 | 11 | 2.5 |
-| 2 years | 13 | 11 | 2 |
-
-### Dirty Diaper Monitoring
-
-Alert if baby hasn't had a dirty diaper for too long (important for health monitoring).
-
-The *Poopy Diapers* sensor (`sensor.everly_poopy_diapers`) counts dirty and mixed diapers over 7 days and carries `last_poopy_time` (text such as `2026-10-30 11:00:00 +0000`) and `hours_since_last_poopy` as attributes, so you do not have to look through the diaper history. The *No Poop* alert (`binary_sensor.everly_no_poop`) already does this with age-based limits (24, 48 or 72 hours) and can be used as a trigger on its own. The *Last Diaper* sensor's state is one of `wet`, `poopy`, `mixed` or `dry`.
-
-**Basic Version - Fixed Time Alert:**
-
-```yaml
-automation:
-  - alias: "No Dirty Diaper Alert"
-    trigger:
-      - platform: time_pattern
-        hours: "/3"  # Check every 3 hours
-    condition:
-      - condition: template
-        value_template: >
-          {% set hours = state_attr('sensor.everly_poopy_diapers', 'hours_since_last_poopy') %}
-          {{ hours is number and hours > 24 }}
-    action:
-      - service: notify.mobile_app
-        data:
-          title: "⚠️ No Dirty Diaper Alert"
-          message: >
-            It's been over 24 hours since Everly's last dirty diaper
-            ({{ state_attr('sensor.everly_poopy_diapers', 'last_poopy_time') }}).
-            The last diaper was {{ states('sensor.everly_last_diaper') }}.
-          data:
-            priority: high
-            tag: "dirty_diaper_alert"
-```
-
-**Advanced Version - Age-Based Monitoring:**
-
-Different age groups have different normal patterns for bowel movements:
-
-```yaml
-automation:
-  - alias: "Dirty Diaper Check - Age Based"
-    trigger:
-      - platform: time_pattern
-        hours: "/2"  # Check every 2 hours
-    action:
-      - variables:
-          # Get last diaper info
-          last_diaper_time: "{{ state_attr('sensor.everly_last_diaper', 'time') }}"
-          last_diaper_status: "{{ states('sensor.everly_last_diaper') }}"
-
-          # Hours since the last dirty (poopy or mixed) diaper; 0 when there has never been one
-          hours_since_dirty: "{{ state_attr('sensor.everly_poopy_diapers', 'hours_since_last_poopy') | float(0) }}"
-
-          # Calculate baby's age (if you have DOB in attributes)
-          baby_age_months: 6  # Manually set, or calculate from DOB
-
-          # Determine alert threshold based on age
-          max_hours_threshold: >
-            {% if baby_age_months < 1 %}
-              12
-            {% elif baby_age_months < 3 %}
-              18
-            {% elif baby_age_months < 6 %}
-              24
-            {% elif baby_age_months < 12 %}
-              36
-            {% else %}
-              48
-            {% endif %}
-
-      - condition: template
-        value_template: "{{ hours_since_dirty | float > max_hours_threshold | float }}"
-
-      - service: notify.mobile_app
-        data:
-          title: "⚠️ Dirty Diaper Alert"
-          message: >
-            Everly ({{ baby_age_months }} months) hasn't had a dirty diaper in {{ hours_since_dirty | round(1) }} hours.
-
-            Normal for {{ baby_age_months }} months: Within {{ max_hours_threshold }} hours
-
-            Last diaper: {{ last_diaper_status }} at {{ last_diaper_time }}
-          data:
-            priority: high
-            tag: "dirty_diaper_alert"
-```
-
-**Using the Hours Since Last Dirty Diaper:**
-
-Simpler approach: at 6 PM, check whether the last dirty diaper was before midnight. The Poopy Diapers sensor counts the last 7 days, so it cannot tell "today" on its own:
-
-```yaml
-automation:
-  - alias: "Daily Dirty Diaper Check"
-    trigger:
-      - platform: time
-        at: "18:00:00"  # Check at 6 PM daily
-    condition:
-      - condition: template
-        value_template: >
-          {% set hours = state_attr('sensor.everly_poopy_diapers', 'hours_since_last_poopy') %}
-          {{ hours is number and hours > now().hour + now().minute / 60 }}
-    action:
-      - service: notify.mobile_app
-        data:
-          title: "No Dirty Diaper Today"
-          message: >
-            Everly hasn't had a dirty diaper yet today. The last one was
-            {{ state_attr('sensor.everly_poopy_diapers', 'hours_since_last_poopy') }} hours ago.
-            Last diaper: {{ states('sensor.everly_last_diaper') }} at {{ state_attr('sensor.everly_last_diaper', 'time') }}
-          data:
-            tag: "daily_dirty_diaper_check"
-```
-
-**Constipation Warning (Multiple Days):**
-
-Alert if no dirty diapers for 2+ days (more serious):
-
-```yaml
-automation:
-  - alias: "Constipation Alert"
-    trigger:
-      - platform: time
-        at: "09:00:00"  # Check once daily at 9 AM
-    condition:
-      - condition: template
-        value_template: >
-          {% set hours = state_attr('sensor.everly_poopy_diapers', 'hours_since_last_poopy') %}
-          {{ hours is number and hours > 48 }}
-    action:
-      - service: notify.mobile_app
-        data:
-          title: "🚨 Constipation Warning"
-          message: >
-            URGENT: Everly hasn't had a dirty diaper in over 48 hours.
-
-            Last dirty diaper: {{ state_attr('sensor.everly_poopy_diapers', 'last_poopy_time') }}
-
-            Consider contacting your pediatrician if this continues.
-          data:
-            priority: high
-            notification_icon: "mdi:alert-circle"
-            tag: "constipation_alert"
-            actions:
-              - action: "CALL_DOCTOR"
-                title: "Call Doctor"
-```
-
-**Normal Bowel Movement Frequency by Age:**
-
-| Age | Normal Frequency |
-|-----|------------------|
-| Newborn (0-1 month) | 4-12 times per day |
-| 1-3 months | 2-4 times per day |
-| 3-6 months | 1-2 times per day |
-| 6-12 months | 1 time per day or every other day |
-| 1+ years | 1 time per day or every 2 days |
-
-**Important Notes:**
-- Breastfed babies may go several days without a dirty diaper after 6 weeks (this is normal!)
-- Formula-fed babies typically have more regular bowel movements
-- If baby shows signs of discomfort, bloating, or straining, contact pediatrician regardless of time
-- These automations are helpers, not medical advice - always consult your doctor with concerns
+These are conveniences, not medical advice. Talk to your pediatrician about any worry.
 
 ## Troubleshooting
 
-- **Connection Issues**: If you're having trouble connecting, check that your Baby Tracker credentials are correct
-- **Data Not Updating**: Try manually triggering a sync with the `baby_tracker.sync` service
-- **Missing Data**: Make sure the database path is writeable by Home Assistant
-- **Records Not Reaching the App**: Look at *Settings > Repairs* (see [Repairs](#repairs)) and press **Sync Now**
-- **A Button Did Nothing**: Pressing the same button again within 3 seconds is ignored on purpose
-- **Sensors Not Appearing**: Restart Home Assistant after installation
-- **Multi-Baby Issues**: Use the `list_babies` service to see all babies and their names
-- **Google Home Not Working**: Ensure scenes are exposed in Google Assistant configuration and routines are set up correctly
-
-- **Reporting a Problem**: Use **Download diagnostics** on the integration's page and attach the file to your issue. Your email, password and device ID are removed from it
+- **Connection issues**: check that your Baby Tracker email and password are correct
+- **Data not updating**: press **Sync Now** or call the `baby_tracker.sync` service
+- **Records not reaching the app**: look at *Settings > Repairs* (see [Repairs](#repairs)) and press **Sync Now**
+- **Missing data or database errors**: make sure Home Assistant can write to its configuration folder (see [Database Location](#database-location))
+- **A button did nothing**: pressing the same button again within 3 seconds is ignored on purpose
+- **Sensors not appearing**: restart Home Assistant after installing
+- **More than one baby**: the `list_babies` service shows all babies and their names
+- **Google Home not working**: check that the buttons or scripts are exposed in the Google Assistant configuration
+- **Reporting a problem**: use **Download diagnostics** on the integration's page and attach the file to your issue. Your email, password and device ID are removed from it
 
 ## Privacy Notice
 
-This integration stores your Baby Tracker credentials locally to sync with the Baby Tracker servers. No data is sent to third parties. All data is stored in a local SQLite database in your Home Assistant configuration directory. Baby and activity photos are kept in a private `baby_tracker` folder there and are only shown by the Photo image entities, which need a login.
+This integration stores your Baby Tracker credentials in Home Assistant to sync with the Baby Tracker servers. No data is sent to third parties. All data is stored in a local SQLite database in your Home Assistant configuration directory. Baby and activity photos are kept in a private `baby_tracker` folder there and are only shown by the image entities, which need a login.
 
 ## Database Location
 
-The integration stores baby data in: `{config_directory}/baby_tracker.db`
-
-This database is automatically synced with the Baby Tracker servers at the configured interval.
+The baby data is in `baby_tracker.db` in your Home Assistant configuration directory (`/config/baby_tracker.db` on most installs), and is synced with the Baby Tracker servers at the update interval.
 
 ## Support
 
-For issues and feature requests, please submit them through the GitHub repository's issue tracker.
+For issues and feature requests, use the GitHub repository's issue tracker.
 
 ## Credits
 

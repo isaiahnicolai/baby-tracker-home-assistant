@@ -475,10 +475,6 @@
     }
   },
   "issues": {
-    "old_www_folder": {
-      "title": "Old baby photos are publicly readable",
-      "description": "Older versions saved baby photos in {folder}, where anyone on your network can open them at /local/baby_tracker/ without logging in. Baby photos are now kept privately and shown by the Photo image entities, so those copies are no longer used. Delete the folder to remove them."
-    },
     "uploads_pending": {
       "title": "Baby Tracker records aren't reaching the server",
       "description": "{count} record(s) logged in Home Assistant have not been uploaded to the Baby Tracker server for several updates in a row. They are kept and will be sent once the server accepts them. Check your internet connection and that the Baby Tracker service is up; the Sync Now button tries again."
@@ -493,7 +489,7 @@
         "step": {
           "confirm": {
             "title": "Install the Baby Tracker voice commands",
-            "description": "Home Assistant only reads Assist sentences from {folder}. Select Submit to write the Baby Tracker sentence file there, with your babies' names filled in, so you can say things like \"Everly had a wet diaper\" or \"when did Everly last eat\". An existing baby_tracker.yaml in that folder is replaced.\n\nThe conversation agent is asked to reload the sentences. If a command is not recognised straight away, restart Home Assistant."
+            "description": "Home Assistant only reads Assist sentences from {folder}. Select Submit to write the Baby Tracker sentence file there, with your babies' names filled in, so you can say things like \"Ava had a wet diaper\" or \"when did Ava last eat\". An existing baby_tracker.yaml in that folder is replaced.\n\nThe conversation agent is asked to reload the sentences. If a command is not recognised straight away, restart Home Assistant."
           }
         },
         "error": {
@@ -1312,7 +1308,7 @@
       "fields": {
         "entity_id": {
           "name": "Entity ID",
-          "description": "The alert to dismiss (for example binary_sensor.everly_feeding_overdue)."
+          "description": "The alert to dismiss (for example binary_sensor.ava_feeding_overdue)."
         },
         "baby_name": {
           "name": "Baby Name",

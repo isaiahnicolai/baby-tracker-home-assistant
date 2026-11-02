@@ -70,6 +70,8 @@ class BabyTrackerNumber(CoordinatorEntity, RestoreNumber):
             and self.native_min_value <= last.native_value <= self.native_max_value
         ):
             self.coordinator.set_control(self._baby_id, self._control, last.native_value)
+            # A value the user set wins over a medicine's usual dose (see MedicineSelect)
+            self.coordinator.set_control(self._baby_id, f"{self._control}_restored", True)
 
     @property
     def native_value(self):

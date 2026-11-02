@@ -82,11 +82,11 @@ def test_batch_commits_once_and_discards_only_the_marked_item(app_db):
         with batch.item():
             db.upsert_record("Diaper", {"objectID": "KEEP", "timestamp": "2026-10-30 10:00:00 +0000",
                                         "time": "2026-10-30 10:00:00 +0000", "status": 0, "amount": 2,
-                                        "baby": {"objectID": "ID-EVERLY", "name": "Everly"}})
+                                        "baby": {"objectID": "ID-AVA", "name": "Ava"}})
         with batch.item() as it:
             db.upsert_record("Diaper", {"objectID": "DROP", "timestamp": "2026-10-30 10:00:00 +0000",
                                         "time": "2026-10-30 10:00:00 +0000", "status": 0, "amount": 2,
-                                        "baby": {"objectID": "ID-EVERLY", "name": "Everly"}})
+                                        "baby": {"objectID": "ID-AVA", "name": "Ava"}})
             it.discard()
         # Not visible to another connection until the batch commits
         other = sqlite3.connect(app_db)

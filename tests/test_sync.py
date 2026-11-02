@@ -1,8 +1,8 @@
 """Downloading and merging other devices' changes (SyncImple / BTDatabaseImple rules)."""
-from helpers import EVERLY, IPHONE, OURS, TWIN, b64
+from helpers import AVA, IPHONE, OURS, TWIN, b64
 
 
-def diaper(object_id, status=0, timestamp="2026-10-30 10:00:00 +0000", time="2026-10-30 10:00:00 +0000", baby=EVERLY):
+def diaper(object_id, status=0, timestamp="2026-10-30 10:00:00 +0000", time="2026-10-30 10:00:00 +0000", baby=AVA):
     return {"BCObjectType": "Diaper", "objectID": object_id, "timestamp": timestamp, "time": time,
             "status": status, "amount": 2, "note": "", "pictureLoaded": True, "pictureNote": [],
             "baby": {"objectID": baby}}
@@ -56,7 +56,7 @@ def test_a_failing_record_is_retried_then_skipped(tracker, server, query):
 
 
 def test_our_own_uploads_coming_back_are_harmless(tracker, server, query):
-    tracker.add_diaper(EVERLY, None)
+    tracker.add_diaper(AVA, None)
     before = query("SELECT COUNT(*) FROM Diaper")
     server.logs[OURS] = [{k: u[k] for k in ("SyncID", "OPCode", "Transaction")} for u in server.uploads]
     assert tracker.sync()["status"] == "success"
@@ -67,7 +67,7 @@ def test_a_record_deleted_elsewhere_is_not_resurrected_by_our_own_upload(tracker
     # A fresh server log for this device, listed after the phone's (so the phone's delete is merged first)
     server.devices = {IPHONE: 0, OURS: 0}
     tracker.sync()
-    object_id = tracker.add_diaper(EVERLY, None)["objectID"]
+    object_id = tracker.add_diaper(AVA, None)["objectID"]
     # What the real server now holds for us
     server.logs[OURS] = [{k: u[k] for k in ("SyncID", "OPCode", "Transaction")} for u in server.uploads]
 
@@ -87,7 +87,7 @@ def test_a_record_deleted_elsewhere_is_not_resurrected_by_our_own_upload(tracker
 
 def test_our_own_progress_only_advances_when_everything_before_was_merged(tracker, server, query):
     # The server already held 7 transactions of ours that this database never merged
-    tracker.add_diaper(EVERLY, None)
+    tracker.add_diaper(AVA, None)
     assert query("SELECT last_sync_id FROM DeviceSyncInfo WHERE device_uuid=?", (OURS,)) in ([], [(0,)])
 
 
@@ -113,9 +113,9 @@ def test_conflict_moves_the_losers_records_to_the_winner(tracker, query):
 
 
 def test_name_clash_keeps_the_older_baby(tracker, query):
-    newer = baby("OTHER-ID", "Everly", timestamp="2030-01-01 00:00:00 +0000")
+    newer = baby("OTHER-ID", "Ava", timestamp="2030-01-01 00:00:00 +0000")
     assert merge(tracker, newer, op=0) == "rejected"
-    assert query("SELECT ID FROM Baby WHERE Name='Everly'") == [(EVERLY,)]
+    assert query("SELECT ID FROM Baby WHERE Name='Ava'") == [(AVA,)]
 
 
 def test_seed_queue_is_not_uploaded_as_ours(app_db, query):

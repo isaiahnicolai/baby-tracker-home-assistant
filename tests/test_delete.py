@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from babytracker_client.cli import main
-from helpers import COMMON, EVERLY, MILESTONE, TWIN, VACCINE
+from helpers import COMMON, AVA, MILESTONE, TWIN, VACCINE
 
 
 def stamp(hours_ago=0.0, minutes_ago=0.0):
@@ -15,7 +15,7 @@ def stamp(hours_ago=0.0, minutes_ago=0.0):
     return moment.strftime("%Y-%m-%d %H:%M:%S +0000")
 
 
-def record(object_type, object_id, hours_ago=1.0, baby=EVERLY, **fields):
+def record(object_type, object_id, hours_ago=1.0, baby=AVA, **fields):
     return {**COMMON, "BCObjectType": object_type, "objectID": object_id, "time": stamp(hours_ago),
             "baby": {"objectID": baby}, **fields}
 
@@ -75,7 +75,7 @@ def test_the_wire_form_of_a_record_stores_back_the_same_row(apply, tracker, app_
 
     sent = tracker.db.get_record_wire(wire["BCObjectType"], wire["objectID"], -21600)
     assert sent["objectID"] == wire["objectID"] and sent["BCObjectType"] == wire["BCObjectType"]
-    assert sent["baby"]["objectID"] == EVERLY and sent["baby"]["name"] == "Everly"
+    assert sent["baby"]["objectID"] == AVA and sent["baby"]["name"] == "Ava"
 
     tracker.db.delete_record(wire["BCObjectType"], wire["objectID"])
     assert rows(app_db, table, wire["objectID"]) == []
@@ -84,7 +84,7 @@ def test_the_wire_form_of_a_record_stores_back_the_same_row(apply, tracker, app_
 
 
 def test_delete_removes_the_row_and_queues_a_delete_with_the_whole_record(tracker, server, query):
-    made = tracker.add_diaper(EVERLY, None, pee=True, poo=True, note="blowout")
+    made = tracker.add_diaper(AVA, None, pee=True, poo=True, note="blowout")
     assert query("SELECT COUNT(*) FROM Diaper WHERE ID=?", (made["objectID"],)) == [(1,)]
     server.uploads.clear()
 
@@ -97,13 +97,13 @@ def test_delete_removes_the_row_and_queues_a_delete_with_the_whole_record(tracke
     sent = upload["record"]
     assert (sent["BCObjectType"], sent["objectID"], sent["note"], sent["status"]) == ("Diaper", made["objectID"],
                                                                                       "blowout", 2)
-    assert sent["baby"]["objectID"] == EVERLY and sent["time"] and sent["timezone"] == -21600
+    assert sent["baby"]["objectID"] == AVA and sent["time"] and sent["timezone"] == -21600
     # Nothing is left waiting to go up
     assert query("SELECT COUNT(*) FROM TransactionLog") == [(0,)]
 
 
 def test_delete_is_queued_while_offline_and_sent_on_the_next_sync(tracker, server, query):
-    made = tracker.add_formula(EVERLY, None, amount=4, is_english_measure=True)
+    made = tracker.add_formula(AVA, None, amount=4, is_english_measure=True)
     server.uploads.clear()
     server.online = False
 
@@ -134,7 +134,7 @@ def test_delete_of_a_pump_session_has_no_baby(tracker, server, query):
 
 
 def test_deleting_a_local_doctor_visit_is_not_uploaded(tracker, server, query):
-    assert tracker.log_doctor_visit(EVERLY, symptom="cough")
+    assert tracker.log_doctor_visit(AVA, symptom="cough")
     [(visit,)] = query("SELECT ID FROM DoctorVisit")
     result = tracker.delete_record("DoctorVisit", visit)
     assert result["status"] == "success"
@@ -144,7 +144,7 @@ def test_deleting_a_local_doctor_visit_is_not_uploaded(tracker, server, query):
 
 @pytest.mark.parametrize("object_type, object_id", [
     ("Diaper", "NO-SUCH"),
-    ("Baby", EVERLY),
+    ("Baby", AVA),
     ("MedicationSelection", "X"),
     ("Nonsense", "X"),
 ])
@@ -163,7 +163,7 @@ def test_delete_needs_a_signed_in_tracker(app_db):
 
 
 def test_our_delete_coming_back_from_the_server_changes_nothing(tracker, server, apply, query):
-    made = tracker.add_diaper(EVERLY, None)
+    made = tracker.add_diaper(AVA, None)
     tracker.delete_record("Diaper", made["objectID"])
     # The server hands our own upload back (a fresh sync, or an old progress mark)
     server.publish(tracker.api.device_uuid, [server.uploads[-1]["record"]], op=2, start=900)
@@ -173,7 +173,7 @@ def test_our_delete_coming_back_from_the_server_changes_nothing(tracker, server,
 
 
 def test_a_delete_from_another_device_after_ours_is_ignored(tracker, server, apply, query):
-    made = tracker.add_diaper(EVERLY, None)
+    made = tracker.add_diaper(AVA, None)
     tracker.delete_record("Diaper", made["objectID"])
     uploads = len(server.uploads)
     wire = {**EVERY_RECORD[0], "objectID": made["objectID"]}
@@ -192,7 +192,7 @@ def test_recent_records_run_newest_first_across_types(tracker, apply):
     apply(record("Temperature", "T1", hours_ago=4, temperature={"value": 37.2, "englishMeasure": False}))
     apply(record("Diaper", "OTHER", hours_ago=0.1, baby=TWIN, status=0, amount=2))
 
-    recent = tracker.get_recent_records(EVERLY)
+    recent = tracker.get_recent_records(AVA)
 
     assert [(item["object_type"], item["object_id"], item["kind"]) for item in recent] == [
         ("Nursing", "N1", "nursing L 10 / R 8"),
@@ -206,7 +206,7 @@ def test_recent_records_run_newest_first_across_types(tracker, apply):
 
 def test_recent_records_time_is_aware_and_in_the_trackers_zone(tracker, apply):
     apply(record("Diaper", "D1", hours_ago=1, status=0, amount=2, note="hi"))
-    [item] = tracker.get_recent_records(EVERLY)
+    [item] = tracker.get_recent_records(AVA)
     moment = datetime.fromisoformat(item["time"])
     assert moment.utcoffset() is not None
     assert abs(datetime.now(UTC) - moment - timedelta(hours=1)) < timedelta(minutes=1)
@@ -217,9 +217,9 @@ def test_recent_records_time_is_aware_and_in_the_trackers_zone(tracker, apply):
 def test_recent_records_limit_and_window(tracker, apply):
     for index in range(5):
         apply(record("Journal", f"J{index}", hours_ago=index * 10 + 1))
-    assert [item["object_id"] for item in tracker.get_recent_records(EVERLY, limit=2)] == ["J0", "J1"]
-    assert [item["object_id"] for item in tracker.get_recent_records(EVERLY, within_hours=25)] == ["J0", "J1", "J2"]
-    assert tracker.get_recent_records(EVERLY, limit=0) == []
+    assert [item["object_id"] for item in tracker.get_recent_records(AVA, limit=2)] == ["J0", "J1"]
+    assert [item["object_id"] for item in tracker.get_recent_records(AVA, within_hours=25)] == ["J0", "J1", "J2"]
+    assert tracker.get_recent_records(AVA, limit=0) == []
     assert tracker.get_recent_records("NO-SUCH-BABY") == []
 
 
@@ -228,7 +228,7 @@ def test_recent_records_label_every_kind(tracker, apply):
         apply(wire)
     apply(record("Diaper", "DRY", status=0, amount=0))
     apply(record("Sleep", "OPEN", hours_ago=0.5, duration=0))
-    kinds = {item["object_id"]: item["kind"] for item in tracker.get_recent_records(EVERLY, limit=50)}
+    kinds = {item["object_id"]: item["kind"] for item in tracker.get_recent_records(AVA, limit=50)}
     assert kinds == {
         "R-DIAPER": "poopy diaper", "DRY": "dry diaper", "R-NURSING": "nursing L 10 / R 8",
         "R-FORMULA": "formula 4 oz", "R-PUMPED": "pumped milk 90 ml", "R-FEED": "banana 2 tbsp",
@@ -242,7 +242,7 @@ def test_recent_records_label_every_kind(tracker, apply):
 
 def test_pump_sessions_are_not_listed_because_they_have_no_baby(tracker):
     tracker.log_pump(None, 15, 10, 60, 40, False, "")
-    assert tracker.get_recent_records(EVERLY) == []
+    assert tracker.get_recent_records(AVA) == []
 
 
 def test_undo_deletes_the_newest_record_across_types(tracker, server, apply, query):
@@ -251,7 +251,7 @@ def test_undo_deletes_the_newest_record_across_types(tracker, server, apply, que
     apply(record("Nursing", "MIDDLE", hours_ago=1, leftDuration=5))
     apply(record("Diaper", "SIBLING", hours_ago=0.01, baby=TWIN, status=0, amount=2))
 
-    result = tracker.undo_last(EVERLY)
+    result = tracker.undo_last(AVA)
 
     assert result["status"] == "success"
     assert result["deleted"]["object_id"] == "NEWEST" and result["deleted"]["kind"] == "formula 120 ml"
@@ -261,15 +261,15 @@ def test_undo_deletes_the_newest_record_across_types(tracker, server, apply, que
     assert server.uploads[-1]["OPCode"] == "2" and server.uploads[-1]["record"]["objectID"] == "NEWEST"
 
     # Again: the next one goes
-    assert tracker.undo_last(EVERLY)["deleted"]["object_id"] == "MIDDLE"
+    assert tracker.undo_last(AVA)["deleted"]["object_id"] == "MIDDLE"
 
 
 def test_undo_leaves_records_outside_the_window(tracker, server, apply, query):
     apply(record("Diaper", "OLD", hours_ago=30, status=0, amount=2))
-    assert tracker.undo_last(EVERLY) == {"status": "error", "message": "Nothing to undo"}
+    assert tracker.undo_last(AVA) == {"status": "error", "message": "Nothing to undo"}
     assert query("SELECT COUNT(*) FROM Diaper") == [(1,)]
     assert server.uploads == []
-    assert tracker.undo_last(EVERLY, within_hours=48)["deleted"]["object_id"] == "OLD"
+    assert tracker.undo_last(AVA, within_hours=48)["deleted"]["object_id"] == "OLD"
     assert tracker.undo_last(TWIN)["message"] == "Nothing to undo"
 
 
@@ -299,25 +299,25 @@ def earlier(state_dir, table, minutes=10):
 
 
 def test_cli_recent_lists_what_delete_takes(server, state_dir, capsys):
-    run(capsys, state_dir, "add-diaper", "wet", "--baby", "everly")
+    run(capsys, state_dir, "add-diaper", "wet", "--baby", "ava")
     earlier(state_dir, "Diaper")
-    run(capsys, state_dir, "--offline", "add-nursing", "--baby", "everly", "--left", "12")
-    recent = run(capsys, state_dir, "--offline", "recent", "--baby", "everly", "--limit", "5")
+    run(capsys, state_dir, "--offline", "add-nursing", "--baby", "ava", "--left", "12")
+    recent = run(capsys, state_dir, "--offline", "recent", "--baby", "ava", "--limit", "5")
     assert [(item["object_type"], item["kind"]) for item in recent] == [("Nursing", "nursing L 12"),
                                                                        ("Diaper", "wet diaper")]
 
 
 def test_cli_delete_needs_yes(server, state_dir, capsys):
-    made = run(capsys, state_dir, "add-diaper", "wet", "--baby", "everly")
+    made = run(capsys, state_dir, "add-diaper", "wet", "--baby", "ava")
     with pytest.raises(SystemExit, match="--yes"):
         main(["--state-dir", str(state_dir), "--offline", "delete", "Diaper", made["objectID"]])
-    assert [item["object_id"] for item in run(capsys, state_dir, "--offline", "recent", "--baby", "everly")] == [
+    assert [item["object_id"] for item in run(capsys, state_dir, "--offline", "recent", "--baby", "ava")] == [
         made["objectID"]]
 
     result = run(capsys, state_dir, "--offline", "delete", "Diaper", made["objectID"], "--yes")
     assert result["status"] == "success" and result["object_id"] == made["objectID"]
     assert server.uploads[-1]["OPCode"] == "2"
-    assert run(capsys, state_dir, "--offline", "recent", "--baby", "everly") == []
+    assert run(capsys, state_dir, "--offline", "recent", "--baby", "ava") == []
 
 
 def test_cli_delete_of_an_unknown_record_fails(server, state_dir, capsys):
@@ -328,22 +328,22 @@ def test_cli_delete_of_an_unknown_record_fails(server, state_dir, capsys):
 
 
 def test_cli_undo_shows_then_deletes(server, state_dir, capsys):
-    run(capsys, state_dir, "add-diaper", "wet", "--baby", "everly")
+    run(capsys, state_dir, "add-diaper", "wet", "--baby", "ava")
     earlier(state_dir, "Diaper")
-    made = run(capsys, state_dir, "--offline", "add-bottle", "--baby", "everly", "--amount", "3")
+    made = run(capsys, state_dir, "--offline", "add-bottle", "--baby", "ava", "--amount", "3")
 
     with pytest.raises(SystemExit, match="--yes"):
-        main(["--state-dir", str(state_dir), "--offline", "undo", "--baby", "everly"])
+        main(["--state-dir", str(state_dir), "--offline", "undo", "--baby", "ava"])
     assert json.loads(capsys.readouterr().out)["would_delete"]["object_id"] == made["objectID"]
 
-    result = run(capsys, state_dir, "--offline", "undo", "--baby", "everly", "--yes")
+    result = run(capsys, state_dir, "--offline", "undo", "--baby", "ava", "--yes")
     assert result["status"] == "success" and result["deleted"]["object_id"] == made["objectID"]
-    assert [item["kind"] for item in run(capsys, state_dir, "--offline", "recent", "--baby", "everly")] == [
+    assert [item["kind"] for item in run(capsys, state_dir, "--offline", "recent", "--baby", "ava")] == [
         "wet diaper"]
 
 
 def test_cli_undo_with_nothing_to_undo(server, state_dir, capsys):
     with pytest.raises(SystemExit) as stopped:
-        main(["--state-dir", str(state_dir), "--offline", "undo", "--baby", "everly", "--yes"])
+        main(["--state-dir", str(state_dir), "--offline", "undo", "--baby", "ava", "--yes"])
     assert stopped.value.code == 1
     assert json.loads(capsys.readouterr().out)["message"] == "Nothing to undo"

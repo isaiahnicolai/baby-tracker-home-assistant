@@ -34,7 +34,6 @@ from .const import (
     EVENT_SLEEP,
     ISSUE_ACCOUNT_RESET,
     ISSUE_CUSTOM_SENTENCES,
-    ISSUE_OLD_WWW_FOLDER,
     ISSUE_UPLOADS_PENDING,
     NURSING_STORE_VERSION,
     NURSING_TIMER_MAX_AGE_HOURS,
@@ -87,18 +86,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         scan_interval=timedelta(minutes=get_option(entry, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)),
         entry=entry,
     )
-
-    # Older versions saved photos under www/, where anyone on the network can fetch them without a login
-    legacy_photo_dir = hass.config.path("www", "baby_tracker")
-    if await hass.async_add_executor_job(os.path.isdir, legacy_photo_dir):
-        _LOGGER.info("Old baby photo copies are still in %s; see Settings > Repairs", legacy_photo_dir)
-        ir.async_create_issue(
-            hass, DOMAIN, ISSUE_OLD_WWW_FOLDER,
-            is_fixable=False, severity=ir.IssueSeverity.WARNING,
-            translation_key=ISSUE_OLD_WWW_FOLDER, translation_placeholders={"folder": legacy_photo_dir},
-        )
-    else:
-        ir.async_delete_issue(hass, DOMAIN, ISSUE_OLD_WWW_FOLDER)
 
     # A nursing session timed before a restart or reload carries on
     await coordinator.async_load_nursing()
@@ -183,7 +170,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry):
     await hass.async_add_executor_job(_remove_database, db_path)
     await Store(hass, NURSING_STORE_VERSION, f"{DOMAIN}.{entry.entry_id}.nursing").async_remove()
     await Store(hass, SLEEP_SOURCE_STORE_VERSION, f"{DOMAIN}.{entry.entry_id}.sleep_source").async_remove()
-    for issue_id in (ISSUE_OLD_WWW_FOLDER, ISSUE_UPLOADS_PENDING, ISSUE_ACCOUNT_RESET, ISSUE_CUSTOM_SENTENCES):
+    for issue_id in (ISSUE_UPLOADS_PENDING, ISSUE_ACCOUNT_RESET, ISSUE_CUSTOM_SENTENCES):
         ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 

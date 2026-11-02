@@ -128,8 +128,8 @@ app uses, and was tested against a real account with two babies.
 
 - Blueprints for feed due, wake to feed, sleep due, new photo and a daily
   intake summary.
-- Repairs for the Assist sentence file, records stuck unsent, an account
-  that was reset, and photos left in `www/` by development builds.
+- Repairs for the Assist sentence file, records stuck unsent and an
+  account that was reset.
 
 ### Client library and command line
 

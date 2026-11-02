@@ -45,6 +45,10 @@ class BabyTrackerSelect(CoordinatorEntity, SelectEntity, RestoreEntity):
         last = await self.async_get_last_state()
         if last is not None and last.state in self.options:
             self.coordinator.set_control(self._baby_id, self._control, last.state)
+            self._restored()
+
+    def _restored(self) -> None:
+        """Called after the option was restored."""
 
     async def async_select_option(self, option: str) -> None:
         self.coordinator.set_control(self._baby_id, self._control, option)
@@ -66,6 +70,12 @@ class MedicineSelect(BabyTrackerSelect):
     """Which of the account's medicines the Give Medicine button logs."""
 
     _control = "medicine"
+
+    def _restored(self) -> None:
+        # The Medicine Amount takes the restored medicine's usual dose, unless an amount was restored
+        # too. The number and select platforms load in either order, so this checks rather than assumes.
+        if not self.coordinator.control(self._baby_id, "medicine_amount_restored"):
+            self.coordinator.follow_medicine(self._baby_id)
 
     @property
     def options(self) -> list[str]:

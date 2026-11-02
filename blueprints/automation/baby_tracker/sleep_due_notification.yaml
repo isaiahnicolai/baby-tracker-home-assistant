@@ -10,7 +10,7 @@ blueprint:
   input:
     sleep_due_alert:
       name: Sleep Due alert
-      description: The baby's Sleep Due binary sensor (for example binary_sensor.everly_sleep_due).
+      description: The baby's Sleep Due binary sensor (for example binary_sensor.ava_sleep_due).
       selector:
         entity:
           filter:

@@ -2,16 +2,16 @@
 Command line interface for the Baby Tracker sync client.
 
     babytracker babies
-    babytracker last diaper --baby Everly
-    babytracker add-diaper --baby Everly wet
-    babytracker add-bottle --baby Everly --amount 4 --unit oz
-    babytracker add-nursing --baby Everly --left 10 --right 8
-    babytracker recent --baby Everly
+    babytracker last diaper --baby Ava
+    babytracker add-diaper --baby Ava wet
+    babytracker add-bottle --baby Ava --amount 4 --unit oz
+    babytracker add-nursing --baby Ava --left 10 --right 8
+    babytracker recent --baby Ava
     babytracker delete Diaper <object-id> --yes
-    babytracker undo --baby Everly --yes
-    babytracker insights --baby Everly
+    babytracker undo --baby Ava --yes
+    babytracker insights --baby Ava
     babytracker next
-    babytracker calendar --baby Everly --days 2
+    babytracker calendar --baby Ava --days 2
     babytracker inventory
     babytracker create-medicine Tylenol --amount 2.5 --unit ml --interval 6
     babytracker create-food Banana

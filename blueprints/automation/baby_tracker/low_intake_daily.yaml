@@ -16,7 +16,7 @@ blueprint:
         time:
     intake_sensor:
       name: Intake 24h sensor
-      description: The baby's Intake 24h sensor (for example sensor.everly_intake_24h).
+      description: The baby's Intake 24h sensor (for example sensor.ava_intake_24h).
       selector:
         entity:
           filter:
@@ -24,7 +24,7 @@ blueprint:
               domain: sensor
     intake_status_sensor:
       name: Intake Status sensor
-      description: The same baby's Intake Status sensor (for example sensor.everly_intake_status).
+      description: The same baby's Intake Status sensor (for example sensor.ava_intake_status).
       selector:
         entity:
           filter:
