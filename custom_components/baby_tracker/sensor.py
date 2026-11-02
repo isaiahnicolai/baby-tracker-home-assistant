@@ -39,6 +39,8 @@ from .const import (
     SENSOR_TYPE_LAST_BATH,
     SENSOR_TYPE_LAST_DIAPER,
     SENSOR_TYPE_LAST_DIAPER_TIME,
+    SENSOR_TYPE_LAST_DIRTY_DIAPER_TIME,
+    SENSOR_TYPE_LAST_WET_DIAPER_TIME,
     SENSOR_TYPE_LAST_DOCTOR_VISIT,
     SENSOR_TYPE_LAST_FEEDING,
     SENSOR_TYPE_LAST_FEEDING_TIME,
@@ -403,6 +405,20 @@ class BabyTrackerLastDiaperTimeSensor(BabyTrackerTimestampSensor):
 
     _sensor_type = SENSOR_TYPE_LAST_DIAPER_TIME
     _data_key = "last_diaper"
+
+
+class BabyTrackerLastWetDiaperTimeSensor(BabyTrackerTimestampSensor):
+    """When the last wet diaper was (a mixed one counts)."""
+
+    _sensor_type = SENSOR_TYPE_LAST_WET_DIAPER_TIME
+    _data_key = "last_wet_diaper"
+
+
+class BabyTrackerLastDirtyDiaperTimeSensor(BabyTrackerTimestampSensor):
+    """When the last dirty diaper was (a mixed one counts)."""
+
+    _sensor_type = SENSOR_TYPE_LAST_DIRTY_DIAPER_TIME
+    _data_key = "last_dirty_diaper"
 
 
 class BabyTrackerLastSleepSensor(BabyTrackerSensor):
@@ -1478,6 +1494,8 @@ PER_BABY_SENSORS = (
     BabyTrackerLastFeedingTimeSensor,
     BabyTrackerLastDiaperSensor,
     BabyTrackerLastDiaperTimeSensor,
+    BabyTrackerLastWetDiaperTimeSensor,
+    BabyTrackerLastDirtyDiaperTimeSensor,
     BabyTrackerLastSleepSensor,
     BabyTrackerLastSleepTimeSensor,
     BabyTrackerLastNursingSensor,

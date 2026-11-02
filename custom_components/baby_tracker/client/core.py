@@ -714,6 +714,28 @@ class BabyTracker:
 
         return self.db.get_last_diaper_direct(baby_id)
 
+    def get_last_wet_diaper(self, baby_id=None):
+        """The most recent wet diaper (a mixed one counts) as a dict with id and time, or None."""
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
+                self.api.local_db = self.db
+            else:
+                return None
+
+        return self.db.get_last_wet_diaper(baby_id)
+
+    def get_last_dirty_diaper(self, baby_id=None):
+        """The most recent dirty diaper (a mixed one counts) as a dict with id and time, or None."""
+        if not self.db:
+            if os.path.exists(self.db_path):
+                self.db = BabyTrackerLocalDatabase(self.db_path, tz=self.tz)
+                self.api.local_db = self.db
+            else:
+                return None
+
+        return self.db.get_last_dirty_diaper(baby_id)
+
     def get_last_sleep(self, baby_id=None):
         """
         Get the most recent sleep by querying the Sleep table directly.

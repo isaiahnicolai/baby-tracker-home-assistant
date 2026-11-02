@@ -2,7 +2,7 @@
 
 DOMAIN = "baby_tracker"
 CONFIG_ENTRY_VERSION = 2  # the config flow's VERSION; async_migrate_entry brings older entries up to it
-VERSION = "1.0.0"  # keep in sync with manifest.json and client/__init__.py
+VERSION = "1.0.1"  # keep in sync with manifest.json and client/__init__.py
 
 # Configuration
 CONF_EMAIL = "email"
@@ -71,6 +71,8 @@ SENSOR_TYPE_NURSING_MINUTES = "nursing_minutes"
 SENSOR_TYPE_BOTTLE_VOLUME = "bottle_ml"  # keeps the unique ID of the old "Bottle ml" sensor
 SENSOR_TYPE_LAST_FEEDING_TIME = "last_feeding_time"
 SENSOR_TYPE_LAST_DIAPER_TIME = "last_diaper_time"
+SENSOR_TYPE_LAST_WET_DIAPER_TIME = "last_wet_diaper_time"
+SENSOR_TYPE_LAST_DIRTY_DIAPER_TIME = "last_dirty_diaper_time"
 SENSOR_TYPE_LAST_SLEEP_TIME = "last_sleep_time"
 SENSOR_TYPE_DIAPER_COUNT = "diaper_count"
 SENSOR_TYPE_POOPY_COUNT = "poopy_count"

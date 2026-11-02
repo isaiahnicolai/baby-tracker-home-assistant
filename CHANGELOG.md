@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] - 2026-11-02
+
+### Added
+
+- Last Wet Diaper and Last Dirty Diaper sensors for each baby: when the last
+  wet and the last dirty diaper were, with a mixed diaper counting for both.
+
+### Fixed
+
+- Daily Summary's sleep total (`sleep_hours`) is split at midnight like the
+  app's: the part of a night sleep after midnight counts today, the part of
+  a sleep running past midnight does not, and a sleep in progress counts up
+  to now. It used to count whole sleeps that started today.
+- The repair that installs the Assist voice commands gives its example
+  commands with one of your own babies' names instead of a fixed example.
+
 ## [1.0.0] - 2026-11-01
 
 The first release. It syncs a Baby Tracker account with Home Assistant in
@@ -152,4 +168,5 @@ app uses, and was tested against a real account with two babies.
   and the integration with GitHub Actions and hassfest, a dev container with
   `docker compose` and `scripts/bootstrap`, and an MIT license.
 
+[1.0.1]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/releases/tag/v1.0.0

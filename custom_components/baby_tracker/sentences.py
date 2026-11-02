@@ -118,7 +118,8 @@ async def async_check_sentences(hass: HomeAssistant, coordinator) -> None:
     ir.async_create_issue(
         hass, DOMAIN, ISSUE_CUSTOM_SENTENCES,
         is_fixable=True, severity=ir.IssueSeverity.WARNING, translation_key=ISSUE_CUSTOM_SENTENCES,
-        translation_placeholders={"folder": hass.config.path("custom_sentences")},
+        # The example commands use one of the account's own babies
+        translation_placeholders={"folder": hass.config.path("custom_sentences"), "baby": names[0]},
     )
 
 
