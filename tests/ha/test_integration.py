@@ -127,6 +127,8 @@ AVA_DATA = {
     "last_feeding": {"time": "2026-03-01 09:30:00 +0000", "type": "Formula", "amount": 4.0,
                      "amount_oz": 4.0, "amount_ml": 118.3},
     "last_diaper": {"time": "2026-03-01 10:00:00 +0000", "status": "Wet"},
+    "last_wet_diaper": {"time": "2026-03-01 10:00:00 +0000"},
+    "last_dirty_diaper": {"time": "2026-03-01 08:30:00 +0000"},
     "last_sleep": {"time": "2026-03-01 11:00:00 +0000", "is_sleeping": True, "duration": 0,
                    "current_duration": 45, "status": "sleeping"},
     "last_nursing": {"time": "2026-03-01 08:00:00 +0000", "total_duration": 12},
@@ -667,6 +669,8 @@ async def test_sensors_have_numeric_states_and_device_classes(hass, backend):
     # Times are real timestamps; the kinds of feeding and diaper are enum states
     check("sensor.ava_last_feeding_time", "2026-03-01T09:30:00+00:00", device_class="timestamp")
     check("sensor.ava_last_diaper_time", "2026-03-01T10:00:00+00:00", device_class="timestamp")
+    check("sensor.ava_last_wet_diaper", "2026-03-01T10:00:00+00:00", device_class="timestamp")
+    check("sensor.ava_last_dirty_diaper", "2026-03-01T08:30:00+00:00", device_class="timestamp")
     check("sensor.ava_last_sleep_time", "2026-03-01T11:00:00+00:00", device_class="timestamp")
     check("sensor.ava_last_doctor_visit", "2026-02-20T15:00:00+00:00", device_class="timestamp")
     check("sensor.ava_last_feeding", "formula", device_class="enum")

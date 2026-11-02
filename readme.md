@@ -178,6 +178,8 @@ The integration's **Units** setting (imperial or metric, changeable in the optio
 | Last Feeding Time | When the last feeding was | timestamp |
 | Last Diaper | Status of the last change: `wet`, `poopy`, `mixed` or `dry` | enum |
 | Last Diaper Time | When the last diaper change was | timestamp |
+| Last Wet Diaper | When the last wet diaper was (a mixed one counts) | timestamp |
+| Last Dirty Diaper | When the last dirty diaper was (a mixed one counts) | timestamp |
 | Last Sleep | Minutes slept, or so far if the baby is asleep now (the `sleeping` attribute says which) | min, duration |
 | Last Sleep Time | When the last sleep started | timestamp |
 | Last Nursing | Minutes of the last nursing session (left, right and both in attributes) | min, duration |
@@ -187,7 +189,7 @@ The integration's **Units** setting (imperial or metric, changeable in the optio
 | Time Since Last Feeding | Minutes since the last feeding; `feeding_status` and `needs_feeding` are attributes | min, duration |
 | Next Feeding | Minutes until the age-based feeding limit (negative once overdue) | min, duration |
 | Average Bedtime | Average night bedtime of the last two weeks, with a per-day list in the attributes | text |
-| Daily Summary | Feedings so far today; formula, nursing minutes, diapers and sleep hours in attributes | feedings |
+| Daily Summary | Feedings so far today; formula, nursing minutes, diapers and sleep hours in attributes. The sleep total is split at midnight like the app's: the part of last night's sleep after midnight counts today, the part of a sleep running past tonight's midnight does not, and a sleep in progress counts up to now | feedings |
 
 ### Summary Sensors (Last 7 Days)
 

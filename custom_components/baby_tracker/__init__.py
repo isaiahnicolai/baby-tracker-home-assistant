@@ -570,6 +570,8 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 "last_temperature": tracker.get_last_temperature(baby_id),
                 "time_since_last_feeding": tracker.time_since_last_feeding(baby_id),
                 "last_diaper": tracker.get_last_diaper(baby_id),
+                "last_wet_diaper": tracker.get_last_wet_diaper(baby_id),
+                "last_dirty_diaper": tracker.get_last_dirty_diaper(baby_id),
                 "last_sleep": tracker.get_last_sleep(baby_id),
                 "last_nursing": tracker.get_last_nursing(baby_id),
                 "last_feed_time": tracker.get_last_feed_time(baby_id),

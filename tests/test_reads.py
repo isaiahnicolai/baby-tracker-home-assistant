@@ -122,3 +122,72 @@ def test_night_sleep_is_judged_in_local_time(apply, chicago_db):
     night = analysis["per_day"][0]
     assert (night["date"], night["bedtime"], night["bedtime_minutes"]) == ("2026-10-28", "8:00 PM", 20 * 60)
     assert (night["wake_time"], night["wake_time_minutes"]) == ("6:00 AM", 6 * 60)
+
+
+def test_a_night_sleep_counts_only_its_part_after_midnight(apply, chicago_db):
+    # 20:00 yesterday to 06:00 today in Chicago: 6 hours of it are today
+    apply(baby_record(AVA, "Sleep", "S-NIGHT", "2026-10-30 01:00:00", duration=600))
+    assert chicago_db.get_daily_summary(AVA)["sleep_hours"] == 6.0
+
+
+def test_a_sleep_running_past_midnight_counts_only_until_midnight(apply, chicago_db):
+    # 22:00 today to 07:00 tomorrow in Chicago: 2 hours of it are today
+    apply(baby_record(AVA, "Sleep", "S-LATE", "2026-10-31 03:00:00", duration=540))
+    assert chicago_db.get_daily_summary(AVA)["sleep_hours"] == 2.0
+
+
+def test_the_sleeps_of_the_day_and_both_ends_add_up(apply, chicago_db):
+    apply(baby_record(AVA, "Sleep", "S-NIGHT", "2026-10-30 01:00:00", duration=600))  # 6 h today
+    apply(baby_record(AVA, "Sleep", "S-NAP", "2026-10-30 18:00:00", duration=90))     # 1.5 h
+    apply(baby_record(AVA, "Sleep", "S-LATE", "2026-10-31 03:00:00", duration=540))   # 2 h today
+    apply(baby_record(TWIN, "Sleep", "S-OTHER", "2026-10-30 18:00:00", duration=300))
+    assert chicago_db.get_daily_summary(AVA)["sleep_hours"] == 9.5
+
+
+def test_a_sleep_in_progress_counts_up_to_now(apply, chicago_db):
+    # Since 13:00 in Chicago; it is 23:00
+    apply(baby_record(AVA, "Sleep", "S-NOW", "2026-10-30 18:00:00", duration=0))
+    assert chicago_db.get_daily_summary(AVA)["sleep_hours"] == 10.0
+
+
+def test_a_sleep_in_progress_since_yesterday_counts_from_midnight(apply, chicago_db):
+    # Since 23:30 yesterday, still asleep at 23:00 today: 23 hours of today
+    apply(baby_record(AVA, "Sleep", "S-NOW", "2026-10-30 04:30:00", duration=0))
+    assert chicago_db.get_daily_summary(AVA)["sleep_hours"] == 23.0
+
+
+def test_a_days_sleep_is_capped_at_24_hours(apply, chicago_db):
+    for i in range(5):  # 50 hours that all start today
+        apply(baby_record(AVA, "Sleep", f"S-{i}", f"2026-10-30 {6 + i:02d}:00:00", duration=600))
+    assert chicago_db.get_daily_summary(AVA)["sleep_hours"] == 24.0
+
+
+def test_a_sleep_that_was_never_ended_adds_nothing(apply, chicago_db):
+    apply(baby_record(AVA, "Sleep", "S-STRAY", "2026-10-26 15:00:00", duration=0))
+    assert chicago_db.get_daily_summary(AVA)["sleep_hours"] == 0
+    # nor does it count as running into a day that has other sleeps
+    apply(baby_record(AVA, "Sleep", "S-NAP", "2026-10-30 18:00:00", duration=60))
+    assert chicago_db.get_daily_summary(AVA)["sleep_hours"] == 1.0
+
+
+def test_last_wet_and_dirty_diapers_count_mixed_ones_for_both(apply, tracker):
+    apply(baby_record(AVA, "Diaper", "D-WET", "2026-10-01 10:00:00", status=0, amount=2))
+    apply(baby_record(AVA, "Diaper", "D-DIRTY", "2026-10-01 11:00:00", status=1, amount=2))
+    apply(baby_record(AVA, "Diaper", "D-MIXED", "2026-10-01 12:00:00", status=2, amount=2))
+    apply(baby_record(AVA, "Diaper", "D-DRY", "2026-10-01 13:00:00", status=0, amount=0))
+    assert tracker.get_last_diaper(AVA)["status"] == "Dry"
+
+    wet, dirty = tracker.get_last_wet_diaper(AVA), tracker.get_last_dirty_diaper(AVA)
+    assert (wet["id"], dirty["id"]) == ("D-MIXED", "D-MIXED")  # the dry one counts for neither
+
+    apply(baby_record(AVA, "Diaper", "D-WET2", "2026-10-01 14:00:00", status=0, amount=1))
+    assert tracker.get_last_wet_diaper(AVA)["id"] == "D-WET2"
+    assert tracker.get_last_dirty_diaper(AVA)["id"] == "D-MIXED"
+
+
+def test_last_wet_and_dirty_diapers_are_per_baby_and_none_when_missing(apply, tracker):
+    apply(baby_record(AVA, "Diaper", "D-A", "2026-10-01 10:00:00", status=1, amount=2))
+    apply(baby_record(TWIN, "Diaper", "D-T", "2026-10-02 10:00:00", status=0, amount=0))  # dry
+    assert tracker.get_last_wet_diaper(AVA) is None
+    assert tracker.get_last_dirty_diaper(AVA)["id"] == "D-A"
+    assert tracker.get_last_wet_diaper(TWIN) is None and tracker.get_last_dirty_diaper(TWIN) is None

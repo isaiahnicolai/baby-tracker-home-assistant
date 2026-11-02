@@ -6,8 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [1.0.1] - 2026-11-02
 
+### Added
+
+- Last Wet Diaper and Last Dirty Diaper sensors for each baby: when the last
+  wet and the last dirty diaper were, with a mixed diaper counting for both.
+
 ### Fixed
 
+- Daily Summary's sleep total (`sleep_hours`) is split at midnight like the
+  app's: the part of a night sleep after midnight counts today, the part of
+  a sleep running past midnight does not, and a sleep in progress counts up
+  to now. It used to count whole sleeps that started today.
 - The repair that installs the Assist voice commands gives its example
   commands with one of your own babies' names instead of a fixed example.
 

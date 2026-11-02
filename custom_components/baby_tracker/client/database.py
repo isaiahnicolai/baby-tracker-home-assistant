@@ -782,6 +782,48 @@ class BabyTrackerLocalDatabase:
         finally:
             conn.close()
 
+    @staticmethod
+    def _sleep_minutes_in_day(cursor, baby_id: str, start: int, end: int, now: int) -> float:
+        """
+        Minutes slept inside the day window [start, end) (Unix seconds), as the Android app
+        counts them with its "midnight split" setting (BTDatabaseImple.getSleepSumInfoForBabyImpleOp):
+        the durations of the sleeps that start in the window, plus the part of the last sleep
+        that started before it and runs into it, minus the part of the last sleep that starts in
+        it and runs past its end. A sleep in progress (Duration 0) runs until `now`, but one
+        older than IN_PROGRESS_SLEEP_SECONDS was never ended and counts for nothing. The total is
+        kept between 0 and 24 hours.
+        """
+        def running(time, duration):
+            return duration == 0 and 0 <= now - time < IN_PROGRESS_SLEEP_SECONDS
+
+        cursor.execute("SELECT SUM(Duration) FROM Sleep WHERE BabyID = ? AND Time >= ? AND Time < ? AND Duration > 0",
+                       (baby_id, start, end))
+        total = cursor.fetchone()[0] or 0
+
+        # The last sleep before the window, if it runs into it
+        cursor.execute("SELECT Time, Duration FROM Sleep WHERE BabyID = ? AND Time < ? ORDER BY Time DESC LIMIT 1",
+                       (baby_id, start))
+        row = cursor.fetchone()
+        if row:
+            time, duration = row[0], row[1] or 0
+            if running(time, duration):
+                total += max(0, (min(end, now) - start) / 60.0)
+            elif duration > 0:
+                total += max(0, duration - (start - time) / 60.0)
+
+        # The last sleep starting in the window, if it runs past its end
+        cursor.execute("SELECT Time, Duration FROM Sleep WHERE BabyID = ? AND Time >= ? AND Time < ? "
+                       "ORDER BY Time DESC LIMIT 1", (baby_id, start, end))
+        row = cursor.fetchone()
+        if row:
+            time, duration = row[0], row[1] or 0
+            if running(time, duration):
+                total += max(0, (min(end, now) - time) / 60.0)
+            elif duration > 0:
+                total -= max(0, duration - (end - time) / 60.0)
+
+        return min(max(total, 0), 24 * 60)
+
     def get_daily_summary(self, baby_id: Optional[str] = None) -> Dict:
         """
         Get today's totals for all tracked activities.
@@ -865,13 +907,11 @@ class BabyTrackerLocalDatabase:
             row = cursor.fetchone()
             summary["diaper_count"] = row[0] or 0
 
-            # Sleep hours (completed sleeps only, Duration > 0, in minutes)
-            cursor.execute("""
-                SELECT SUM(Duration) FROM Sleep
-                WHERE BabyID = ? AND Time >= ? AND Duration > 0
-            """, (baby_id, today_start))
-            row = cursor.fetchone()
-            total_sleep_minutes = row[0] or 0
+            # Sleep hours, split at midnight like the app: see _sleep_minutes_in_day
+            now = self._now()
+            tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            total_sleep_minutes = self._sleep_minutes_in_day(
+                cursor, baby_id, today_start, int(tomorrow.timestamp()), int(now.timestamp()))
             summary["sleep_hours"] = round(total_sleep_minutes / 60.0, 1)
 
             return summary
@@ -1930,6 +1970,43 @@ class BabyTrackerLocalDatabase:
             return None
         finally:
             conn.close()
+
+    def _get_last_diaper_of(self, statuses: tuple, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """The most recent diaper whose Status is one of `statuses`, as {"id", "time", "raw_time"}."""
+        if not os.path.exists(self.db_path):
+            raise ValueError("No database loaded")
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            if baby_id is None:
+                cursor.execute("SELECT ID FROM Baby LIMIT 1")
+                baby_row = cursor.fetchone()
+                if baby_row is None:
+                    return None
+                baby_id = baby_row[0]
+
+            marks = ", ".join("?" for _ in statuses)
+            cursor.execute(f"""
+                SELECT ID, Time FROM Diaper
+                WHERE BabyID = ? AND Status IN ({marks}) AND NOT (Status = 0 AND Amount = 0)
+                ORDER BY Time DESC
+                LIMIT 1
+            """, (baby_id, *statuses))
+            row = cursor.fetchone()
+            if row and row[1]:
+                return {"id": row[0], "time": self._format_timestamp(row[1]), "raw_time": row[1]}
+            return None
+        finally:
+            conn.close()
+
+    def get_last_wet_diaper(self, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """The most recent wet diaper; a mixed one counts, a dry one (wet with amount 0) does not."""
+        return self._get_last_diaper_of((0, 2), baby_id)
+
+    def get_last_dirty_diaper(self, baby_id: Optional[str] = None) -> Optional[Dict]:
+        """The most recent dirty (poopy) diaper; a mixed one counts."""
+        return self._get_last_diaper_of((1, 2), baby_id)
 
     def get_last_sleep_direct(self, baby_id: Optional[str] = None) -> Optional[Dict]:
         """

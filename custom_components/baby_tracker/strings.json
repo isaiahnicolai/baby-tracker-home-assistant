@@ -98,6 +98,12 @@
       "last_diaper_time": {
         "name": "Last Diaper Time"
       },
+      "last_wet_diaper_time": {
+        "name": "Last Wet Diaper"
+      },
+      "last_dirty_diaper_time": {
+        "name": "Last Dirty Diaper"
+      },
       "last_sleep": {
         "name": "Last Sleep"
       },

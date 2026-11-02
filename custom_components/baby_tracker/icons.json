@@ -10,6 +10,8 @@
       "expected_wake": {"default": "mdi:alarm"},
       "wake_window": {"default": "mdi:timer-sand"},
       "intake_24h": {"default": "mdi:baby-bottle-outline"},
+      "last_wet_diaper_time": {"default": "mdi:water"},
+      "last_dirty_diaper_time": {"default": "mdi:emoticon-poop"},
       "diaper_adequacy": {"default": "mdi:baby-face-outline"},
       "weight_percentile": {"default": "mdi:scale-bathroom"},
       "length_percentile": {"default": "mdi:human-male-height"},

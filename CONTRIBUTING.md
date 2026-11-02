@@ -58,7 +58,9 @@ install, so a test account is a good idea if you have one.
   `pip install -r requirements_test.txt -e . && scripts/test -q`.
 
 If you can't run the integration tests, open the pull request anyway: CI runs
-both suites, hassfest and HACS validation. `scripts/lint` runs ruff with the
+both suites, hassfest and HACS validation. A weekly workflow also runs the
+integration tests against the newest Home Assistant release, so upstream
+changes that break something show up early. `scripts/lint` runs ruff with the
 settings in `.ruff.toml`.
 
 ## Adding something new
