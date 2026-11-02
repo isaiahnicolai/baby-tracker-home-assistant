@@ -54,7 +54,7 @@ After a restart, add the integration and sign in with your Baby Tracker account:
 
 [![Add Baby Tracker to Home Assistant](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=baby_tracker)
 
-or go to **Settings > Devices & services > Add integration** and search for *Baby Tracker*. Signing in joins your account as a new device and fetches the seed database; the first refresh then replays the account's history, which takes a few seconds per few thousand records. See [Options](#options) for what you can change.
+or go to **Settings > Devices & services > Add integration** and search for *Baby Tracker*. The dialog only checks your password. The integration then joins your account as a new device and imports its history in the background, with a notification while it runs; each baby's device and entities appear when it finishes, usually within a few minutes. A restart during the import picks up where it left off. See [Options](#options) for what you can change.
 
 ### Two or more babies
 

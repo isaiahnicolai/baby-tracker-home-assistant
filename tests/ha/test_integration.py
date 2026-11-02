@@ -37,6 +37,13 @@ CORE = "custom_components.baby_tracker.client.core.BabyTracker"
 REAL_FETCH = BabyTrackerDataCoordinator._fetch  # the `backend` fixture swaps it out while a test runs
 
 
+@pytest.fixture(autouse=True)
+def joined():
+    """The account was joined and its history imported (the background first sync has its own tests)."""
+    with patch(f"{CORE}.needs_first_sync", return_value=False) as needs:
+        yield needs
+
+
 def make_entry(unit_system="imperial", options=None):
     return MockConfigEntry(
         domain=DOMAIN, unique_id=EMAIL, title="Baby Tracker", version=2,
@@ -319,14 +326,68 @@ async def test_rejected_password_asks_to_log_in_again(hass):
 
 
 async def test_setup_flow_gives_the_integration_its_own_device_id(hass):
-    with patch("custom_components.baby_tracker.config_flow.validate_input",
-               return_value={"title": "Baby Tracker (Ava & Ann Marie)"}), \
+    with patch("custom_components.baby_tracker.config_flow.validate_login", return_value=None) as login, \
          patch("custom_components.baby_tracker.async_setup_entry", return_value=True):
         result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {"email": EMAIL, "password": "pw", "scan_interval": 15, "unit_system": "metric"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"]["device_uuid"]
+    # The dialog only checks the password; joining and importing happen once the entry exists
+    assert login.call_args.args[1:] == (EMAIL, "pw", result["data"]["device_uuid"])
+    assert result["title"] == "Baby Tracker"
+
+
+async def test_setup_flow_reports_a_wrong_password(hass):
+    from custom_components.baby_tracker.config_flow import InvalidAuth
+    with patch("custom_components.baby_tracker.config_flow.validate_login", side_effect=InvalidAuth("401")):
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"email": EMAIL, "password": "bad", "scan_interval": 15, "unit_system": "metric"})
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_auth"}
+
+
+async def test_first_setup_imports_the_history_in_the_background_then_reloads(hass, backend, joined):
+    joined.side_effect = [True, False]  # first setup: not joined yet; after the import: joined
+    notifications = []
+    with patch("custom_components.baby_tracker.persistent_notification.async_create",
+               lambda hass, message, title=None, notification_id=None: notifications.append(notification_id)), \
+         patch("custom_components.baby_tracker.persistent_notification.async_dismiss",
+               lambda hass, notification_id: notifications.remove(notification_id)):
+        entry = make_entry()
+        await setup(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)  # the import, then the reload
+        await hass.async_block_till_done()
+
+    assert entry.state is config_entries.ConfigEntryState.LOADED
+    assert hass.states.get("button.ava_add_wet_diaper") is not None  # set up again after the import
+    assert entry.title == "Baby Tracker (Ann Marie & Ava)"
+    assert notifications == []  # shown during the import, dismissed after
+    assert joined.call_count == 2
+
+
+async def test_a_failed_first_import_keeps_the_entry_loaded_and_unloads_cleanly(hass, joined):
+    joined.return_value = True
+    notifications = []
+
+    def failing_fetch(self, photo_dir):
+        raise ConnectionError("server unreachable")
+
+    with patch(f"{CORE}.authenticate", return_value={"status": "success"}), \
+         patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", failing_fetch), \
+         patch("custom_components.baby_tracker.persistent_notification.async_create",
+               lambda hass, message, title=None, notification_id=None: notifications.append(notification_id)):
+        entry = make_entry()
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)  # returns at once, the import runs on
+        await hass.async_block_till_done(wait_background_tasks=False)
+
+        assert entry.state is config_entries.ConfigEntryState.LOADED
+        assert hass.states.get("button.ava_add_wet_diaper") is None  # no entities until the import works
+        assert len(notifications) == 1
+        assert await hass.config_entries.async_unload(entry.entry_id)  # cancels the retry
+        assert entry.entry_id not in hass.data[DOMAIN]
 
 
 async def test_migration_leaves_account_level_entities_alone(hass):

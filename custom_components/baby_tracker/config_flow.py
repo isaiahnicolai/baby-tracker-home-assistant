@@ -1,7 +1,5 @@
 """Config flow for Baby Tracker integration."""
-import functools
 import logging
-import os
 import uuid
 
 import voluptuous as vol
@@ -33,6 +31,7 @@ from .const import (
     DEFAULT_SLEEP_ASLEEP_STATES,
     DEFAULT_SLEEP_GAP_MINUTES,
     DEFAULT_SLEEP_MIN_MINUTES,
+    DEFAULT_TITLE,
     DEFAULT_UNIT_SYSTEM,
     DOMAIN,
     LOW_WET_THRESHOLD,
@@ -59,32 +58,6 @@ DATA_SCHEMA = vol.Schema(
         ),
     }
 )
-
-
-async def validate_input(hass: core.HomeAssistant, data):
-    """Validate the user input allows us to connect, and download the account's data."""
-    from .client import AuthenticationError, BabyTracker
-
-    db_path = os.path.join(hass.config.path(), "baby_tracker.db")
-    baby_tracker = BabyTracker(db_path=db_path, time_zone=hass.config.time_zone)
-
-    try:
-        # Sign in, join the group and fetch the seed database only. Replaying the
-        # account's history can take a while, so the first refresh does that once
-        # the entry exists, instead of this dialog appearing to hang.
-        result = await hass.async_add_executor_job(
-            functools.partial(baby_tracker.authenticate, data[CONF_EMAIL], data[CONF_PASSWORD],
-                              data[CONF_DEVICE_UUID], sync_history=False)
-        )
-    except AuthenticationError as err:
-        raise InvalidAuth(str(err)) from err
-
-    if result.get("status") != "success":
-        raise CannotConnect(result.get("message", "Authentication failed"))
-
-    babies = await hass.async_add_executor_job(baby_tracker.get_all_babies)
-    names = " & ".join(b.name for b in babies) or "Baby"
-    return {"title": f"Baby Tracker ({names})"}
 
 
 async def validate_login(hass: core.HomeAssistant, email, password, device_uuid):
@@ -124,8 +97,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # and keep that identity for the life of the entry
             user_input = {**user_input, CONF_DEVICE_UUID: str(uuid.uuid4())}
             try:
-                info = await validate_input(self.hass, user_input)
-                return self.async_create_entry(title=info["title"], data=user_input)
+                # Only the password is checked here. Joining the account and importing its
+                # history run in the background once the entry exists (see async_setup_entry),
+                # because Home Assistant keeps this dialog open until setup has finished.
+                await validate_login(self.hass, user_input[CONF_EMAIL], user_input[CONF_PASSWORD],
+                                     user_input[CONF_DEVICE_UUID])
+                return self.async_create_entry(title=DEFAULT_TITLE, data=user_input)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
