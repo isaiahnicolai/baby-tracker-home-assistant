@@ -2953,3 +2953,91 @@ async def test_options_flow_saves_the_tracked_activities_per_baby(hass, backend)
     result = await hass.config_entries.options.async_configure(result["flow_id"], {})
     await hass.async_block_till_done()
     assert "tracking" not in entry.options
+
+
+# ----- creating medicines and foods -----
+
+async def test_create_medicine_service_adds_it_to_the_medicine_select(hass, backend):
+    medicines = [dict(m) for m in MEDICINES]
+    calls = []
+
+    def create_medicine(self, name, amount_per_time=0.0, unit="", interval_hours=0, prescription=False):
+        calls.append((name, amount_per_time, unit, interval_hours, prescription))
+        medicines.append({"id": "MED-NEW", "name": name, "amount_per_time": amount_per_time, "unit": unit})
+        return {"status": "success", "objectID": "MED-NEW", "message": "Created the medicine"}
+
+    with patch(f"{CORE}.create_medicine", create_medicine), \
+         patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch_with_medicines(medicines)):
+        await setup(hass, make_entry())
+        assert "Zinc" not in hass.states.get("select.everly_medicine").attributes["options"]
+        await hass.services.async_call(
+            DOMAIN, "create_medicine",
+            {"name": "Zinc", "amount": 2.5, "unit": "ml", "interval_hours": 8, "prescription": True}, blocking=True)
+        await hass.async_block_till_done()
+        assert calls == [("Zinc", 2.5, "ml", 8, True)]
+        assert "Zinc" in hass.states.get("select.everly_medicine").attributes["options"]
+
+
+async def test_create_food_service(hass, backend):
+    calls = []
+
+    def create_food(self, name, is_bottle=False):
+        calls.append((name, is_bottle))
+        return {"status": "success", "objectID": "FOOD-NEW", "message": "Created the food"}
+
+    with patch(f"{CORE}.create_food", create_food):
+        await setup(hass, make_entry())
+        await hass.services.async_call(DOMAIN, "create_food", {"name": "Mango"}, blocking=True)
+        await hass.services.async_call(DOMAIN, "create_food", {"name": "Oat milk", "is_bottle": True}, blocking=True)
+    assert calls == [("Mango", False), ("Oat milk", True)]
+
+
+async def test_create_services_report_failure(hass, backend):
+    failed = {"status": "error", "message": "A medicine needs a name"}
+    with patch(f"{CORE}.create_medicine", lambda self, *a, **k: failed), \
+         patch(f"{CORE}.create_food", lambda self, *a, **k: failed):
+        await setup(hass, make_entry())
+        with pytest.raises(HomeAssistantError):
+            await hass.services.async_call(DOMAIN, "create_medicine", {"name": " "}, blocking=True)
+        with pytest.raises(HomeAssistantError):
+            await hass.services.async_call(DOMAIN, "create_food", {"name": " "}, blocking=True)
+
+
+async def test_log_medicine_and_add_solids_create_unknown_names_when_asked(hass, backend):
+    created = []
+
+    def create_medicine(self, name, amount_per_time=0.0, unit="", interval_hours=0, prescription=False):
+        created.append(("medicine", name, amount_per_time))
+        return {"status": "success", "objectID": "MED-NEW"}
+
+    def create_food(self, name, is_bottle=False):
+        created.append(("food", name))
+        return {"status": "success", "objectID": "FOOD-NEW"}
+
+    with patch(f"{CORE}.create_medicine", create_medicine), patch(f"{CORE}.create_food", create_food):
+        await setup(hass, make_entry())
+
+        # Without create, an unknown name is still refused
+        with pytest.raises(ServiceValidationError):
+            await hass.services.async_call(
+                DOMAIN, "log_medicine", {"baby_name": "Everly", "medicine_name": "Zinc", "amount": 2}, blocking=True)
+        assert created == []
+
+        await hass.services.async_call(
+            DOMAIN, "log_medicine",
+            {"baby_name": "Everly", "medicine_name": "Zinc", "amount": 2, "create": True}, blocking=True)
+        assert created[-1] == ("medicine", "Zinc", 2.0)
+        assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-NEW", 2.0)
+
+        await hass.services.async_call(
+            DOMAIN, "add_solids", {"baby_name": "Everly", "food_name": "Mango", "amount": 1, "create": True},
+            blocking=True)
+        assert created[-1] == ("food", "Mango")
+        assert backend[-1] == ("add_other_feed", "ID-EVERLY", "FOOD-NEW", 1.0, "", True)
+
+        # A known name is not created again
+        created.clear()
+        await hass.services.async_call(
+            DOMAIN, "add_solids", {"baby_name": "Everly", "food_name": "banana", "amount": 1, "create": True},
+            blocking=True)
+        assert created == []

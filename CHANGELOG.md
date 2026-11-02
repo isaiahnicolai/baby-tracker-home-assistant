@@ -90,6 +90,11 @@ app uses, and was tested against a real account with two babies.
 - **Undo and delete.** `undo_last` removes a baby's newest record and
   `delete_record` one by type and ID; the deletion reaches the phone on its
   next sync.
+- **New medicines and foods.** `create_medicine` (name, usual dose, unit,
+  hours between doses, prescription) and `create_food` add an entry to the
+  app's medicine and solids lists; an existing name is left alone. The new
+  medicine appears in the Medicine select. `log_medicine` and `add_solids`
+  take `create: true` to create an unknown name instead of failing.
 
 ### Sleep from another entity
 
@@ -134,7 +139,10 @@ app uses, and was tested against a real account with two babies.
   the wheel attached to each release, so other projects can use it too. The `babytracker` command has `babies`,
   `sync`, `devices`, `last`, `recent`, `next`, `insights`, `calendar`,
   `inventory`, `add-diaper`, `add-bottle`, `add-nursing`, `add-joy`,
-  `attach-photo`, `delete`, `undo`, `raw` and `logout`.
+  `attach-photo`, `create-medicine`, `create-food`, `delete`, `undo`, `raw`
+  and `logout`, and with no command opens an interactive shell (cmd2) with
+  the same commands, tab completion for commands, options and baby names,
+  a persistent history and `set baby` to pick a default baby.
 
 ### Project
 

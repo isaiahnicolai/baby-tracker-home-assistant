@@ -73,7 +73,8 @@ the account's history (a few seconds per few thousand records).
   `add_other_feed`, `log_sleep_event`, `log_pump`, `log_growth`,
   `add_temperature`, `add_medicine`, `log_bath`, `add_activity`,
   `log_milestone`, `log_vaccine`, `log_doctor_visit`, `add_joy`,
-  `attach_photo`, `delete_record`, `undo_last`.
+  `attach_photo`, `delete_record`, `undo_last`, and `create_medicine` and
+  `create_food` for the app's medicine and solids lists.
 
 Every write is stored locally first and uploaded by `sync` (a write syncs by
 itself when the server is reachable), so a script keeps working offline and
@@ -100,6 +101,8 @@ babytracker recent --baby Everly --limit 10
 babytracker delete Diaper <object-id> --yes
 babytracker undo --baby Everly --yes
 babytracker inventory
+babytracker create-medicine Tylenol --amount 2.5 --unit ml --interval 6
+babytracker create-food Banana
 babytracker devices
 babytracker raw <device-uuid> --since 100
 ```
@@ -108,6 +111,18 @@ Every command prints JSON. `--baby` is a baby's name and can be left out when
 the account has only one baby; `--offline` skips the sync that normally runs
 first. The CLI keeps its device ID and local database in `~/.babytracker`
 (`--state-dir` changes that).
+
+Run `babytracker` with no command for an **interactive shell** (built on [cmd2](https://cmd2.readthedocs.io/)): it signs in and syncs once, then takes the same commands with tab completion for commands, options and baby names, `help` and `help <command>`, a history kept between sessions (up and down arrows, `history`), and `set baby Everly` so `--baby` can be left out. In the shell the commands are spelled with underscores (`add_diaper wet`), and the hyphenated spellings work too.
+
+```
+$ babytracker
+Baby Tracker shell. Babies: Everly, Elijah.
+Type help for the commands, help <command> for its options, set baby <name> to pick a baby, quit to leave.
+babytracker> set baby Elijah
+babytracker> add_diaper wet
+babytracker> last feeding
+babytracker> quit
+```
 
 ## Links
 

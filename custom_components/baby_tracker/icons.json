@@ -105,6 +105,8 @@
     "log_sleep": {"service": "mdi:sleep"},
     "log_activity": {"service": "mdi:human-baby-changing-table"},
     "add_solids": {"service": "mdi:food-apple"},
+    "create_medicine": {"service": "mdi:pill-plus"},
+    "create_food": {"service": "mdi:food-apple-outline"},
     "undo_last": {"service": "mdi:undo"},
     "delete_record": {"service": "mdi:delete-outline"},
     "list_babies": {"service": "mdi:account-child"},

@@ -3,7 +3,6 @@ import json
 import shutil
 
 import pytest
-
 from babytracker_client.cli import main
 from helpers import EVERLY, TWIN
 
@@ -136,3 +135,75 @@ def test_inventory_counts_pumped_feeds_against_the_store(server, state_dir, caps
         "--type", "pumped")
     inventory = run(capsys, state_dir, "--offline", "inventory")
     assert inventory["fed_ml"] == pytest.approx(100, abs=0.1) and inventory["ml"] == pytest.approx(-100, abs=0.1)
+
+
+def test_create_medicine_and_food(server, state_dir, capsys):
+    result = run(capsys, state_dir, "create-medicine", "Tylenol", "--amount", "2.5", "--unit", "ml",
+                 "--interval", "6", "--prescription")
+    assert result["status"] == "success"
+    record = server.uploads[-1]["record"]
+    assert record["BCObjectType"] == "MedicationSelection" and record["name"] == "Tylenol"
+    assert record["amountPerTime"] == 2.5 and record["unit"] == "ml" and record["interval"] == 6
+    assert record["prescription"] is True
+    result = run(capsys, state_dir, "create-food", "Banana")
+    assert result["status"] == "success"
+    assert server.uploads[-1]["record"]["BCObjectType"] == "OtherFeedSelection"
+    assert server.uploads[-1]["record"]["bottle"] is False
+
+
+# ===== The interactive shell =====
+
+def shell(state_dir):
+    """A shell over the fake account, connected offline (no sync)."""
+    import argparse
+
+    from babytracker_client.cli import _connect, make_shell
+    args = argparse.Namespace(state_dir=str(state_dir), email=None, time_zone="America/Chicago", offline=True)
+    return make_shell(_connect(args), args)
+
+
+def test_shell_runs_the_same_commands(server, state_dir, capsys):
+    app = shell(state_dir)
+    app.onecmd_plus_hooks("babies")
+    assert sorted(b["name"] for b in json.loads(capsys.readouterr().out)) == ["Ann Marie", "Everly"]
+
+
+def test_shell_accepts_the_hyphenated_command_names(server, state_dir, capsys):
+    app = shell(state_dir)
+    app.onecmd_plus_hooks('add-diaper mixed --baby "ann marie"')
+    assert json.loads(capsys.readouterr().out)["status"] == "success"
+    assert server.uploads[-1]["record"]["baby"]["objectID"] == TWIN
+    assert server.uploads[-1]["record"]["status"] == 2
+
+
+def test_shell_set_baby_stands_in_for_the_option(server, state_dir, capsys):
+    app = shell(state_dir)
+    app.onecmd_plus_hooks("set baby Everly")
+    capsys.readouterr()
+    app.onecmd_plus_hooks("add_diaper wet")
+    assert json.loads(capsys.readouterr().out)["status"] == "success"
+    assert server.uploads[-1]["record"]["baby"]["objectID"] == EVERLY
+    assert app.baby_names() == ["Everly", "Ann Marie"] or sorted(app.baby_names()) == ["Ann Marie", "Everly"]
+
+
+def test_shell_reports_errors_without_leaving(server, state_dir, capsys):
+    app = shell(state_dir)
+    stop = app.onecmd_plus_hooks("last diaper --baby nobody")
+    captured = capsys.readouterr()
+    assert stop is False
+    assert "No baby named 'nobody'" in captured.err
+    stop = app.onecmd_plus_hooks("add_diaper wet")  # two babies, none chosen
+    assert stop is False
+    assert "--baby is required" in capsys.readouterr().err
+
+
+def test_shell_help_lists_the_commands_and_logout_leaves(server, state_dir, capsys):
+    app = shell(state_dir)
+    app.onecmd_plus_hooks("help")
+    out = capsys.readouterr().out
+    assert "add_diaper" in out and "insights" in out and "alias" not in out
+    assert "Baby Tracker" in out
+    app.onecmd_plus_hooks("help add-diaper")
+    assert "{wet,dirty,mixed,dry}" in capsys.readouterr().out
+    assert app.onecmd_plus_hooks("logout") is True
+    assert ("DELETE", "/session") in server.requests

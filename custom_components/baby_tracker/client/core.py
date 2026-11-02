@@ -1753,6 +1753,45 @@ class BabyTracker:
 
         return self.db.get_other_feed_selections()
 
+    def _create_selection(self, what, name, existing, post, **kwargs):
+        """Create a selection unless one of that name exists (case-insensitive); either way report its id."""
+        if not self.is_authenticated:
+            return {"status": "error", "message": "Not authenticated"}
+        name = (name or "").strip()
+        if not name:
+            return {"status": "error", "message": f"A {what} needs a name"}
+        try:
+            found = next((row for row in existing() if (row["name"] or "").strip().lower() == name.lower()), None)
+            if found:
+                return {"status": "success", "objectID": found["id"], "existing": True,
+                        "message": f"The {what} {found['name']} already existed"}
+            response = post(name=name, **kwargs)
+            return {**response, "existing": False, "message": f"Created the {what} {name}"}
+        except Exception as e:
+            _LOGGER.error(f"Failed to create {what}: {e}")
+            return {"status": "error", "message": f"Failed to create {what}: {e}"}
+
+    def create_medicine(self, name, amount_per_time=0.0, unit="", interval_hours=0, prescription=False):
+        """
+        Create a medicine (once: an existing one of that name, ignoring case, is returned as is).
+
+        Returns:
+            dict: {"status": "success", "objectID": <the medicine's id>, "message": ...}
+        """
+        return self._create_selection(
+            "medicine", name, self.get_medicine_selections, self.api.post_medicine_selection,
+            amount_per_time=amount_per_time, unit=unit, interval_hours=interval_hours, prescription=prescription)
+
+    def create_food(self, name, is_bottle=False):
+        """
+        Create a food for add_other_feed (once: an existing one of that name, ignoring case, is returned as is).
+
+        Returns:
+            dict: {"status": "success", "objectID": <the food's id>, "message": ...}
+        """
+        return self._create_selection(
+            "food", name, self.get_other_feed_selections, self.api.post_other_feed_selection, is_bottle=is_bottle)
+
     def add_other_feed(self, baby_id, time_str=None, feed_type_id=None, amount=0, unit="",
                        is_english_measure=True, note=""):
         """

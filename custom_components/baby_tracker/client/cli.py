@@ -13,12 +13,20 @@ Command line interface for the Baby Tracker sync client.
     babytracker next
     babytracker calendar --baby Everly --days 2
     babytracker inventory
+    babytracker create-medicine Tylenol --amount 2.5 --unit ml --interval 6
+    babytracker create-food Banana
     babytracker raw <device-uuid> --since 120
+    babytracker                         # an interactive shell with the same commands
 
 Every command prints JSON. Credentials come from BABYTRACKER_EMAIL / BABYTRACKER_PASSWORD or are asked
 for; the password is never stored. The CLI keeps its own device ID and local
 database in --state-dir (default ~/.babytracker), so it appears as its own
 device in the app, separate from Home Assistant.
+
+Run with no command (or `babytracker shell`) for an interactive shell built on
+cmd2: it signs in and syncs once, then runs the same commands with tab
+completion for commands, options and baby names, `help <command>`, a command
+history kept between sessions and `set baby <name>` so --baby can be left out.
 """
 import argparse
 import base64
@@ -104,8 +112,12 @@ def _json_default(value):
     return value.isoformat() if isinstance(value, datetime) else str(value)
 
 
+# Where _print writes: print, or the shell's own output while it runs a command
+_OUTPUT = [print]
+
+
 def _print(value):
-    print(json.dumps(value, indent=2, default=_json_default))
+    _OUTPUT[0](json.dumps(value, indent=2, default=_json_default))
 
 
 def cmd_babies(tracker, args):
@@ -155,6 +167,17 @@ def cmd_add_nursing(tracker, args):
     finish = args.finish_side or ("right" if args.right > 0 else "left")
     _print(tracker.add_nursing(_baby_id(tracker, args.baby), None, left_duration=args.left,
                                right_duration=args.right, finish_side=NURSING_SIDES[finish], note=args.note))
+
+
+def cmd_create_medicine(tracker, args):
+    """Add a medicine to the account's list (it shows up in the app and Home Assistant)."""
+    _print(tracker.create_medicine(args.name, amount_per_time=args.amount, unit=args.unit,
+                                   interval_hours=args.interval, prescription=args.prescription))
+
+
+def cmd_create_food(tracker, args):
+    """Add a food to the account's solids list."""
+    _print(tracker.create_food(args.name, is_bottle=args.bottle))
 
 
 def cmd_recent(tracker, args):
@@ -256,89 +279,10 @@ def main(argv=None):
     parser.add_argument("--time-zone", default=os.environ.get("TZ"),
                         help="IANA zone for records you add, e.g. America/Chicago (default: host zone)")
     parser.add_argument("--offline", action="store_true", help="don't sync before running the command")
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    sub.add_parser("babies", help="list babies").set_defaults(func=cmd_babies)
-    sub.add_parser("sync", help="download new records and upload queued ones").set_defaults(func=cmd_sync)
-    sub.add_parser("devices", help="list devices registered on the account").set_defaults(func=cmd_devices)
-    sub.add_parser("logout", help="end the session on the server").set_defaults(func=cmd_logout)
-
-    last = sub.add_parser("last", help="show the most recent record of a kind")
-    last.add_argument("kind", choices=sorted(LAST))
-    last.add_argument("--baby")
-    last.set_defaults(func=cmd_last)
-
-    diaper = sub.add_parser("add-diaper", help="log a diaper")
-    diaper.add_argument("kind", choices=list(DIAPER_KINDS))
-    diaper.add_argument("--baby")
-    diaper.add_argument("--note", default="")
-    diaper.set_defaults(func=cmd_add_diaper)
-
-    joy = sub.add_parser("add-joy", help="log a joy, optionally with a photo")
-    joy.add_argument("--baby")
-    joy.add_argument("--note", default="")
-    joy.add_argument("--photo", help="an image file to attach (needs Pillow)")
-    joy.set_defaults(func=cmd_add_joy)
-
-    attach = sub.add_parser("attach-photo", help="add a photo to an existing entry")
-    attach.add_argument("object_type", help="the entry's type as `recent` shows it, e.g. Diaper")
-    attach.add_argument("object_id")
-    attach.add_argument("path", help="an image file (needs Pillow)")
-    attach.set_defaults(func=cmd_attach_photo)
-
-    bottle = sub.add_parser("add-bottle", help="log a bottle feed")
-    bottle.add_argument("--baby")
-    bottle.add_argument("--amount", type=_positive_number, required=True)
-    bottle.add_argument("--unit", choices=["oz", "ml"], default="oz", help="unit of --amount (default: oz)")
-    bottle.add_argument("--type", choices=["formula", "pumped"], default="formula",
-                        help="what was in the bottle (default: formula)")
-    bottle.add_argument("--note", default="")
-    bottle.set_defaults(func=cmd_add_bottle)
-
-    nursing = sub.add_parser("add-nursing", help="log a nursing session")
-    nursing.add_argument("--baby")
-    nursing.add_argument("--left", type=int, default=0, metavar="MIN", help="minutes on the left side")
-    nursing.add_argument("--right", type=int, default=0, metavar="MIN", help="minutes on the right side")
-    nursing.add_argument("--finish-side", choices=list(NURSING_SIDES),
-                         help="side the session ended on (default: right if --right is given, else left)")
-    nursing.add_argument("--note", default="")
-    nursing.set_defaults(func=cmd_add_nursing)
-
-    recent = sub.add_parser("recent", help="a baby's newest records, with the IDs `delete` takes")
-    recent.add_argument("--baby")
-    recent.add_argument("--limit", type=int, default=10, help="how many to show (default: 10)")
-    recent.set_defaults(func=cmd_recent)
-
-    delete = sub.add_parser("delete", help="delete a record on every device")
-    delete.add_argument("object_type", help="the record's type as `recent` shows it, e.g. Diaper")
-    delete.add_argument("object_id")
-    delete.add_argument("--yes", action="store_true", help="confirm the delete")
-    delete.set_defaults(func=cmd_delete)
-
-    undo = sub.add_parser("undo", help="delete a baby's newest record")
-    undo.add_argument("--baby")
-    undo.add_argument("--hours", type=float, default=24, help="ignore records older than this (default: 24)")
-    undo.add_argument("--yes", action="store_true", help="delete it (without, only shows what would go)")
-    undo.set_defaults(func=cmd_undo)
-
-    insights = sub.add_parser("insights", help="age, next feed and sleep, intake, diapers and growth percentiles")
-    insights.add_argument("--baby", help="one baby (default: every baby)")
-    insights.set_defaults(func=cmd_insights)
-
-    sub.add_parser("next", help="each baby's predicted next feed and who is due first").set_defaults(func=cmd_next)
-
-    calendar = sub.add_parser("calendar", help="a baby's feeds, sleeps, baths, visits and medicines")
-    calendar.add_argument("--baby")
-    calendar.add_argument("--days", type=int, default=1, help="how many days back to show (default: 1)")
-    calendar.set_defaults(func=cmd_calendar)
-
-    sub.add_parser("inventory", help="pumped milk in store").set_defaults(func=cmd_inventory)
-
-    raw = sub.add_parser("raw", help="print a device's raw transactions from the server")
-    raw.add_argument("device", help="device UUID (see `devices`)")
-    raw.add_argument("--since", type=int, default=0, help="only transactions after this SyncID")
-    raw.add_argument("--limit", type=int, default=20)
-    raw.set_defaults(func=cmd_raw)
+    sub = parser.add_subparsers(dest="command")
+    for command in COMMANDS:
+        command.add_to(sub)
+    sub.add_parser("shell", help="an interactive shell with these commands (the default with no command)")
 
     args = parser.parse_args(argv)
     if args.command == "logout":
@@ -346,10 +290,235 @@ def main(argv=None):
     try:
         tracker = _connect(args)
     except AuthenticationError as err:
-        raise SystemExit(f"Login rejected: {err}")
+        raise SystemExit(f"Login rejected: {err}") from None
     except AccountResetError as err:
-        raise SystemExit(f"{err}\nDelete the state directory ({args.state_dir}) to start over.")
-    args.func(tracker, args)
+        raise SystemExit(f"{err}\nDelete the state directory ({args.state_dir}) to start over.") from None
+    if args.command in (None, "shell"):
+        make_shell(tracker, args).cmdloop()
+    else:
+        args.func(tracker, args)
+
+
+# ===== The command table, shared by the command line and the shell =====
+
+class Command:
+    """One subcommand: its name, help, how to add its arguments to a parser, and what runs."""
+
+    def __init__(self, name, help, func, configure=None):
+        self.name = name
+        self.help = help
+        self.func = func
+        self.configure = configure or (lambda parser: None)
+
+    def add_to(self, subparsers):
+        parser = subparsers.add_parser(self.name, help=self.help)
+        self.configure(parser)
+        parser.set_defaults(func=self.func)
+        return parser
+
+
+def _last_args(p):
+    p.add_argument("kind", choices=sorted(LAST))
+    p.add_argument("--baby")
+
+
+def _diaper_args(p):
+    p.add_argument("kind", choices=list(DIAPER_KINDS))
+    p.add_argument("--baby")
+    p.add_argument("--note", default="")
+
+
+def _joy_args(p):
+    p.add_argument("--baby")
+    p.add_argument("--note", default="")
+    p.add_argument("--photo", help="an image file to attach (needs Pillow)")
+
+
+def _attach_args(p):
+    p.add_argument("object_type", help="the entry's type as `recent` shows it, e.g. Diaper")
+    p.add_argument("object_id")
+    p.add_argument("path", help="an image file (needs Pillow)")
+
+
+def _bottle_args(p):
+    p.add_argument("--baby")
+    p.add_argument("--amount", type=_positive_number, required=True)
+    p.add_argument("--unit", choices=["oz", "ml"], default="oz", help="unit of --amount (default: oz)")
+    p.add_argument("--type", choices=["formula", "pumped"], default="formula",
+                   help="what was in the bottle (default: formula)")
+    p.add_argument("--note", default="")
+
+
+def _nursing_args(p):
+    p.add_argument("--baby")
+    p.add_argument("--left", type=int, default=0, metavar="MIN", help="minutes on the left side")
+    p.add_argument("--right", type=int, default=0, metavar="MIN", help="minutes on the right side")
+    p.add_argument("--finish-side", choices=list(NURSING_SIDES),
+                   help="side the session ended on (default: right if --right is given, else left)")
+    p.add_argument("--note", default="")
+
+
+def _create_medicine_args(p):
+    p.add_argument("name", help="the medicine's name, e.g. Tylenol")
+    p.add_argument("--amount", type=float, default=0, help="usual dose per time (default: none)")
+    p.add_argument("--unit", default="", help="the dose's unit, e.g. ml, mg or drops")
+    p.add_argument("--interval", type=int, default=0, metavar="HOURS", help="hours between doses (default: none)")
+    p.add_argument("--prescription", action="store_true", help="it is a prescription medicine")
+
+
+def _create_food_args(p):
+    p.add_argument("name", help="the food's name, e.g. Banana")
+    p.add_argument("--bottle", action="store_true", help="it is given from a bottle")
+
+
+def _recent_args(p):
+    p.add_argument("--baby")
+    p.add_argument("--limit", type=int, default=10, help="how many to show (default: 10)")
+
+
+def _delete_args(p):
+    p.add_argument("object_type", help="the record's type as `recent` shows it, e.g. Diaper")
+    p.add_argument("object_id")
+    p.add_argument("--yes", action="store_true", help="confirm the delete")
+
+
+def _undo_args(p):
+    p.add_argument("--baby")
+    p.add_argument("--hours", type=float, default=24, help="ignore records older than this (default: 24)")
+    p.add_argument("--yes", action="store_true", help="delete it (without, only shows what would go)")
+
+
+def _insights_args(p):
+    p.add_argument("--baby", help="one baby (default: every baby)")
+
+
+def _calendar_args(p):
+    p.add_argument("--baby")
+    p.add_argument("--days", type=int, default=1, help="how many days back to show (default: 1)")
+
+
+def _raw_args(p):
+    p.add_argument("device", help="device UUID (see `devices`)")
+    p.add_argument("--since", type=int, default=0, help="only transactions after this SyncID")
+    p.add_argument("--limit", type=int, default=20)
+
+
+COMMANDS = [
+    Command("babies", "list babies", cmd_babies),
+    Command("sync", "download new records and upload queued ones", cmd_sync),
+    Command("devices", "list devices registered on the account", cmd_devices),
+    Command("logout", "end the session on the server", cmd_logout),
+    Command("last", "show the most recent record of a kind", cmd_last, _last_args),
+    Command("add-diaper", "log a diaper", cmd_add_diaper, _diaper_args),
+    Command("add-joy", "log a joy, optionally with a photo", cmd_add_joy, _joy_args),
+    Command("attach-photo", "add a photo to an existing entry", cmd_attach_photo, _attach_args),
+    Command("add-bottle", "log a bottle feed", cmd_add_bottle, _bottle_args),
+    Command("add-nursing", "log a nursing session", cmd_add_nursing, _nursing_args),
+    Command("create-medicine", "add a medicine to the account's list", cmd_create_medicine, _create_medicine_args),
+    Command("create-food", "add a food to the account's solids list", cmd_create_food, _create_food_args),
+    Command("recent", "a baby's newest records, with the IDs `delete` takes", cmd_recent, _recent_args),
+    Command("delete", "delete a record on every device", cmd_delete, _delete_args),
+    Command("undo", "delete a baby's newest record", cmd_undo, _undo_args),
+    Command("insights", "age, next feed and sleep, intake, diapers and growth percentiles", cmd_insights,
+            _insights_args),
+    Command("next", "each baby's predicted next feed and who is due first", cmd_next),
+    Command("calendar", "a baby's feeds, sleeps, baths, visits and medicines", cmd_calendar, _calendar_args),
+    Command("inventory", "pumped milk in store", cmd_inventory),
+    Command("raw", "print a device's raw transactions from the server", cmd_raw, _raw_args),
+]
+
+
+# ===== The interactive shell =====
+
+def make_shell(tracker, args):
+    """A cmd2 shell over a connected tracker: the same commands, with completion and history."""
+    import cmd2
+    import cmd2.plugin  # noqa: F401 - the hook type hint below needs it
+
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
+
+    class Shell(cmd2.Cmd):
+        """Baby Tracker shell."""
+
+        def __init__(self):
+            super().__init__(allow_cli_args=False,
+                             persistent_history_file=os.path.join(args.state_dir, "history"))
+            self.tracker = tracker
+            self.prompt = "babytracker> "
+            self.default_category = "Shell"
+            self.register_postparsing_hook(self._help_through_aliases)
+            self.baby = ""
+            self.add_settable(cmd2.Settable("baby", str, "baby that commands act on when --baby is not given",
+                                            self, choices_provider=Shell.baby_names))
+            # cmd2's own commands that don't suit a sync client
+            self.hidden_commands.extend(["alias", "macro", "edit", "run_pyscript", "run_script", "shell",
+                                         "shortcuts"])
+            # The hyphenated command names from the command line work here too
+            for command in COMMANDS:
+                if "-" in command.name:
+                    self.aliases[command.name] = command.name.replace("-", "_")
+            names = ", ".join(b.name for b in tracker.get_all_babies())
+            self.intro = (f"Baby Tracker shell. Babies: {names}.\n"
+                          "Type help for the commands, help <command> for its options, "
+                          "set baby <name> to pick a baby, quit to leave.")
+
+        def baby_names(self):
+            return [b.name for b in self.tracker.get_all_babies()]
+
+        def _help_through_aliases(self, data: cmd2.plugin.PostparsingData) -> cmd2.plugin.PostparsingData:
+            """`help add-diaper` finds add_diaper (help doesn't look through aliases itself)."""
+            statement = data.statement
+            if statement.command == "help" and "-" in statement.args:
+                data.statement = self.statement_parser.parse("help " + statement.args.replace("-", "_"))
+            return data
+
+        def run(self, func, ns):
+            """Run a command function, keeping errors inside the shell."""
+            if getattr(ns, "baby", None) is None and self.baby and hasattr(ns, "baby"):
+                ns.baby = self.baby
+            ns.state_dir = args.state_dir
+            ns.time_zone = args.time_zone
+            ns.offline = True
+            _OUTPUT[0] = self.poutput
+            try:
+                func(self.tracker, ns)
+            except SystemExit as err:  # the command functions report problems with SystemExit
+                if err.code not in (None, 0):
+                    self.perror(str(err.code))
+            except (AuthenticationError, AccountResetError) as err:
+                self.perror(f"{err}")
+            except Exception as err:  # noqa: BLE001 - a shell must survive any command failure
+                self.perror(f"{type(err).__name__}: {err}")
+            finally:
+                _OUTPUT[0] = print
+
+    for command in COMMANDS:
+        setattr(Shell, f"do_{command.name.replace('-', '_')}", _shell_command(command, Shell))
+    return Shell()
+
+
+def _shell_command(command, shell_class):
+    """A do_<name> method for the shell from a Command, with baby-name completion."""
+    import cmd2
+
+    parser = cmd2.Cmd2ArgumentParser(prog=command.name, description=command.help)
+    command.configure(parser)
+    for action in parser._actions:
+        if action.dest == "baby":
+            action.set_choices_provider(shell_class.baby_names)
+
+    def do(self, ns):
+        self.run(command.func, ns)
+        if command.name == "logout":
+            return True  # the session is over; leave the shell
+
+    # cmd2 files the parser under the command name it takes from the function's name
+    do.__name__ = do.__qualname__ = f"do_{command.name.replace('-', '_')}"
+    do.__doc__ = command.help
+    cmd2.categorize(do, "Baby Tracker")
+    return cmd2.with_argparser(parser)(do)
 
 
 if __name__ == "__main__":

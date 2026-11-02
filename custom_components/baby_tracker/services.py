@@ -1,6 +1,7 @@
 """Services for Baby Tracker integration."""
 import contextlib
 import logging
+from functools import partial
 import os
 import uuid
 
@@ -105,7 +106,21 @@ MEDICINE_SCHEMA = vol.Schema({
     **RECORD_FIELDS,
     vol.Required("medicine_name"): cv.string,
     vol.Required("amount"): vol.All(vol.Coerce(float), vol.Range(min=0)),
+    vol.Optional("create", default=False): cv.boolean,  # create the medicine when the account has none of that name
     vol.Optional("note", default=""): cv.string,
+})
+
+CREATE_MEDICINE_SCHEMA = vol.Schema({
+    vol.Required("name"): cv.string,
+    vol.Optional("amount", default=0): vol.All(vol.Coerce(float), vol.Range(min=0)),  # the usual dose per time
+    vol.Optional("unit", default=""): cv.string,
+    vol.Optional("interval_hours", default=0): vol.All(vol.Coerce(int), vol.Range(min=0)),
+    vol.Optional("prescription", default=False): cv.boolean,
+})
+
+CREATE_FOOD_SCHEMA = vol.Schema({
+    vol.Required("name"): cv.string,
+    vol.Optional("is_bottle", default=False): cv.boolean,
 })
 
 SLEEP_SCHEMA = vol.Schema({
@@ -159,6 +174,7 @@ SOLIDS_SCHEMA = vol.Schema({
     vol.Required("amount"): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional("unit", default=""): cv.string,  # e.g. "tbsp"
     vol.Optional("is_english_measure"): cv.boolean,  # defaults to the integration's unit setting
+    vol.Optional("create", default=False): cv.boolean,  # create the food when the account has none of that name
     vol.Optional("note", default=""): cv.string,
 })
 
@@ -652,6 +668,13 @@ async def async_register_services(hass: HomeAssistant):
                 med_id = med.get("id")
                 break
 
+        if not med_id and data.get("create"):
+            created = await hass.async_add_executor_job(
+                partial(coordinator.baby_tracker.create_medicine, medicine_name,
+                        amount_per_time=data.get("amount") or 0))
+            _check(created, "create medicine")
+            med_id = created.get("objectID")
+
         if not med_id:
             raise ServiceValidationError(
                 translation_domain=DOMAIN, translation_key="medicine_not_found",
@@ -670,6 +693,30 @@ async def async_register_services(hass: HomeAssistant):
         _check(result, "log medicine")
 
         _LOGGER.info(f"Logged medicine: {medicine_name}, amount={data.get('amount')}")
+        await coordinator.async_request_refresh()
+
+    async def create_medicine(call: ServiceCall):
+        """Create a medicine, which then shows up in the Medicine select and can be logged."""
+        data = call.data
+        coordinator = _get_coordinator(hass)
+        result = await hass.async_add_executor_job(
+            partial(coordinator.baby_tracker.create_medicine, data["name"],
+                    amount_per_time=data.get("amount", 0), unit=data.get("unit", ""),
+                    interval_hours=data.get("interval_hours", 0), prescription=data.get("prescription", False)))
+        _check(result, "create medicine")
+
+        _LOGGER.info(f"Created medicine: {data['name']} ({result.get('message')})")
+        await coordinator.async_request_refresh()
+
+    async def create_food(call: ServiceCall):
+        """Create a food for add_solids."""
+        data = call.data
+        coordinator = _get_coordinator(hass)
+        result = await hass.async_add_executor_job(
+            partial(coordinator.baby_tracker.create_food, data["name"], is_bottle=data.get("is_bottle", False)))
+        _check(result, "create food")
+
+        _LOGGER.info(f"Created food: {data['name']} ({result.get('message')})")
         await coordinator.async_request_refresh()
 
     async def log_sleep(call: ServiceCall):
@@ -844,6 +891,10 @@ async def async_register_services(hass: HomeAssistant):
         food_name = data.get("food_name")
         foods = await hass.async_add_executor_job(coordinator.baby_tracker.get_other_feed_selections)
         feed_type_id = next((food["id"] for food in foods if food["name"].lower() == food_name.lower()), None)
+        if not feed_type_id and data.get("create"):
+            created = await hass.async_add_executor_job(coordinator.baby_tracker.create_food, food_name)
+            _check(created, "create food")
+            feed_type_id = created.get("objectID")
         if not feed_type_id:
             raise ServiceValidationError(
                 translation_domain=DOMAIN, translation_key="food_not_found",
@@ -1048,6 +1099,12 @@ async def async_register_services(hass: HomeAssistant):
         DOMAIN, "log_medicine", log_medicine, schema=MEDICINE_SCHEMA
     )
     hass.services.async_register(
+        DOMAIN, "create_medicine", create_medicine, schema=CREATE_MEDICINE_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "create_food", create_food, schema=CREATE_FOOD_SCHEMA
+    )
+    hass.services.async_register(
         DOMAIN, "log_sleep", log_sleep, schema=SLEEP_SCHEMA
     )
     hass.services.async_register(
@@ -1225,6 +1282,8 @@ async def async_unregister_services(hass: HomeAssistant):
         "log_bath",
         "log_pump",
         "log_medicine",
+        "create_medicine",
+        "create_food",
         "log_sleep",
         "log_growth",
         "log_milestone",

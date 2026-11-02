@@ -111,11 +111,25 @@ babytracker recent --baby Everly --limit 10 # newest records, with the type and 
 babytracker delete Diaper <object-id> --yes # delete a record on every device
 babytracker undo --baby Everly --yes        # delete the newest record from the last day
 babytracker inventory                       # pumped milk in store
+babytracker create-medicine Tylenol --amount 2.5 --unit ml --interval 6   # add a medicine to the app's list
+babytracker create-food Banana                                           # add a food to the solids list
 babytracker devices
 babytracker raw <device-uuid> --since 100   # decoded records exactly as the server sends them
 ```
 
 Every command prints JSON. `--baby` is a baby's name and can be left out when the account has only one baby; `--offline` skips the sync that normally runs first.
+
+Run `babytracker` with no command for an **interactive shell** (built on [cmd2](https://cmd2.readthedocs.io/)): it signs in and syncs once, then takes the same commands with tab completion for commands, options and baby names, `help` and `help <command>`, a history kept between sessions (up and down arrows, `history`), and `set baby Everly` so `--baby` can be left out. In the shell the commands are spelled with underscores (`add_diaper wet`), and the hyphenated spellings work too.
+
+```
+$ babytracker
+Baby Tracker shell. Babies: Everly, Elijah.
+Type help for the commands, help <command> for its options, set baby <name> to pick a baby, quit to leave.
+babytracker> set baby Elijah
+babytracker> add_diaper wet
+babytracker> last feeding
+babytracker> quit
+```
 
 Each client registers as its own device in the app. The CLI keeps its device ID and local database in `~/.babytracker`, separate from Home Assistant's.
 
@@ -596,8 +610,23 @@ data:
   baby_name: "Your Baby Name" # Optional
   medicine_name: "Vitamin D" # Must match a medicine in your Baby Tracker app
   amount: 1.0
+  create: false # Optional: true creates the medicine first if the app has none of that name (its usual dose is set to the amount)
   note: "Optional note"
 ```
+
+#### Create Medicine
+
+```yaml
+service: baby_tracker.create_medicine
+data:
+  name: "Vitamin D"
+  amount: 1.0 # Optional: the usual dose each time
+  unit: "ml" # Optional, for example ml, mg or drops
+  interval_hours: 24 # Optional: hours between doses (0 for none)
+  prescription: false # Optional
+```
+
+Adds a medicine to your account (it is not tied to a baby), and it syncs to the app. It does nothing if a medicine of that name already exists. A medicine created this way shows up in each baby's **Medicine** select, ready for Give Medicine, once Home Assistant refreshes.
 
 #### Log Growth Measurement
 
@@ -674,8 +703,20 @@ data:
   amount: 2
   unit: "tbsp" # Optional
   is_english_measure: true # Optional (default: follows the Units setting)
+  create: false # Optional: true creates the food first if the app's solids list has none of that name
   note: "First taste"
 ```
+
+#### Create Food
+
+```yaml
+service: baby_tracker.create_food
+data:
+  name: "Mango"
+  is_bottle: false # Optional: for a drink given from a bottle
+```
+
+Adds a food to the app's solids list. It does nothing if a food of that name already exists.
 
 ### Utility Services
 
