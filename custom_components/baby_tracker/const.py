@@ -25,6 +25,27 @@ CONF_NIGHT_END_HOUR = "night_end_hour"
 CONF_FEVER_THRESHOLD = "fever_threshold"  # in the entry's temperature unit (F or C)
 DEFAULT_FEEDING_OVERDUE_HOURS = 0
 
+# Sleep recorded from another entity (a Snoo, an Owlet, a bed sensor...). The option is
+# {baby_id: {sleep_source_entity, sleep_source_asleep_states, sleep_gap_minutes, sleep_min_minutes}}
+CONF_SLEEP_SOURCES = "sleep_sources"
+CONF_SLEEP_SOURCE_ENTITY = "sleep_source_entity"
+CONF_SLEEP_SOURCE_ASLEEP_STATES = "sleep_source_asleep_states"
+CONF_SLEEP_GAP_MINUTES = "sleep_gap_minutes"  # a wake shorter than this does not end the sleep
+CONF_SLEEP_MIN_MINUTES = "sleep_min_minutes"  # a sleep shorter than this is never logged
+DEFAULT_SLEEP_ASLEEP_STATES = ["on", "asleep", "sleeping"]
+DEFAULT_SLEEP_GAP_MINUTES = 10
+DEFAULT_SLEEP_MIN_MINUTES = 5
+SLEEP_SOURCE_STORE_VERSION = 1
+
+# Quiet mode: a baby who is no longer logged for an activity stops getting alerts and predictions
+# for it. The option is {baby_id: "auto" | [group, ...]}; "auto" works it out from the records.
+CONF_TRACKING = "tracking"
+CONF_TRACKED_ACTIVITIES = "tracked_activities"  # the options flow field, per baby
+TRACKING_AUTO = "auto"
+TRACKING_WINDOW_DAYS = 14  # an activity logged within this long (or a baby this young) counts as tracked
+TRACKING_GROUPS = ("feeds", "diapers", "sleep", "pumping", "medicine", "growth", "temperature")
+REASON_NOT_TRACKED = "not_tracked"
+
 # Sensor types
 SENSOR_TYPE_LAST_FEEDING = "last_feeding"
 SENSOR_TYPE_LAST_DIAPER = "last_diaper"
@@ -191,6 +212,8 @@ DELETABLE_RECORD_TYPES = [
     "Diaper", "Nursing", "Formula", "Pumped", "OtherFeed", "Sleep", "Temperature", "Medication", "Bath",
     "Growth", "Milestone", "Vaccine", "OtherActivity", "Joy", "Journal", "DoctorVisit",
 ]
+# Records the attach_photo service takes: the deletable ones that are synced (doctor visits are kept here only)
+ATTACHABLE_RECORD_TYPES = [record_type for record_type in DELETABLE_RECORD_TYPES if record_type != "DoctorVisit"]
 UNDO_WINDOW_HOURS = 24
 RECENT_RECORDS_LIMIT = 10  # how many records the Recent Entries sensor lists
 NOTHING_TO_UNDO = "Nothing to undo"  # what the client's undo_last reports when there is no record in the window

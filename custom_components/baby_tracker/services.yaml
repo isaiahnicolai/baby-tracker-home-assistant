@@ -601,6 +601,100 @@ delete_record:
       selector:
         text:
 
+log_joy:
+  fields:
+    baby_name:
+      required: false
+      selector:
+        text:
+    device_id:
+      required: false
+      selector:
+        device:
+          filter:
+            - integration: baby_tracker
+    note:
+      required: false
+      example: "First smile"
+      selector:
+        text:
+    time:
+      required: false
+      selector:
+        datetime:
+    photo:
+      required: false
+      example: "/config/baby_tracker/snapshots/first-smile.jpg"
+      selector:
+        text:
+    image_entity:
+      required: false
+      selector:
+        entity:
+          filter:
+            - domain: image
+    camera_entity:
+      required: false
+      selector:
+        entity:
+          filter:
+            - domain: camera
+
+attach_photo:
+  fields:
+    baby_name:
+      required: false
+      selector:
+        text:
+    device_id:
+      required: false
+      selector:
+        device:
+          filter:
+            - integration: baby_tracker
+    object_type:
+      required: true
+      example: "Diaper"
+      selector:
+        select:
+          options:
+            - "Diaper"
+            - "Nursing"
+            - "Formula"
+            - "Pumped"
+            - "OtherFeed"
+            - "Sleep"
+            - "Temperature"
+            - "Medication"
+            - "Bath"
+            - "Growth"
+            - "Milestone"
+            - "Vaccine"
+            - "OtherActivity"
+            - "Joy"
+            - "Journal"
+    object_id:
+      required: true
+      selector:
+        text:
+    photo:
+      required: false
+      example: "/config/baby_tracker/snapshots/first-smile.jpg"
+      selector:
+        text:
+    image_entity:
+      required: false
+      selector:
+        entity:
+          filter:
+            - domain: image
+    camera_entity:
+      required: false
+      selector:
+        entity:
+          filter:
+            - domain: camera
+
 list_babies:
   fields: {}
 

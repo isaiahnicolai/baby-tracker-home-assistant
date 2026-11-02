@@ -40,6 +40,7 @@ from .const import (
     NURSING_TIMER_MAX_AGE_HOURS,
     PHOTO_DIR_NAME,
     RECENT_RECORDS_LIMIT,
+    SLEEP_SOURCE_STORE_VERSION,
     UPLOADS_PENDING_REFRESHES,
     activity_signal,
     control_signal,
@@ -47,6 +48,8 @@ from .const import (
 from .entity import migrate_to_baby_ids, remove_retired_entities
 from .sentences import async_check_sentences
 from .services import async_register_services, async_unregister_services
+from .sleep_source import SleepSourceManager
+from .tracking import resolve_tracking
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -110,6 +113,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
+    # Sleep taken from another entity (a Snoo, an Owlet...) is logged as it happens
+    sleep_source = SleepSourceManager(hass, coordinator, entry)
+    if sleep_source.sources:
+        coordinator.sleep_source = sleep_source
+        await sleep_source.async_start()
+        entry.async_on_unload(sleep_source.async_stop)
+
     # Voice control needs a sentence file with the babies' names in the config directory (a repair installs it)
     await async_check_sentences(hass, coordinator)
 
@@ -172,6 +182,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry):
     db_path = os.path.join(hass.config.path(), "baby_tracker.db")
     await hass.async_add_executor_job(_remove_database, db_path)
     await Store(hass, NURSING_STORE_VERSION, f"{DOMAIN}.{entry.entry_id}.nursing").async_remove()
+    await Store(hass, SLEEP_SOURCE_STORE_VERSION, f"{DOMAIN}.{entry.entry_id}.sleep_source").async_remove()
     for issue_id in (ISSUE_OLD_WWW_FOLDER, ISSUE_UPLOADS_PENDING, ISSUE_ACCOUNT_RESET, ISSUE_CUSTOM_SENTENCES):
         ir.async_delete_issue(hass, DOMAIN, issue_id)
 
@@ -245,6 +256,7 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
         # restart or reload doesn't lose a session in progress)
         self.nursing_timers = {}
         self._nursing_store = Store(hass, NURSING_STORE_VERSION, f"{DOMAIN}.{entry.entry_id}.nursing")
+        self.sleep_source = None  # SleepSourceManager, when a baby's sleep is taken from another entity
         self._button_presses = {}  # when each button last finished successfully (monotonic seconds)
         self._pressing = set()  # buttons being handled right now
         _LOGGER.info(f"Initialized Baby Tracker coordinator with database at: {db_path}")
@@ -544,6 +556,8 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 "latest_picture": self._derived("Latest picture", None, tracker.get_latest_picture, baby_id),
                 "pictures": self._derived("Recent pictures", [], tracker.get_pictures, baby_id, 10),
             }
+            baby_data[baby.name]["tracking"], baby_data[baby.name]["tracking_mode"] = resolve_tracking(
+                self.config_entry.options, baby, baby_data[baby.name], now)
 
         account = {
             "pumped_milk_inventory": self._derived("Milk inventory", None, tracker.get_pumped_milk_inventory),

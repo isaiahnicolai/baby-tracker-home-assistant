@@ -3519,6 +3519,52 @@ class BabyTrackerLocalDatabase:
         finally:
             conn.close()
 
+    # ----- photos waiting to be uploaded (PhotoList) -----
+
+    def add_photo_upload(self, path: str) -> None:
+        """Queue a picture file (by path, as the app does) for upload."""
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            self._ensure_sync_tables(cursor)
+            cursor.execute('INSERT OR IGNORE INTO PhotoList (PhotoFile) VALUES (?)', (path,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_photo_uploads(self) -> List[str]:
+        """Paths of the picture files still to upload, in the order they were queued."""
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            self._ensure_sync_tables(cursor)
+            return [row[0] for row in cursor.execute('SELECT PhotoFile FROM PhotoList ORDER BY rowid')]
+        finally:
+            conn.close()
+
+    def finish_photo_upload(self, path: str) -> None:
+        """Take a file off the upload queue (uploaded, or gone)."""
+        conn = self._connect()
+        try:
+            conn.execute('DELETE FROM PhotoList WHERE PhotoFile = ?', (path,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_activity_pictures(self, activity_id: str) -> List[Dict]:
+        """An activity's stored pictures as {ID, Timestamp, Type, FileName}, oldest first."""
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            if not self._table_exists(cursor, "Picture"):
+                return []
+            cursor.execute('SELECT ID, Timestamp, Type, FileName FROM Picture WHERE ActivityID = ? '
+                           'ORDER BY Timestamp, rowid', (activity_id,))
+            return [{"ID": r[0], "Timestamp": r[1], "Type": r[2] or 0, "FileName": r[3]}
+                    for r in cursor.fetchall()]
+        finally:
+            conn.close()
+
     def get_record_wire(self, object_type: str, object_id: str, tz_offset: int = 0) -> Optional[Dict]:
         """
         A stored record (anything but a baby or selection) as the apps send it,

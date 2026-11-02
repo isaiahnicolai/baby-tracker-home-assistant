@@ -1,5 +1,6 @@
 """The integration inside Home Assistant: setup, entity migration, services, and config flows."""
 import os
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -216,10 +217,20 @@ def backend():
         calls.append(("delete_record", object_type, object_id))
         return {"status": "success", "object_type": object_type, "object_id": object_id, "queued": True}
 
+    def add_joy(self, baby_id, note="", time_str=None, photo_path=None, picture_dir=None):
+        calls.append(("add_joy", baby_id, note, time_str, photo_path, picture_dir))
+        return {"status": "success", "objectID": "JOY-1", "queued": False}
+
+    def attach_photo(self, object_type, object_id, photo_path, picture_dir=None):
+        calls.append(("attach_photo", object_type, object_id, photo_path, picture_dir))
+        return {"status": "success", "objectID": object_id, "pictureID": "PIC-1", "queued": False}
+
     with patch(f"{CORE}.authenticate", return_value={"status": "success"}), \
          patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fake_fetch), \
          patch(f"{CORE}.undo_last", undo_last), \
          patch(f"{CORE}.delete_record", delete_record), \
+         patch(f"{CORE}.add_joy", add_joy), \
+         patch(f"{CORE}.attach_photo", attach_photo), \
          patch(f"{CORE}.add_diaper", add_diaper), \
          patch(f"{CORE}.add_temperature", add_temperature), \
          patch(f"{CORE}.log_growth", log_growth), \
@@ -1734,6 +1745,193 @@ async def test_delete_record_reports_what_the_client_refused(hass, backend):
         "object_type": "Diaper", "object_id": "NOPE", "error": "No Diaper record with ID NOPE"}
 
 
+# ----- photos on entries (log_joy, attach_photo) -----
+
+@pytest.fixture
+def photo_folder(hass):
+    """The integration's private folder, with a photo in it, and www / media allowed as Home Assistant has them."""
+    own = hass.config.path("baby_tracker")
+    os.makedirs(own, exist_ok=True)
+    path = os.path.join(own, "first-smile.jpg")
+    with open(path, "wb") as handle:
+        handle.write(b"jpeg bytes")
+    allowed = set(hass.config.allowlist_external_dirs)
+    hass.config.allowlist_external_dirs = {hass.config.path("www"), hass.config.path("media")}
+    yield path
+    hass.config.allowlist_external_dirs = allowed
+    os.remove(path)
+
+
+async def test_log_joy_service_without_a_photo(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+
+    await hass.services.async_call(
+        DOMAIN, "log_joy", {"baby_name": "Everly", "note": "giggles", "time": "2026-03-01 09:30:00"}, blocking=True)
+    call = backend[-1]
+    assert call[:3] == ("add_joy", "ID-EVERLY", "giggles")
+    assert call[3].endswith("+0000") and call[4] is None  # a sync-format time, and no photo
+    assert call[5] == coordinator.picture_dir  # where the client keeps the photos
+
+    with patch(f"{CORE}.add_joy", return_value={"status": "error", "message": "Not authenticated"}), \
+         pytest.raises(HomeAssistantError):
+        await hass.services.async_call(DOMAIN, "log_joy", {"baby_name": "Everly"}, blocking=True)
+
+
+async def test_log_joy_service_with_a_photo_file(hass, backend, photo_folder):
+    await setup(hass, make_entry())
+    await hass.services.async_call(
+        DOMAIN, "log_joy", {"baby_name": "Everly", "note": "smile", "photo": photo_folder}, blocking=True)
+    assert backend[-1][:3] == ("add_joy", "ID-EVERLY", "smile")
+    assert backend[-1][4] == os.path.realpath(photo_folder)
+
+    # www and media work when Home Assistant allows them
+    www = hass.config.path("www")
+    os.makedirs(www, exist_ok=True)
+    in_www = os.path.join(www, "snap.jpg")
+    with open(in_www, "wb") as handle:
+        handle.write(b"x")
+    try:
+        await hass.services.async_call(
+            DOMAIN, "log_joy", {"baby_name": "Everly", "photo": in_www}, blocking=True)
+        assert backend[-1][4] == os.path.realpath(in_www)
+        hass.config.allowlist_external_dirs = set()  # no longer an allowed path
+        with pytest.raises(ServiceValidationError) as err:
+            await hass.services.async_call(
+                DOMAIN, "log_joy", {"baby_name": "Everly", "photo": in_www}, blocking=True)
+        assert err.value.translation_key == "photo_path_not_allowed"
+    finally:
+        os.remove(in_www)
+
+
+async def test_photo_paths_outside_the_allowed_folders_are_refused(hass, backend, photo_folder, tmp_path):
+    await setup(hass, make_entry())
+    outside = tmp_path / "elsewhere.jpg"
+    outside.write_bytes(b"x")
+    sneaky = os.path.join(os.path.dirname(photo_folder), "..", "secrets.yaml")
+    calls_before = len(backend)
+    for path in (str(outside), sneaky, "/etc/passwd"):
+        with pytest.raises(ServiceValidationError) as err:
+            await hass.services.async_call(DOMAIN, "log_joy", {"baby_name": "Everly", "photo": path}, blocking=True)
+        assert err.value.translation_key == "photo_path_not_allowed"
+        assert err.value.translation_placeholders == {"path": path}
+    with pytest.raises(ServiceValidationError) as err:
+        await hass.services.async_call(DOMAIN, "attach_photo", {
+            "object_type": "Diaper", "object_id": "DIAPER-1", "photo": str(outside)}, blocking=True)
+    assert err.value.translation_key == "photo_path_not_allowed"
+    assert len(backend) == calls_before  # nothing reached the client
+
+    with pytest.raises(ServiceValidationError) as err:  # allowed place, no such file
+        await hass.services.async_call(DOMAIN, "log_joy", {
+            "baby_name": "Everly", "photo": os.path.join(os.path.dirname(photo_folder), "nope.jpg")}, blocking=True)
+    assert err.value.translation_key == "photo_not_found"
+
+
+async def test_log_joy_takes_a_camera_snapshot_and_cleans_up(hass, backend):
+    from homeassistant.components.camera import Image
+
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    seen = {}
+
+    def add_joy(baby_id, note, time_str, photo_path, picture_dir):
+        seen["path"] = photo_path
+        with open(photo_path, "rb") as handle:  # the client reads the file during the call
+            seen["bytes"] = handle.read()
+        return {"status": "success", "objectID": "JOY-1", "queued": False}
+
+    with patch("homeassistant.components.camera.async_get_image",
+               return_value=Image("image/jpeg", b"snapshot bytes")) as snapshot, \
+         patch(f"{CORE}.add_joy", side_effect=add_joy):
+        await hass.services.async_call(
+            DOMAIN, "log_joy", {"baby_name": "Everly", "note": "front door", "camera_entity": "camera.nursery"},
+            blocking=True)
+    snapshot.assert_awaited_once_with(hass, "camera.nursery")
+    assert seen["bytes"] == b"snapshot bytes"
+    assert seen["path"].startswith(coordinator.photo_dir)  # the private folder, not a public one
+    assert not os.path.exists(seen["path"])  # a snapshot is only needed while the entry is made
+
+    # A camera that can't produce a picture is a clear error, and nothing is logged
+    with patch("homeassistant.components.camera.async_get_image", side_effect=HomeAssistantError("offline")), \
+         pytest.raises(ServiceValidationError) as err:
+        await hass.services.async_call(
+            DOMAIN, "log_joy", {"baby_name": "Everly", "camera_entity": "camera.nursery"}, blocking=True)
+    assert err.value.translation_key == "photo_snapshot_failed"
+    assert err.value.translation_placeholders["entity_id"] == "camera.nursery"
+
+
+async def test_attach_photo_service_with_an_image_entity(hass, backend):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    entity = SimpleNamespace(async_image=AsyncMock(return_value=b"png bytes"))
+    component = SimpleNamespace(get_entity=lambda entity_id: entity if entity_id == "image.doorbell" else None)
+    seen = {}
+
+    def attach(object_type, object_id, photo_path, picture_dir):
+        with open(photo_path, "rb") as handle:
+            seen["bytes"] = handle.read()
+        seen["args"] = (object_type, object_id, picture_dir)
+        return {"status": "success", "objectID": object_id, "pictureID": "PIC-1", "queued": False}
+
+    with patch.dict(hass.data, {"image": component}), patch(f"{CORE}.attach_photo", side_effect=attach):
+        await hass.services.async_call(DOMAIN, "attach_photo", {
+            "object_type": "Diaper", "object_id": "DIAPER-1", "image_entity": "image.doorbell"}, blocking=True)
+        assert seen == {"bytes": b"png bytes", "args": ("Diaper", "DIAPER-1", coordinator.picture_dir)}
+
+        with pytest.raises(ServiceValidationError) as err:  # an image entity with nothing to show
+            await hass.services.async_call(DOMAIN, "attach_photo", {
+                "object_type": "Diaper", "object_id": "DIAPER-1", "image_entity": "image.other"}, blocking=True)
+        assert err.value.translation_key == "photo_snapshot_failed"
+
+
+async def test_attach_photo_service_arguments(hass, backend, photo_folder):
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+
+    await hass.services.async_call(DOMAIN, "attach_photo", {
+        "object_type": "Diaper", "object_id": "DIAPER-1", "photo": photo_folder}, blocking=True)
+    assert backend[-1] == ("attach_photo", "Diaper", "DIAPER-1", os.path.realpath(photo_folder),
+                           coordinator.picture_dir)
+
+    for data, key in (
+        ({"object_type": "Diaper", "object_id": "D"}, "photo_required"),
+        ({"object_type": "Diaper", "object_id": "D", "photo": photo_folder, "camera_entity": "camera.a"},
+         "photo_one_source"),
+    ):
+        with pytest.raises(ServiceValidationError) as err:
+            await hass.services.async_call(DOMAIN, "attach_photo", data, blocking=True)
+        assert err.value.translation_key == key
+
+    with pytest.raises(vol.Invalid):  # doctor visits are never synced, so they can't carry a photo
+        await hass.services.async_call(DOMAIN, "attach_photo", {
+            "object_type": "DoctorVisit", "object_id": "D", "photo": photo_folder}, blocking=True)
+
+    with patch(f"{CORE}.attach_photo", return_value={"status": "error", "message": "Diaper X not found"}), \
+         pytest.raises(HomeAssistantError, match="Diaper X not found"):
+        await hass.services.async_call(DOMAIN, "attach_photo", {
+            "object_type": "Diaper", "object_id": "X", "photo": photo_folder}, blocking=True)
+
+
+async def test_photo_services_ask_for_a_debounced_refresh(hass, backend, photo_folder):
+    entry = make_entry()
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    with patch.object(coordinator, "async_request_refresh") as request, \
+         patch.object(coordinator, "async_refresh") as refresh:
+        await hass.services.async_call(DOMAIN, "log_joy", {"baby_name": "Everly", "photo": photo_folder}, blocking=True)
+        await hass.services.async_call(DOMAIN, "attach_photo", {
+            "object_type": "Diaper", "object_id": "DIAPER-1", "photo": photo_folder}, blocking=True)
+    assert request.await_count == 2
+    refresh.assert_not_called()
+
+
 async def test_undo_and_delete_ask_for_a_debounced_refresh(hass, backend):
     entry = make_entry()
     await setup(hass, entry)
@@ -2281,3 +2479,477 @@ def test_the_shipped_sentences_are_understood_by_assist():
         assert result.intent.name == intent_type, text
         got = {name: entity.value for name, entity in result.entities.items()}
         assert got == slots, text  # 120.0 == 120
+
+
+# ----- sleep taken from another entity -----
+
+SNOO = "binary_sensor.snoo_asleep"
+SNOO_SOURCES = {"sleep_sources": {"ID-EVERLY": {"sleep_source_entity": SNOO}}}
+NIGHT = datetime(2026, 3, 1, 22, 0, tzinfo=UTC)
+# Everly is awake as far as Baby Tracker knows (the shared test data has her asleep)
+SOURCE_AWAKE = {  # Everly awake as far as Baby Tracker knows (the nap fixture above is AWAKE)
+    "last_sleep": {"time": "2026-03-01 18:00:00 +0000", "is_sleeping": False, "duration": 60,
+                        "current_duration": 0, "status": "awake"}}
+
+
+@contextmanager
+def logged_sleeps(**changes):
+    """Everly's sleep as Baby Tracker has it (awake unless changed), with log_sleep_event recorded."""
+    fetch = fetch_with(**{**SOURCE_AWAKE, **changes})
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch), \
+         patch(f"{CORE}.log_sleep_event", return_value={"status": "success"}) as log_sleep:
+        yield log_sleep
+
+
+def set_snoo(hass, state):
+    hass.states.async_set(SNOO, state, {"friendly_name": "Snoo"})
+
+
+async def start_snoo(hass, freezer, state="off", options=None):
+    """Set up the integration with a Snoo-like entity as Everly's sleep source, at 22:00."""
+    freezer.move_to(NIGHT)
+    set_snoo(hass, state)
+    entry = make_entry(options=options or SNOO_SOURCES)
+    await setup(hass, entry)
+    return entry
+
+
+async def advance(hass, freezer, **delta):
+    freezer.tick(timedelta(**delta))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+
+def starts_and_ends(log_sleep):
+    """The is_start flag of each sleep written, in order."""
+    return [call.args[1] for call in log_sleep.call_args_list]
+
+
+async def test_the_sleep_start_is_logged_after_the_minimum_back_dated(hass, backend, freezer):
+    with logged_sleeps() as log_sleep:
+        await start_snoo(hass, freezer)
+        assert hass.states.get("binary_sensor.everly_sleep_source").state == "off"
+        assert hass.states.get("binary_sensor.ann_marie_sleep_source") is None  # only babies with a source
+
+        set_snoo(hass, "on")
+        await advance(hass, freezer, minutes=4)
+        log_sleep.assert_not_called()  # 5 minutes is the default minimum
+        assert hass.states.get("binary_sensor.everly_sleep_source").state == "on"
+
+        await advance(hass, freezer, minutes=1)
+        log_sleep.assert_called_once_with("ID-EVERLY", True, "From Snoo", NIGHT)  # dated when she dropped off
+
+        source = hass.states.get("binary_sensor.everly_sleep_source")
+        assert source.attributes["source_entity"] == SNOO
+        assert source.attributes["since"] == NIGHT.isoformat()
+        assert source.attributes["pending_end"] is None
+
+
+async def test_a_short_wake_inside_the_gap_does_not_end_the_sleep(hass, backend, freezer):
+    with logged_sleeps() as log_sleep:
+        await start_snoo(hass, freezer, state="on")
+        await advance(hass, freezer, minutes=20)
+        set_snoo(hass, "off")
+        await advance(hass, freezer, minutes=5)
+        assert hass.states.get("binary_sensor.everly_sleep_source").attributes["pending_end"]
+
+        set_snoo(hass, "on")  # back down before the 10 minutes are up
+        await advance(hass, freezer, minutes=30)
+
+        assert starts_and_ends(log_sleep) == [True]  # no end
+        source = hass.states.get("binary_sensor.everly_sleep_source")
+        assert source.state == "on" and source.attributes["pending_end"] is None
+        assert source.attributes["since"] == NIGHT.isoformat()
+
+
+async def test_a_wake_longer_than_the_gap_ends_the_sleep_at_the_wake_time(hass, backend, freezer):
+    with logged_sleeps() as log_sleep:
+        await start_snoo(hass, freezer, state="on")
+        await advance(hass, freezer, minutes=20)
+        woke = dt_util.utcnow()
+        set_snoo(hass, "off")
+        await advance(hass, freezer, minutes=9)
+        assert starts_and_ends(log_sleep) == [True]  # only the start so far
+
+        await advance(hass, freezer, minutes=1)
+        assert log_sleep.call_args_list[-1].args == ("ID-EVERLY", False, "From Snoo", woke)  # not 10 minutes later
+        assert hass.states.get("binary_sensor.everly_sleep_source").state == "off"
+
+
+async def test_a_sleep_shorter_than_the_minimum_is_never_logged(hass, backend, freezer):
+    with logged_sleeps() as log_sleep:
+        await start_snoo(hass, freezer, state="on")
+        await advance(hass, freezer, minutes=3)
+        set_snoo(hass, "off")
+        await advance(hass, freezer, minutes=30)
+        log_sleep.assert_not_called()
+        assert hass.states.get("binary_sensor.everly_sleep_source").state == "off"
+
+
+async def test_an_unavailable_source_is_neither_a_start_nor_an_end(hass, backend, freezer):
+    with logged_sleeps() as log_sleep:
+        await start_snoo(hass, freezer, state="on")
+        await advance(hass, freezer, minutes=2)
+        set_snoo(hass, "unavailable")
+        await advance(hass, freezer, minutes=3)
+        assert starts_and_ends(log_sleep) == [True]  # the minimum still counted
+
+        await advance(hass, freezer, minutes=60)
+        set_snoo(hass, "unknown")
+        await advance(hass, freezer, minutes=60)
+        assert starts_and_ends(log_sleep) == [True]  # never ended
+        assert hass.states.get("binary_sensor.everly_sleep_source").state == "on"
+
+
+async def test_a_sleep_started_by_hand_is_not_started_twice(hass, backend, freezer):
+    sleeping = {"last_sleep": {"time": "2026-03-01 21:58:00 +0000", "is_sleeping": True, "duration": 0,
+                               "current_duration": 2, "status": "sleeping"}}
+    with logged_sleeps(**sleeping) as log_sleep:
+        await start_snoo(hass, freezer, state="on")
+        await advance(hass, freezer, minutes=6)
+        log_sleep.assert_not_called()  # Baby Tracker already has one in progress
+
+        set_snoo(hass, "off")
+        await advance(hass, freezer, minutes=10)
+        assert starts_and_ends(log_sleep) == [False]  # the end still goes to that sleep
+
+
+async def test_a_failed_end_is_dropped_quietly(hass, backend, freezer):
+    with logged_sleeps() as log_sleep:
+        await start_snoo(hass, freezer, state="on")
+        await advance(hass, freezer, minutes=10)
+        log_sleep.return_value = {"status": "error", "message": "No active sleep session found"}  # ended by hand
+        set_snoo(hass, "off")
+        await advance(hass, freezer, minutes=10)
+        assert hass.states.get("binary_sensor.everly_sleep_source").state == "off"
+
+
+async def test_a_sleep_in_progress_survives_a_restart(hass, backend, freezer, hass_storage):
+    with logged_sleeps() as log_sleep:
+        entry = await start_snoo(hass, freezer, state="on")
+        await advance(hass, freezer, minutes=10)
+        assert starts_and_ends(log_sleep) == [True]
+
+        await advance(hass, freezer, minutes=8)
+        await hass.config_entries.async_reload(entry.entry_id)  # a restart: the entity is still asleep
+        await hass.async_block_till_done()
+        source = hass.states.get("binary_sensor.everly_sleep_source")
+        assert source.state == "on"
+        assert source.attributes["since"] == NIGHT.isoformat()  # not 22:18, when HA came back
+        assert starts_and_ends(log_sleep) == [True]  # and not started a second time
+
+        woke = dt_util.utcnow()
+        set_snoo(hass, "off")
+        await advance(hass, freezer, minutes=10)
+        assert log_sleep.call_args_list[-1].args == ("ID-EVERLY", False, "From Snoo", woke)
+
+
+async def test_a_wake_during_a_restart_ends_the_sleep_from_when_it_was_noticed(hass, backend, freezer, hass_storage):
+    with logged_sleeps() as log_sleep:
+        entry = await start_snoo(hass, freezer, state="on")
+        await advance(hass, freezer, minutes=10)
+
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        set_snoo(hass, "off")
+        await advance(hass, freezer, minutes=20)
+        noticed = dt_util.utcnow()
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        await advance(hass, freezer, minutes=10)
+
+        assert log_sleep.call_args_list[-1].args == ("ID-EVERLY", False, "From Snoo", noticed)
+
+
+async def test_no_sleep_source_means_no_sleep_source_entity(hass, backend):
+    await setup(hass, make_entry())
+    assert hass.states.get("binary_sensor.everly_sleep_source") is None
+
+
+async def test_options_flow_saves_a_sleep_source_per_baby(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"scan_interval": 15, "unit_system": "imperial"})
+    assert result["step_id"] == "sleep_source"
+    assert result["description_placeholders"] == {"baby": "Ann Marie"}
+
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})  # no source for her
+    assert result["step_id"] == "sleep_source"
+    assert result["description_placeholders"] == {"baby": "Everly"}
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"sleep_source_entity": SNOO, "sleep_source_asleep_states": []})
+    assert result["errors"] == {"sleep_source_asleep_states": "no_asleep_states"}
+
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {
+        "sleep_source_entity": SNOO, "sleep_source_asleep_states": ["asleep", "weaning"],
+        "sleep_gap_minutes": 15, "sleep_min_minutes": 3})
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["sleep_sources"] == {"ID-EVERLY": {
+        "sleep_source_entity": SNOO, "sleep_source_asleep_states": ["asleep", "weaning"],
+        "sleep_gap_minutes": 15, "sleep_min_minutes": 3}}
+    assert entry.options["unit_system"] == "imperial"
+    assert hass.states.get("binary_sensor.everly_sleep_source")  # the reload created it
+
+
+async def test_options_flow_offers_the_saved_sleep_source_and_can_clear_it(hass, backend):
+    entry = make_entry(options=SNOO_SOURCES)
+    await setup(hass, entry)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"scan_interval": 15, "unit_system": "imperial"})
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})  # Ann Marie
+    entity_field = next(key for key in result["data_schema"].schema if key == "sleep_source_entity")
+    assert entity_field.description == {"suggested_value": SNOO}
+
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})  # blank clears it
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert "sleep_sources" not in entry.options
+    assert hass.states.get("binary_sensor.everly_sleep_source") is None
+
+
+# ----- Quiet mode: activities a baby is no longer logged for -----
+
+NOW = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+ALL_TRACKED = dict.fromkeys(("feeds", "diapers", "sleep", "pumping", "medicine", "growth", "temperature"), True)
+
+
+def long_ago(days):
+    return (NOW - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S +0000")
+
+
+def toddler_data():
+    """A nearly-two-year-old who is only logged for sleep: the last feed and diaper are months old."""
+    return {
+        "last_feeding": {"time": long_ago(180), "type": "Formula"},
+        "last_diaper": {"time": long_ago(170), "status": "Wet"},
+        "last_sleep": {"time": long_ago(1), "is_sleeping": False},
+        "last_growth": {"time": long_ago(400)},
+    }
+
+
+def test_a_newborn_tracks_everything_even_with_nothing_logged():
+    from custom_components.baby_tracker.tracking import detect_tracking
+
+    newborn = Baby({"objectID": "ID-NEW", "name": "New", "dob": long_ago(3), "dueDay": ""})
+    assert detect_tracking(newborn, {}, NOW) == ALL_TRACKED
+
+
+def test_a_baby_whose_last_feed_is_months_old_has_feeds_off_but_sleep_on():
+    from custom_components.baby_tracker.tracking import detect_tracking
+
+    toddler = Baby({"objectID": "ID-TOD", "name": "Tod", "dob": long_ago(700), "dueDay": ""})
+    tracking = detect_tracking(toddler, toddler_data(), NOW)
+    assert tracking["feeds"] is False and tracking["diapers"] is False and tracking["growth"] is False
+    assert tracking["sleep"] is True
+    assert tracking["pumping"] is False and tracking["medicine"] is False and tracking["temperature"] is False
+
+
+def test_a_record_inside_the_window_counts_and_a_baby_asleep_counts():
+    from custom_components.baby_tracker.tracking import detect_tracking
+
+    toddler = Baby({"objectID": "ID-TOD", "name": "Tod", "dob": long_ago(700), "dueDay": ""})
+    data = {"last_feeding": {"time": long_ago(13)}, "last_diaper": {"time": long_ago(15)},
+            "last_sleep": {"time": long_ago(100), "is_sleeping": True}}
+    tracking = detect_tracking(toddler, data, NOW)
+    assert tracking["feeds"] is True and tracking["diapers"] is False and tracking["sleep"] is True
+
+
+def test_the_override_replaces_detection_and_auto_defers_to_it():
+    from custom_components.baby_tracker.tracking import resolve_tracking
+
+    toddler = Baby({"objectID": "ID-TOD", "name": "Tod", "dob": long_ago(700), "dueDay": ""})
+    detected, mode = resolve_tracking({}, toddler, toddler_data(), NOW)
+    assert mode == "auto" and detected["feeds"] is False
+
+    options = {"tracking": {"ID-TOD": ["feeds", "growth"]}}
+    manual, mode = resolve_tracking(options, toddler, toddler_data(), NOW)
+    assert mode == "manual"
+    assert manual["feeds"] is True and manual["growth"] is True and manual["sleep"] is False  # not detection
+
+    auto, mode = resolve_tracking({"tracking": {"ID-TOD": "auto"}}, toddler, toddler_data(), NOW)
+    assert mode == "auto" and auto == detected
+
+
+async def test_the_coordinator_works_out_tracking_for_each_baby(hass, backend):
+    from unittest.mock import MagicMock
+
+    toddler = Baby({"objectID": "ID-TOD", "name": "Tod", "dob": long_ago(700), "dueDay": ""})
+    entry = make_entry(options={"tracking": {"ID-TOD": ["diapers"]}})
+    await setup(hass, entry)
+    coordinator = coordinator_for(hass, entry)
+    tracker = MagicMock()
+    tracker.sync.return_value = {"status": "success"}
+    tracker.get_all_babies.return_value = [toddler]
+    tracker.get_baby_info.return_value = toddler
+    tracker.get_events_between.return_value = []
+    tracker.get_last_feeding.return_value = toddler_data()["last_feeding"]
+    tracker.get_last_sleep.return_value = toddler_data()["last_sleep"]
+    coordinator.baby_tracker = tracker
+
+    _, _, _, baby_data, _, _ = REAL_FETCH(coordinator, coordinator.photo_dir)
+    assert baby_data["Tod"]["tracking_mode"] == "manual"
+    assert baby_data["Tod"]["tracking"]["diapers"] is True and baby_data["Tod"]["tracking"]["sleep"] is False
+
+
+def quiet_fetch(feeds=False, sleep=True, diapers=True):
+    """Ann Marie is tracked and overdue for a feed; Everly is overdue too but her groups are as given."""
+    def fetch(self, photo_dir):
+        babies, info, pictures, data, account, medicines = fake_fetch(self, photo_dir)
+        data["Ann Marie"] = {
+            "baby_info": TWIN, "insights": {"next_feed": {"predicted_at": "2026-03-01T11:15:00+00:00"}},
+            "time_since_last_feeding": {"hours_since_last_feeding": 5.0, "last_feeding_time": "2026-03-01T07:00:00+00:00"},
+        }
+        data["Everly"] = {
+            **data["Everly"],
+            "time_since_last_feeding": {"hours_since_last_feeding": 8.0, "last_feeding_time": "2026-03-01T04:00:00+00:00"},
+            "tracking": {**ALL_TRACKED, "feeds": feeds, "sleep": sleep, "diapers": diapers},
+            "tracking_mode": "auto",
+        }
+        return babies, info, pictures, data, account, medicines
+    return fetch
+
+
+async def test_alerts_of_an_untracked_group_are_off_with_a_reason(hass, backend, freezer):
+    freezer.move_to("2026-03-01 12:40:00+00:00")  # Everly's predicted feed (12:30) has passed
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", quiet_fetch(feeds=False)):
+        await setup(hass, make_entry())
+
+    for alert in ("feeding_overdue", "feed_due", "intake_low", "wake_to_feed"):
+        state = hass.states.get(f"binary_sensor.everly_{alert}")
+        assert state.state == "off", alert
+        assert state.attributes["reason"] == "not_tracked", alert
+    assert hass.states.get("binary_sensor.ann_marie_feeding_overdue").state == "on"  # tracked, 5 h
+    assert "reason" not in hass.states.get("binary_sensor.ann_marie_feeding_overdue").attributes
+
+
+async def test_the_same_alerts_are_on_while_the_group_is_tracked(hass, backend, freezer):
+    freezer.move_to("2026-03-01 12:40:00+00:00")
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", quiet_fetch(feeds=True)):
+        await setup(hass, make_entry())
+    assert hass.states.get("binary_sensor.everly_feeding_overdue").state == "on"
+    assert hass.states.get("binary_sensor.everly_feed_due").state == "on"
+    assert hass.states.get("binary_sensor.everly_intake_low").state == "on"
+    assert "reason" not in hass.states.get("binary_sensor.everly_feeding_overdue").attributes
+
+
+async def test_sleep_and_diaper_alerts_follow_their_own_groups(hass, backend, freezer):
+    freezer.move_to("2026-03-01 14:00:00+00:00")  # Everly asleep since 11:00, expected awake at 12:40
+    entry = make_entry()
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               quiet_fetch(feeds=True, sleep=True)):
+        await setup(hass, entry)
+    assert hass.states.get("binary_sensor.everly_nap_running_long").state == "on"
+
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               quiet_fetch(feeds=True, sleep=False, diapers=False)):
+        await coordinator_for(hass, entry).async_refresh()
+        await hass.async_block_till_done()
+    for alert in ("nap_running_long", "long_sleep", "sleep_due", "no_poop", "low_wet_diapers"):
+        state = hass.states.get(f"binary_sensor.everly_{alert}")
+        assert state.state == "off" and state.attributes["reason"] == "not_tracked", alert
+
+
+async def test_derived_sensors_read_unknown_but_the_facts_stay(hass, backend):
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               quiet_fetch(feeds=False, sleep=False, diapers=False)):
+        await setup(hass, make_entry())
+
+    for sensor in ("next_feed", "feed_interval", "intake_24h", "intake_status", "time_since_last_feeding",
+                   "diaper_adequacy", "next_sleep", "expected_wake", "wake_window"):
+        state = hass.states.get(f"sensor.everly_{sensor}")
+        assert state is not None, sensor
+        assert state.state == "unknown", sensor
+        assert state.attributes["reason"] == "not_tracked", sensor
+
+    # What was logged stays, and so do the counts
+    assert hass.states.get("sensor.everly_last_feeding").state != "unknown"
+    assert hass.states.get("sensor.everly_last_feeding_time").state == "2026-03-01T09:30:00+00:00"
+    assert hass.states.get("sensor.everly_last_diaper").state != "unknown"
+    assert hass.states.get("sensor.everly_last_sleep").state != "unknown"
+    assert hass.states.get("sensor.everly_wet_diapers").state != "unknown"
+
+
+async def test_the_info_sensor_shows_what_is_tracked(hass, backend):
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", quiet_fetch(feeds=False)):
+        await setup(hass, make_entry())
+    info = hass.states.get("sensor.everly_info").attributes
+    assert info["tracking"]["feeds"] is False and info["tracking"]["sleep"] is True
+    assert info["tracking_mode"] == "auto"
+    # Without a verdict in the data (as in the other tests' fake data), nothing is shown as off
+    assert hass.states.get("sensor.ann_marie_info").attributes["tracking"] == {}
+
+
+async def test_household_sensors_only_consider_babies_with_the_group_tracked(hass, backend):
+    def fetch(self, photo_dir):
+        babies, info, pictures, data, account, medicines = household_fetch(self, photo_dir)
+        data["Ann Marie"]["tracking"] = {**ALL_TRACKED, "feeds": False, "sleep": False}  # due first, fed first
+        return babies, info, pictures, data, account, medicines
+
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch):
+        await setup(hass, make_entry(unit_system="metric"))
+
+    assert hass.states.get("sensor.baby_tracker_next_feed_baby").state == "Everly"
+    assert hass.states.get("sensor.baby_tracker_next_feed_due").attributes["predictions"] == {
+        "Everly": "2026-03-01T12:30:00+00:00"}
+    assert hass.states.get("sensor.baby_tracker_last_fed_baby").state == "Everly"
+    asleep = hass.states.get("sensor.baby_tracker_babies_asleep")
+    assert asleep.state == "1" and asleep.attributes["babies"] == ["Everly"]
+    feeds = hass.states.get("sensor.baby_tracker_feeds_today")
+    assert feeds.state == "6" and feeds.attributes["per_baby"] == {"Everly": 6}
+
+
+async def test_assist_says_an_untracked_activity_is_not_tracked(hass, backend, freezer, tmp_path):
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               quiet_fetch(feeds=False, sleep=True, diapers=False)):
+        await start_assist(hass, freezer, tmp_path)
+
+        for intent_type in ("BabyTrackerLastFeed", "BabyTrackerNextFeed", "BabyTrackerIntakeToday"):
+            result = await ask(hass, intent_type, baby="Everly")
+            assert said(result) == "Feeds aren't being tracked for Everly", intent_type
+        assert said(await ask(hass, "BabyTrackerLastDiaper", baby="Everly")) == (
+            "Diapers aren't being tracked for Everly")
+        # Sleep is still tracked, and the other baby is unaffected
+        assert said(await ask(hass, "BabyTrackerSleepStatus", baby="Everly")).startswith("Everly has been asleep")
+        assert said(await ask(hass, "BabyTrackerLastFeed", baby="Ann Marie")) == (
+            "I don't have any feeds logged for Ann Marie.")
+        # The summary leaves out what is not tracked; logging still works
+        summary = said(await ask(hass, "BabyTrackerSummary", baby="Everly"))
+        assert "ate" not in summary and "diaper" not in summary and "asleep" in summary
+        result = await ask(hass, "BabyTrackerLogDiaper", baby="Everly", kind="wet")
+        assert result.response_type is intent.IntentResponseType.ACTION_DONE
+
+
+async def test_options_flow_saves_the_tracked_activities_per_baby(hass, backend):
+    entry = make_entry()
+    await setup(hass, entry)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"scan_interval": 15, "unit_system": "imperial"})
+    assert result["step_id"] == "sleep_source" and result["description_placeholders"] == {"baby": "Ann Marie"}
+    field = next(key for key in result["data_schema"].schema if key == "tracked_activities")
+    assert field.default() == ["auto"]  # offered as auto until set
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"tracked_activities": ["sleep", "feeds"]})  # Ann Marie: by hand
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})  # Everly: auto
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["tracking"] == {"ID-TWIN": ["feeds", "sleep"]}  # auto is simply absent
+    assert "sleep_sources" not in entry.options  # the field is not part of a sleep source
+
+    # Offered back on the next visit, and "auto" (with or without others) resets it
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"scan_interval": 15, "unit_system": "imperial"})
+    field = next(key for key in result["data_schema"].schema if key == "tracked_activities")
+    assert field.default() == ["feeds", "sleep"]
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"tracked_activities": ["auto", "growth"]})
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+    await hass.async_block_till_done()
+    assert "tracking" not in entry.options

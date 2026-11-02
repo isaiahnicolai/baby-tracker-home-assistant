@@ -93,6 +93,8 @@ babytracker last diaper --baby Everly
 babytracker add-diaper wet --baby Everly
 babytracker add-bottle --baby Everly --amount 4 --unit oz --type formula   # or --unit ml, --type pumped
 babytracker add-nursing --baby Everly --left 10 --right 8                  # minutes per side
+babytracker add-joy --baby Everly --note "First smile" --photo smile.jpg    # needs Pillow: pip install 'babytracker-client[photos]'
+babytracker attach-photo Diaper <object-id> bath.png                        # add a photo to an existing entry
 babytracker insights --baby Everly          # next feed, 24 hour intake, diapers, growth percentiles
 babytracker next                            # each baby's predicted next feed, and who is due first
 babytracker calendar --baby Everly --days 2 # feeds, sleeps, baths, visits and medicines
@@ -240,6 +242,33 @@ These are totals over a rolling 7 days (the `window_days` attribute says so), up
 
 Each baby's photo is shown by its **Photo** image entity (for example `image.everly_photo`), for dashboards and picture cards. If the app also has a landscape (wide) version of the photo, the baby gets a **Photo Landscape** entity (`image.everly_photo_landscape`) too, which suits banner cards; it is created when the integration is set up, so reload it after adding a landscape photo in the app. The files are kept in a private `baby_tracker` folder in your Home Assistant configuration directory (photos attached to activities go in its `pictures` subfolder) and are only served through the image entity, which needs a login or the entity's access token. They are **not** under `www`, so nobody can fetch them without logging in.
 
+#### Photos from Home Assistant
+
+You can put photos on entries from Home Assistant, and they show on the phone app like any photo taken there. `baby_tracker.log_joy` logs a joy (the app's entry for a happy moment) and `baby_tracker.attach_photo` adds a photo to an entry that already exists (a diaper, a bath, an activity...; take its type and ID from the Recent Entries sensor). Both take the picture from one of:
+
+- `photo`: a file path. It must be in the `baby_tracker` folder of your configuration folder, or in `www` or `media` (Home Assistant has to allow those two as external paths, which it does by default). Any other path is refused, so these services can't be used to send other files off your machine.
+- `camera_entity`: a snapshot of a camera, taken when the service runs.
+- `image_entity`: the current picture of an image entity.
+
+The photo is stored as a JPEG with a thumbnail, uploaded to Baby Tracker before the entry is, and kept in the `pictures` subfolder. If the server can't be reached, the entry and its photo wait and go up on a later sync. Snapshots are written to a short-lived file in the private folder and deleted right away.
+
+```yaml
+automation:
+  - alias: "Photo of the baby when the nursery door opens"
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.nursery_door
+        to: "on"
+    actions:
+      - action: baby_tracker.log_joy
+        data:
+          baby_name: "Everly"
+          note: "Good morning!"
+          camera_entity: camera.nursery
+```
+
+To add a snapshot to the diaper you just logged, find its ID in the Recent Entries sensor and call `baby_tracker.attach_photo` with `object_type: Diaper`, that `object_id` and a `camera_entity`. The Latest Photo entity and the Activity event's `photo` type then report it like any other new picture.
+
 Earlier versions saved photos in `www/baby_tracker`, where anyone who could reach Home Assistant could fetch them without logging in. Those old copies are not deleted for you: remove the `www/baby_tracker` folder. Home Assistant shows a [repair](#repairs) on *Settings > Repairs* while it exists.
 
 ## Controls and Buttons
@@ -306,7 +335,41 @@ Choose **Configure** on the integration to change:
 | Night starts at / Night ends at | The hours (0-23) Night Mode uses; default 19 and 7. Night can run past midnight |
 | Fever temperature | Fever turns on at or above this, in the unit chosen above. Leave blank for 100.4 °F (38.0 °C) |
 
-The options are saved as `scan_interval`, `unit_system`, `feeding_overdue_hours`, `low_wet_minimum`, `night_start_hour`, `night_end_hour` and `fever_threshold`. The integration reloads when you save them.
+The options are saved as `scan_interval`, `unit_system`, `feeding_overdue_hours`, `low_wet_minimum`, `night_start_hour`, `night_end_hour` and `fever_threshold`. The integration reloads when you save them. After these, a **Sleep source** step follows for each baby (see below).
+
+### Sleep from a Snoo, Owlet or another entity
+
+A baby's sleep can be recorded from another Home Assistant entity, such as the state sensor of a Snoo or an Owlet, a bed sensor or an `input_boolean`. It lands in Baby Tracker (and on the phone) like a sleep you logged by hand, with the note "From <the entity's name>".
+
+For each baby the options flow asks for:
+
+| Setting | What it does |
+| --- | --- |
+| Entity | The entity to follow. Leave it empty for no source |
+| States that mean asleep | The entity's state values that mean the baby is asleep (default `on`, `asleep`, `sleeping`). Any other state means awake. Check the entity's states in **Developer Tools > States** rather than guessing: the core `snoo` integration's state sensor and the Owlet custom integration each use their own values, and they can differ between versions |
+| A wake shorter than this does not end the sleep | Minutes (default 10). A baby who stirs and settles again is still in the same sleep |
+| Never log a sleep shorter than this | Minutes (default 5). Nothing is logged for a sleep that did not last this long |
+
+How it works: when the entity goes to an asleep state, the integration waits for the minimum, then starts a sleep dated when the entity went to sleep. When the entity leaves the asleep state it waits for the gap; if the baby has not gone back to sleep by then, the sleep ends, dated when the baby woke rather than when the gap ran out. `unavailable` and `unknown` are ignored: they neither start nor end a sleep. If Home Assistant restarts mid-sleep the sleep carries on; if the entity is already asleep when it starts, the sleep is counted from then.
+
+A sleep logged this way is an ordinary sleep: you can still end it with **End Sleep**, or undo it, by hand. If a sleep is already in progress in Baby Tracker (you pressed **Start Sleep** yourself), no second one is started, and the entity's wake still ends it. A **Sleep Source** diagnostic binary sensor appears for each baby with a source: it is on while the integration counts the baby as asleep through the entity, with the attributes `source_entity`, `since` and `pending_end`.
+
+The settings are saved in the `sleep_sources` option, keyed by baby ID, with `sleep_source_entity`, `sleep_source_asleep_states`, `sleep_gap_minutes` and `sleep_min_minutes` for each baby.
+
+### When a baby outgrows the app
+
+Once a child is no longer logged for feeds or diapers, the questions about them stop making sense: Feeding Overdue would stay on for months and Time Since Last Feeding would count up forever. So the integration works out, for each baby, which activities are still **tracked**: feeds, diapers, sleep, pumping, medicine, growth and temperature. An activity is tracked when something in it was logged in the last 14 days. A baby under 14 days old tracks everything, since nothing logged yet does not mean it stopped.
+
+For an activity that is not tracked:
+
+- its alerts (for feeds: Feeding Overdue, Feed Due, Wake To Feed, Intake Low; for diapers: No Poop, Low Wet Diapers; for sleep: Long Sleep, Sleep Due, Nap Running Long; for temperature: Fever) are off, with the attribute `reason: not_tracked`;
+- its predictions and rates (Next Feed, Feed Interval, Intake, Intake Status, Time Since Last Feeding, Feeding Timer, Diaper Adequacy, Next Sleep, Expected Wake, Wake Window) read unknown, with the same attribute;
+- the household sensors (Next Feed Baby, Last Fed Baby, Babies Asleep, Feeds Today) leave that baby out;
+- Assist answers "Feeds aren't being tracked for Everly" to questions about it.
+
+What was logged is kept: Last Feeding, Last Diaper and Last Sleep still show their old values, and the counts for today stay. Logging something again (by hand, button or voice) makes the activity tracked again at the next refresh. The baby's Info sensor shows the verdict in its `tracking` attribute, and `tracking_mode` says whether it is `auto` or `manual`.
+
+To override the automatic choice, open **Configure**; the step for each baby has a **Tracked activities** field. Leave it on **Auto**, or pick the activities that should count (a baby set by hand stays that way until you set it back to Auto). It is saved in the `tracking` option as `{baby_id: [groups]}`; a baby left on auto is not listed. The other way to quiet a child entirely is to disable that baby's device in Home Assistant, which turns off all of its entities.
 
 ## Repairs
 
@@ -627,6 +690,26 @@ data:
 ```
 
 Deletes one record by type and ID. It fails with an error message if there is no such record.
+
+#### Log Joy and Attach Photo
+
+```yaml
+service: baby_tracker.log_joy
+data:
+  baby_name: "Your Baby Name" # Optional if you have only one baby (or pick the baby's device)
+  note: "First smile"
+  camera_entity: camera.nursery # Optional photo: or photo: /config/baby_tracker/smile.jpg, or image_entity
+```
+
+```yaml
+service: baby_tracker.attach_photo
+data:
+  object_type: Diaper # Any type delete_record takes except DoctorVisit
+  object_id: "0B1C2D3E-..." # From the Recent Entries sensor's records attribute
+  photo: /config/media/bath.jpg # Or camera_entity / image_entity (one of the three is required)
+```
+
+See [Photos from Home Assistant](#photos-from-home-assistant) for where a photo file may be.
 
 #### List All Babies
 

@@ -929,6 +929,8 @@ class BabyTrackerAPI:
         """
         if not self.local_db:
             return 0
+        # Pictures first: other devices fetch a file by name as soon as they merge the record
+        self.upload_pending_pictures()
         uploaded = 0
         for sync_id, op_code, transaction_b64 in self.local_db.get_pending_transactions():
             payload = {
@@ -950,6 +952,31 @@ class BabyTrackerAPI:
             uploaded += 1
         if uploaded:
             _LOGGER.info(f"Uploaded {uploaded} transaction(s)")
+        return uploaded
+
+    def upload_pending_pictures(self):
+        """
+        Upload the picture files queued by add_joy / attach_photo (the app's PhotoList,
+        Android uploadPicture): one POST per file, and a file leaves the queue once the
+        server accepts it. A file that no longer exists is dropped, as the app does. The
+        first failure is raised and the rest stay queued.
+
+        Returns:
+            int: number of files uploaded
+        """
+        if not self.local_db:
+            return 0
+        uploaded = 0
+        for path in self.local_db.get_photo_uploads():
+            if not os.path.isfile(path):
+                _LOGGER.warning(f"Dropping queued upload of missing picture file {path}")
+                self.local_db.finish_photo_upload(path)
+                continue
+            self.upload_picture(path)
+            self.local_db.finish_photo_upload(path)
+            uploaded += 1
+        if uploaded:
+            _LOGGER.info(f"Uploaded {uploaded} picture file(s)")
         return uploaded
 
     def download_pending_pictures(self, dest_dir):
@@ -1048,6 +1075,29 @@ class BabyTrackerAPI:
         self.session_id = None
         self.is_authenticated = False
         return True
+
+    def post_joy(self, baby_id, time_str=None, note="", pictures=None, object_id=None):
+        """
+        Post a joy (Android Joy: a BabyActivity with nothing of its own).
+
+        Args:
+            pictures: pictureNote entries (records.picture_wire) for photos already stored
+                and queued for upload
+            object_id: the joy's ID, when the pictures were made to refer to it
+        """
+        joy_data = {
+            "BCObjectType": "Joy",
+            "baby": self._baby_ref(baby_id),
+            "note": note,
+            "pictureLoaded": True,
+            "pictureNote": list(pictures or []),
+            "time": time_str or _now_str(),
+            "timezone": self._tz_offset(),
+            "newFlage": True,
+            "objectID": object_id or str(uuid.uuid4()),
+            "timestamp": _now_str()
+        }
+        return self._post_record(joy_data)
 
     def post_pump(self, time_str=None, left_duration=0, right_duration=0, left_amount=0.0, right_amount=0.0,
                   is_english_scale=False, finish_side=0, note=""):

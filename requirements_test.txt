@@ -4,3 +4,5 @@
 pytest
 tzdata
 pytest-homeassistant-custom-component==0.13.375
+# The camera component (used by the photo services' snapshots) imports turbojpeg at import time
+PyTurboJPEG
