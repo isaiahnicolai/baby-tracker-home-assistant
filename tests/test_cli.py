@@ -100,7 +100,7 @@ def test_add_nursing_needs_a_duration(server, state_dir):
 def test_insights_for_one_baby_and_for_all(server, state_dir, capsys):
     one = run(capsys, state_dir, "insights", "--baby", "everly")
     assert one["baby_id"] == EVERLY and one["name"] == "Everly"
-    assert {"age", "next_feed", "intake", "diapers", "growth"} <= set(one)
+    assert {"age", "next_feed", "next_sleep", "intake", "diapers", "growth"} <= set(one)
 
     everyone = run(capsys, state_dir, "--offline", "insights")
     assert sorted(i["name"] for i in everyone) == ["Ann Marie", "Everly"]
@@ -116,6 +116,7 @@ def test_next_names_who_is_due_first(server, state_dir, capsys):
     assert after["due_first"]["baby"] == "Everly"
     assert after["babies"][0]["baby"] == "Everly" and after["babies"][0]["predicted_at"]
     assert after["babies"][1]["predicted_at"] is None
+    assert after["babies"][0]["asleep"] is False and after["babies"][0]["next_sleep_at"] is None  # no sleeps logged
 
 
 def test_calendar_lists_what_was_logged(server, state_dir, capsys):

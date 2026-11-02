@@ -163,6 +163,15 @@
       "feed_interval": {
         "name": "Feed Interval"
       },
+      "next_sleep": {
+        "name": "Next Sleep"
+      },
+      "expected_wake": {
+        "name": "Expected Wake"
+      },
+      "wake_window": {
+        "name": "Wake Window"
+      },
       "intake_24h": {
         "name": "Intake 24h"
       },
@@ -265,6 +274,12 @@
       "wake_to_feed": {
         "name": "Wake To Feed"
       },
+      "sleep_due": {
+        "name": "Sleep Due"
+      },
+      "wake_overdue": {
+        "name": "Nap Running Long"
+      },
       "night_mode": {
         "name": "Night Mode"
       },
@@ -348,6 +363,9 @@
       },
       "baby_photo_landscape": {
         "name": "Photo Landscape"
+      },
+      "latest_photo": {
+        "name": "Latest Photo"
       }
     },
     "calendar": {
@@ -367,6 +385,7 @@
               "sleep_end": "Sleep ended",
               "bath": "Bath",
               "medicine": "Medicine",
+              "photo": "Photo added",
               "undo": "Entry undone"
             }
           }

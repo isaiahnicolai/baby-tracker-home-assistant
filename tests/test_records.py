@@ -1,6 +1,7 @@
 """How each record type is stored (records.py, mirroring the app's putValues)."""
-import pytest
+import sqlite3
 
+import pytest
 from babytracker_client.api import _get_local_timezone_offset_seconds
 from helpers import COMMON, EVERLY, IPHONE
 
@@ -134,3 +135,121 @@ def test_dates_accept_the_apps_fallback_formats(tracker):
 ])
 def test_timezone_offset_ignores_dst(zone, offset):
     assert _get_local_timezone_offset_seconds(zone) == offset
+
+
+# ----- selections and joins that arrive from the phone after setup -----
+
+NEW_SELECTIONS = [
+    ("SleepDesc", "SleepDesc"),
+    ("SleepLocationSelection", "SleepLocationSelection"),
+    ("FeedDesc", "FeedDesc"),
+    ("AllergenSourceSelection", "AllergenSourceSelection"),
+    ("SickDesc", "SickDesc"),
+    ("OtherActivityLocationSelection", "OtherActivityLocationSelection"),
+    ("DoctorSelection", "DoctorSelection"),
+]
+
+
+@pytest.mark.parametrize("object_type, table", NEW_SELECTIONS)
+def test_new_selection_types_are_stored(apply, query, object_type, table):
+    apply({"BCObjectType": object_type, "objectID": "SEL1", "timestamp": COMMON["timestamp"],
+           "name": "Crib", "desc": "by the window"})
+    assert query(f"SELECT Name, Description FROM {table} WHERE ID='SEL1'") == [("Crib", "by the window")]
+
+
+def test_doctor_selection_keeps_clinic_details(apply, query, tracker):
+    apply({"BCObjectType": "DoctorSelection", "objectID": "DOC1", "timestamp": COMMON["timestamp"],
+           "name": "Dr. Lee", "address": "1 Main St", "clinicName": "Kids Clinic", "phoneNumber": "555-0100"})
+    assert query("SELECT Address, ClinicName, PhoneNumber FROM DoctorSelection WHERE ID='DOC1'") == [
+        ("1 Main St", "Kids Clinic", "555-0100")]
+    wire = tracker.db.get_named_wire("DoctorSelection", "DOC1")
+    assert (wire["name"], wire["address"], wire["clinicName"], wire["phoneNumber"]) == (
+        "Dr. Lee", "1 Main St", "Kids Clinic", "555-0100")
+
+
+def test_selection_wire_names_of_the_ios_classes_are_aliases(apply, query):
+    apply({"BCObjectType": "SleepLocation", "objectID": "SL", "timestamp": COMMON["timestamp"], "name": "Pram"})
+    assert query("SELECT Name FROM SleepLocationSelection WHERE ID='SL'") == [("Pram",)]
+
+
+def test_a_sleep_stores_its_location_and_description(apply, query, tracker):
+    apply({**COMMON, "BCObjectType": "Sleep", "objectID": "S1", "duration": 40,
+           "location": {"objectID": "LOC", "name": "Crib", "timestamp": COMMON["timestamp"]},
+           "desc": {"objectID": "SD", "name": "Rocked", "timestamp": COMMON["timestamp"]}})
+    assert query("SELECT LocationID, DescID FROM Sleep WHERE ID='S1'") == [("LOC", "SD")]
+    # the nested selections are stored too, so names resolve
+    assert query("SELECT Name FROM SleepLocationSelection WHERE ID='LOC'") == [("Crib",)]
+    wire = tracker.db.get_record_wire("Sleep", "S1")
+    assert wire["locationID"] == "LOC" and wire["desc"]["name"] == "Rocked"
+    # a phone that sends plain IDs works too
+    apply({**COMMON, "BCObjectType": "Sleep", "objectID": "S2", "locationID": "LOC", "descID": "SD"})
+    assert query("SELECT LocationID, DescID FROM Sleep WHERE ID='S2'") == [("LOC", "SD")]
+
+
+def test_feed_description_is_stored_on_every_feed_kind(apply, query):
+    desc = {"objectID": "FD", "name": "Spit up", "timestamp": COMMON["timestamp"]}
+    for kind, table in (("Nursing", "Nursing"), ("Formula", "Formula"), ("Pumped", "Pumped")):
+        apply({**COMMON, "BCObjectType": kind, "objectID": f"F-{kind}", "desc": desc,
+               "amount": {"value": 3, "englishMeasure": True}})
+        assert query(f"SELECT DescID FROM {table} WHERE ID='F-{kind}'") == [("FD",)]
+    assert query("SELECT Name FROM FeedDesc") == [("Spit up",)]
+
+
+def test_doctor_visit_medicine_is_a_plain_join_record(apply, query):
+    apply({"BCObjectType": "DoctorVisitMedicine", "objectID": "DVM", "timestamp": COMMON["timestamp"],
+           "doctorVisitID": "VISIT", "medID": "MED"})
+    assert query("SELECT DoctorVisitID, MedID FROM DoctorVisitMedicine WHERE ID='DVM'") == [("VISIT", "MED")]
+    apply({"BCObjectType": "DoctorVisitMedicine", "objectID": "DVM", "timestamp": COMMON["timestamp"]}, op=2)
+    assert query("SELECT * FROM DoctorVisitMedicine") == []
+
+
+def test_doctor_visit_medicine_protects_its_medicine(apply, query):
+    apply({"BCObjectType": "MedicationSelection", "objectID": "MED", "timestamp": COMMON["timestamp"],
+           "name": "Amoxicillin"})
+    apply({"BCObjectType": "DoctorVisitMedicine", "objectID": "DVM", "timestamp": COMMON["timestamp"],
+           "doctorVisitID": "VISIT", "medID": "MED"})
+    assert apply({"BCObjectType": "MedicationSelection", "objectID": "MED", "timestamp": COMMON["timestamp"]},
+                 op=2) == "rejected"
+    assert query("SELECT COUNT(*) FROM MedicineSelection WHERE ID='MED'") == [(1,)]
+
+
+@pytest.mark.parametrize("selection, name, record", [
+    ("SleepDesc", "Rocked", {"BCObjectType": "Sleep", "descID": "SEL"}),
+    ("SleepLocationSelection", "Crib", {"BCObjectType": "Sleep", "locationID": "SEL"}),
+    ("FeedDesc", "Burped", {"BCObjectType": "Formula", "descID": "SEL", "amount": {"value": 1, "englishMeasure": True}}),
+    ("FeedDesc", "Burped", {"BCObjectType": "Nursing", "descID": "SEL"}),
+    ("OtherActivityLocationSelection", "Park", {"BCObjectType": "OtherActivity", "locationID": "SEL"}),
+    ("DoctorSelection", "Dr. Lee", {"BCObjectType": "DoctorVisit", "doctorID": "SEL"}),
+])
+def test_a_selection_in_use_is_not_deleted(apply, query, selection, name, record):
+    apply({"BCObjectType": selection, "objectID": "SEL", "timestamp": COMMON["timestamp"], "name": name})
+    apply({**COMMON, **record, "objectID": "R1"})
+    assert apply({"BCObjectType": selection, "objectID": "SEL", "timestamp": COMMON["timestamp"]},
+                 op=2) == "rejected"
+    assert query(f"SELECT COUNT(*) FROM {selection} WHERE ID='SEL'") == [(1,)]
+
+
+def test_an_unused_new_selection_is_deleted(apply, query):
+    apply({"BCObjectType": "SleepDesc", "objectID": "SEL", "timestamp": COMMON["timestamp"], "name": "Rocked"})
+    assert apply({"BCObjectType": "SleepDesc", "objectID": "SEL", "timestamp": COMMON["timestamp"]}, op=2) == "success"
+    assert query("SELECT COUNT(*) FROM SleepDesc") == [(0,)]
+
+
+def test_an_allergen_source_in_use_is_not_deleted(apply, app_db):
+    apply({"BCObjectType": "AllergenSourceSelection", "objectID": "SRC", "timestamp": COMMON["timestamp"],
+           "name": "Peanut"})
+    conn = sqlite3.connect(app_db)
+    conn.execute("INSERT INTO Allergen (ID, Time, BabyID, SourceID, Severity) VALUES ('A1', 1, ?, 'SRC', 1)", (EVERLY,))
+    conn.commit()
+    conn.close()
+    assert apply({"BCObjectType": "AllergenSourceSelection", "objectID": "SRC", "timestamp": COMMON["timestamp"]},
+                 op=2) == "rejected"
+
+
+def test_a_clashing_new_selection_name_keeps_the_older(apply, query):
+    apply({"BCObjectType": "SleepLocationSelection", "objectID": "OLD", "timestamp": "2026-01-01 00:00:00 +0000",
+           "name": "Crib"})
+    result = apply({"BCObjectType": "SleepLocationSelection", "objectID": "NEW",
+                    "timestamp": "2026-10-01 00:00:00 +0000", "name": "Crib"})
+    assert result == "rejected"
+    assert query("SELECT ID FROM SleepLocationSelection") == [("OLD",)]

@@ -2989,6 +2989,30 @@ class BabyTrackerLocalDatabase:
         finally:
             conn.close()
 
+    def get_insight_sleeps(self, baby_id: str, since: float, now: Optional[float] = None) -> List[Dict]:
+        """
+        Sleeps that started since a time, oldest first, for one baby.
+
+        Each dict has time (start), duration (minutes) and in_progress: a sleep with no duration
+        yet that started less than IN_PROGRESS_SLEEP_SECONDS before `now` (default: the current time;
+        older ones never ended and are left out, as get_recent_records labels them).
+        """
+        conn = self._connect()
+        try:
+            now = self._now().timestamp() if now is None else now
+            rows = conn.execute("SELECT Time, Duration FROM Sleep WHERE BabyID = ? AND Time >= ? ORDER BY Time",
+                                (baby_id, since)).fetchall()
+            sleeps = []
+            for time, duration in rows:
+                duration = duration or 0
+                if duration > 0:
+                    sleeps.append({"time": time, "duration": duration, "in_progress": False})
+                elif 0 <= now - time < IN_PROGRESS_SLEEP_SECONDS:
+                    sleeps.append({"time": time, "duration": 0, "in_progress": True})
+            return sleeps
+        finally:
+            conn.close()
+
     def get_insight_growth(self, baby_id: str) -> List[Dict]:
         """
         Every growth measurement for one baby, oldest first, in kg and cm.
@@ -3641,6 +3665,64 @@ class BabyTrackerLocalDatabase:
             conn.close()
         found.sort(key=lambda item: item[:2], reverse=True)
         return [item[2] for item in found[:limit]]
+
+    def get_pictures(self, baby_id: str, limit: int = 10, picture_dir: Optional[str] = None) -> List[Dict]:
+        """
+        The newest pictures attached to one baby's entries, newest entry first (within an
+        entry, the most recently added picture first). Videos are left out.
+
+        Each item has picture_id, path and thumbnail_path (absolute paths of the files in the
+        picture directory, None while a file has not been downloaded), time (the entry's time,
+        ISO 8601 in the configured zone), object_type and object_id (the entry, as in
+        get_recent_records), kind (its label there) and note. picture_dir defaults to the one
+        the last sync was given.
+        """
+        picture_dir = picture_dir or self.picture_dir
+        if not baby_id or limit <= 0:
+            return []
+        now = self._now().timestamp()
+        found = []
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            if not self._table_exists(cursor, "Picture"):
+                return []
+            for object_type, alias, select in self._RECENT_QUERIES:
+                if not self._table_exists(cursor, records.record_type(object_type).table):
+                    continue
+                sql = (f"{select} WHERE {alias}BabyID = ? AND {alias}ID IN "
+                       f"(SELECT ActivityID FROM Picture WHERE Type IS NULL OR Type = 0) "
+                       f"ORDER BY {alias}Time DESC, {alias}Timestamp DESC LIMIT {int(limit)}")
+                for object_id, time, timestamp, note, *extra in cursor.execute(sql, (baby_id,)).fetchall():
+                    time = time or 0
+                    entry = {
+                        "object_type": object_type,
+                        "object_id": object_id,
+                        "time": self._local(time).isoformat(),
+                        "kind": self._recent_kind(object_type, tuple(extra), now, time),
+                        "note": note or "",
+                    }
+                    found.append((time, timestamp or 0, entry))
+            found.sort(key=lambda item: item[:2], reverse=True)
+
+            def on_disk(name):
+                if not picture_dir or not name:
+                    return None
+                path = os.path.join(picture_dir, os.path.basename(name))
+                return os.path.abspath(path) if os.path.isfile(path) else None
+
+            pictures = []
+            for _time, _timestamp, entry in found[:limit]:
+                rows = cursor.execute(
+                    "SELECT ID, FileName FROM Picture WHERE ActivityID = ? AND (Type IS NULL OR Type = 0) "
+                    "ORDER BY Timestamp DESC, ID", (entry["object_id"],)).fetchall()
+                for picture_id, file_name in rows:
+                    full, thumbnail = records.media_files(file_name, 0)
+                    pictures.append({"picture_id": picture_id, "path": on_disk(full),
+                                     "thumbnail_path": on_disk(thumbnail), **entry})
+        finally:
+            conn.close()
+        return pictures[:limit]
 
     def get_named_wire(self, object_type: str, object_id: str) -> Optional[Dict]:
         """A stored baby or selection as the apps send it, or None if it isn't there."""

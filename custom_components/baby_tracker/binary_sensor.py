@@ -20,6 +20,8 @@ from .const import (
     ALERT_TYPE_LONG_SLEEP,
     ALERT_TYPE_LOW_WET_DIAPERS,
     ALERT_TYPE_NO_POOP,
+    ALERT_TYPE_SLEEP_DUE,
+    ALERT_TYPE_WAKE_OVERDUE,
     ALERT_TYPE_WAKE_TO_FEED,
     ATTR_AGE_BRACKET,
     ATTR_ALERT_TYPE,
@@ -47,6 +49,7 @@ from .const import (
     NIGHT_START_HOUR,
     NO_POOP_THRESHOLDS,
     UNIT_SYSTEM_METRIC,
+    WAKE_OVERDUE_GRACE_MINUTES,
 )
 from .entity import ClockTickMixin, baby_device_info, baby_unique_id, hours_since_feeding
 from .sensor import parse_time
@@ -110,6 +113,8 @@ async def async_setup_entry(
             IntakeLowAlert(coordinator, baby_name),
             FeedDueAlert(coordinator, baby_name),
             WakeToFeedAlert(coordinator, baby_name),
+            SleepDueAlert(coordinator, baby_name),
+            WakeOverdueAlert(coordinator, baby_name),
         ]
         entities.extend(alert_entities)
         entities.append(BabyTrackerNightModeSensor(coordinator, baby_name))
@@ -460,6 +465,60 @@ class WakeToFeedAlert(ClockTickMixin, InsightAlert):
 
     def _evaluate_condition(self):
         return self._has_passed(self._get_current_value())
+
+
+class SleepDueAlert(ClockTickMixin, InsightAlert):
+    """Alert when an awake baby has reached the end of their usual wake window."""
+
+    _alert_type = ALERT_TYPE_SLEEP_DUE
+
+    def _get_threshold_info(self):
+        return self._get_insight("next_sleep").get("wake_window_hours"), "hours awake"
+
+    def _get_current_value(self):
+        return self._get_insight("next_sleep").get("next_sleep_at")
+
+    def _evaluate_condition(self):
+        sleep = self._get_insight("next_sleep")
+        return not sleep.get("is_asleep") and self._has_passed(sleep.get("next_sleep_at"))
+
+    @property
+    def extra_state_attributes(self):
+        sleep = self._get_insight("next_sleep")
+        return {
+            **super().extra_state_attributes,
+            "next_sleep_at": sleep.get("next_sleep_at"),
+            "awake_since": sleep.get("awake_since"),
+            "wake_window_hours": sleep.get("wake_window_hours"),
+        }
+
+
+class WakeOverdueAlert(ClockTickMixin, InsightAlert):
+    """Alert when a sleep has run well past the usual length (Nap Running Long)."""
+
+    _alert_type = ALERT_TYPE_WAKE_OVERDUE
+
+    def _get_threshold_info(self):
+        return WAKE_OVERDUE_GRACE_MINUTES, "minutes past the expected wake time"
+
+    def _get_current_value(self):
+        return self._get_insight("next_sleep").get("expected_wake_at")
+
+    def _evaluate_condition(self):
+        sleep = self._get_insight("next_sleep")
+        expected = dt_util.parse_datetime(sleep.get("expected_wake_at") or "")
+        if not sleep.get("is_asleep") or expected is None or expected.tzinfo is None:
+            return False
+        return dt_util.utcnow() >= expected + timedelta(minutes=WAKE_OVERDUE_GRACE_MINUTES)
+
+    @property
+    def extra_state_attributes(self):
+        sleep = self._get_insight("next_sleep")
+        return {
+            **super().extra_state_attributes,
+            "expected_wake_at": sleep.get("expected_wake_at"),
+            "asleep_since": sleep.get("asleep_since"),
+        }
 
 
 class BabyTrackerNightModeSensor(ClockTickMixin, CoordinatorEntity, BinarySensorEntity):

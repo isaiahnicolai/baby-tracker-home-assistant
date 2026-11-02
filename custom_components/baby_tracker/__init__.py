@@ -541,6 +541,8 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                 "last_event": self._latest_event(tracker, baby_id, now),
                 "recent_records": self._derived(
                     "Recent records", [], tracker.get_recent_records, baby_id, RECENT_RECORDS_LIMIT),
+                "latest_picture": self._derived("Latest picture", None, tracker.get_latest_picture, baby_id),
+                "pictures": self._derived("Recent pictures", [], tracker.get_pictures, baby_id, 10),
             }
 
         account = {
@@ -629,6 +631,20 @@ class BabyTrackerDataCoordinator(DataUpdateCoordinator):
                         "amount": curr_medicine.get("amount"),
                         "unit": curr_medicine.get("unit"),
                         "time": curr_medicine.get("time"),
+                    })
+
+                # A new picture on any entry (the newest one, not an older one resurfacing after a delete)
+                curr_picture = current.get("latest_picture") or {}
+                prev_picture = prev.get("latest_picture") or {}
+                if (curr_picture.get("picture_id") and
+                        curr_picture.get("picture_id") != prev_picture.get("picture_id") and
+                        _is_newer(curr_picture.get("time"), prev_picture.get("time"))):
+                    self._announce("photo", baby_name, baby_id, {
+                        "kind": curr_picture.get("kind"),
+                        "time": curr_picture.get("time"),
+                        "object_type": curr_picture.get("object_type"),
+                        "object_id": curr_picture.get("object_id"),
+                        "picture_id": curr_picture.get("picture_id"),
                     })
 
             self._previous_data = {k: dict(v) for k, v in baby_data.items()}

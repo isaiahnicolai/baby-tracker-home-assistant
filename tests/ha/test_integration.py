@@ -75,6 +75,12 @@ INSIGHTS = {
         "sample_count": 6, "bucket": "day", "last_feed_at": "2026-03-01T09:30:00+00:00",
         "overdue": False, "max_gap_hours": 5.0, "wake_by": "2026-03-01T14:30:00+00:00",
     },
+    "next_sleep": {  # Everly is asleep (since 11:00), as in last_sleep below
+        "is_asleep": True, "asleep_since": "2026-03-01T11:00:00+00:00",
+        "expected_wake_at": "2026-03-01T12:40:00+00:00", "awake_since": None, "wake_window_hours": None,
+        "window_min_hours": 1.0, "window_max_hours": 2.5, "next_sleep_at": None, "overdue": False,
+        "max_awake_hours": 2.5, "basis": "history", "sample_count": 5, "bucket": "day",
+    },
     "intake": {
         "actual_ml": 420.0, "expected_min_ml": 600, "expected_max_ml": 800, "status": "low",
         "reason": "420 ml is under 600 ml (150 ml/kg)", "bottle_feeds": 6, "nursing_feeds": 1,
@@ -445,6 +451,114 @@ async def test_insight_entities(hass, backend):
     assert hass.states.get("binary_sensor.ann_marie_intake_low").state == "off"
 
 
+AWAKE = {  # awake since 10:30, with a 1 h 45 min wake window: sleepy at 12:15
+    "is_asleep": False, "asleep_since": None, "expected_wake_at": None,
+    "awake_since": "2026-03-01T10:30:00+00:00", "wake_window_hours": 1.75,
+    "window_min_hours": 1.0, "window_max_hours": 2.5, "next_sleep_at": "2026-03-01T12:15:00+00:00",
+    "overdue": False, "max_awake_hours": 2.5, "basis": "age_default", "sample_count": 2, "bucket": "day",
+}
+
+
+def with_next_sleep(next_sleep):
+    return fetch_with(insights={**INSIGHTS, "next_sleep": next_sleep})
+
+
+async def test_sleep_prediction_entities_for_an_awake_baby(hass, backend, freezer):
+    freezer.move_to("2026-03-01 12:00:00+00:00")
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", with_next_sleep(AWAKE)):
+        await setup(hass, make_entry())
+
+    next_sleep = hass.states.get("sensor.everly_next_sleep")
+    assert next_sleep.state == "2026-03-01T12:15:00+00:00"
+    assert next_sleep.attributes["device_class"] == "timestamp"
+    assert next_sleep.attributes["awake_since"] == "2026-03-01T10:30:00+00:00"
+    assert next_sleep.attributes["wake_window_hours"] == 1.75
+    assert (next_sleep.attributes["window_min_hours"], next_sleep.attributes["window_max_hours"]) == (1.0, 2.5)
+    assert next_sleep.attributes["max_awake_hours"] == 2.5
+    assert (next_sleep.attributes["basis"], next_sleep.attributes["sample_count"]) == ("age_default", 2)
+    assert (next_sleep.attributes["bucket"], next_sleep.attributes["overdue"]) == ("day", False)
+
+    window = hass.states.get("sensor.everly_wake_window")
+    assert float(window.state) == 1.75
+    assert window.attributes["unit_of_measurement"] == "h" and window.attributes["device_class"] == "duration"
+    assert window.attributes["state_class"] == "measurement"
+    assert (window.attributes["window_min_hours"], window.attributes["window_max_hours"]) == (1.0, 2.5)
+    assert window.attributes["basis"] == "age_default"
+
+    assert hass.states.get("sensor.everly_expected_wake").state == "unknown"  # awake
+    assert hass.states.get("binary_sensor.everly_sleep_due").state == "off"
+    assert hass.states.get("binary_sensor.everly_nap_running_long").state == "off"
+
+
+async def test_sleep_prediction_entities_for_a_sleeping_baby(hass, backend, freezer):
+    freezer.move_to("2026-03-01 12:00:00+00:00")
+    await setup(hass, make_entry())
+
+    expected = hass.states.get("sensor.everly_expected_wake")
+    assert expected.state == "2026-03-01T12:40:00+00:00"
+    assert expected.attributes["device_class"] == "timestamp"
+    assert expected.attributes["asleep_since"] == "2026-03-01T11:00:00+00:00"
+    assert (expected.attributes["basis"], expected.attributes["sample_count"], expected.attributes["bucket"]) == (
+        "history", 5, "day")
+
+    assert hass.states.get("sensor.everly_next_sleep").state == "unknown"  # asleep
+    assert hass.states.get("sensor.everly_wake_window").state == "unknown"
+    assert hass.states.get("binary_sensor.everly_sleep_due").state == "off"
+    assert hass.states.get("binary_sensor.everly_nap_running_long").state == "off"  # not yet 13:10
+
+    # A baby with no insights has unknown values rather than errors
+    for key in ("sensor.ann_marie_next_sleep", "sensor.ann_marie_expected_wake", "sensor.ann_marie_wake_window"):
+        assert hass.states.get(key).state == "unknown", key
+    assert hass.states.get("binary_sensor.ann_marie_sleep_due").state == "off"
+    assert hass.states.get("binary_sensor.ann_marie_nap_running_long").state == "off"
+
+
+async def test_sleep_due_turns_on_when_the_clock_passes_the_wake_window(hass, backend, freezer):
+    freezer.move_to("2026-03-01 12:05:00+00:00")
+    fetches = []
+    fetch = with_next_sleep(AWAKE)
+
+    def counting_fetch(self, photo_dir):
+        fetches.append(photo_dir)
+        return fetch(self, photo_dir)
+
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", counting_fetch):
+        await setup(hass, make_entry())
+        assert hass.states.get("binary_sensor.everly_sleep_due").state == "off"  # sleepy at 12:15
+
+        freezer.tick(timedelta(minutes=11))  # past 12:15, short of the next 15-minute refresh
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+
+        assert len(fetches) == 1
+        due = hass.states.get("binary_sensor.everly_sleep_due")
+        assert due.state == "on"
+        assert due.attributes["next_sleep_at"] == "2026-03-01T12:15:00+00:00"
+        assert due.attributes["awake_since"] == "2026-03-01T10:30:00+00:00"
+        assert due.attributes["wake_window_hours"] == 1.75
+        assert hass.states.get("binary_sensor.everly_nap_running_long").state == "off"  # awake
+
+        # It can be dismissed until the next episode
+        await hass.services.async_call(
+            DOMAIN, "dismiss_alert", {"entity_id": "binary_sensor.everly_sleep_due"}, blocking=True)
+        assert hass.states.get("binary_sensor.everly_sleep_due").state == "off"
+
+
+async def test_nap_running_long_turns_on_half_an_hour_after_the_expected_wake(hass, backend, freezer):
+    freezer.move_to("2026-03-01 13:08:00+00:00")  # expected wake 12:40, so 13:10 is the line
+    await setup(hass, make_entry())
+    assert hass.states.get("binary_sensor.everly_nap_running_long").state == "off"
+    assert hass.states.get("binary_sensor.everly_sleep_due").state == "off"  # asleep
+
+    freezer.tick(timedelta(minutes=3))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    running_long = hass.states.get("binary_sensor.everly_nap_running_long")
+    assert running_long.state == "on"
+    assert running_long.attributes["expected_wake_at"] == "2026-03-01T12:40:00+00:00"
+    assert running_long.attributes["asleep_since"] == "2026-03-01T11:00:00+00:00"
+
+
 async def test_sensors_have_numeric_states_and_device_classes(hass, backend):
     await setup(hass, make_entry(unit_system="metric"))
 
@@ -573,7 +687,7 @@ async def test_service_units_follow_the_entry_unless_given(hass, backend, unit_s
 
 async def test_dismiss_alert_takes_the_insight_alert_types(hass, backend):
     await setup(hass, make_entry())
-    for alert_type in ("intake_low", "feed_due", "wake_to_feed"):
+    for alert_type in ("intake_low", "feed_due", "wake_to_feed", "sleep_due", "wake_overdue"):
         await hass.services.async_call(
             DOMAIN, "dismiss_alert", {"baby_name": "Everly", "alert_type": alert_type}, blocking=True)
     assert hass.states.get("binary_sensor.everly_feed_due").state == "off"  # dismissed while still true
@@ -843,13 +957,135 @@ async def test_activity_event_fires_when_something_new_is_found(hass, backend, c
     state = hass.states.get("event.everly_activity")
     assert state.attributes["event_type"] == event_type
     assert state.attributes["event_types"] == [
-        "feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine", "undo"]
+        "feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine", "photo", "undo"]
     assert state.attributes["baby_name"] == "Everly"
     assert state.attributes["time"] == next(iter(changes.values()))["time"]
     assert hass.states.get("event.ann_marie_activity").state == "unknown"  # only Everly's changed
 
     # The bus events are still fired for feedings, diapers and sleeps
     assert len(bus_events) == (0 if event_type in ("bath", "medicine") else 1)
+
+
+# ----- latest photo -----
+
+def picture(path, picture_id="PIC1", time="2026-03-01 12:00:00 +0000", **more):
+    return {"picture_id": picture_id, "path": path, "thumbnail_path": None, "time": time,
+            "object_type": "Joy", "object_id": "JOY1", "kind": "joy", "note": "Smiling", **more}
+
+
+def write_picture(hass, name, content):
+    path = hass.config.path("baby_tracker", "pictures", name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(content)
+    return path
+
+
+async def test_latest_photo_serves_the_newest_picture_with_its_details(hass, hass_client, backend):
+    path = write_picture(hass, "pic1.jpg", b"joy-bytes")
+    pictures = [picture(path), picture(None, "PIC0", "2026-02-28 12:00:00 +0000", kind="bath")]
+    entry = make_entry()
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with(latest_picture=pictures[0], pictures=pictures)):
+        await setup(hass, entry)
+
+    state = hass.states.get("image.everly_latest_photo")
+    assert state is not None and state.state != "unknown"
+    assert state.attributes["kind"] == "joy"
+    assert state.attributes["note"] == "Smiling"
+    assert state.attributes["object_type"] == "Joy"
+    assert state.attributes["object_id"] == "JOY1"
+    assert state.attributes["picture_id"] == "PIC1"
+    assert state.attributes["time"] == "2026-03-01 12:00:00 +0000"
+    assert state.attributes["recent"] == [
+        {"picture_id": "PIC1", "kind": "joy", "time": "2026-03-01 12:00:00 +0000"},
+        {"picture_id": "PIC0", "kind": "bath", "time": "2026-02-28 12:00:00 +0000"},
+    ]
+    assert str(path) not in str(state.attributes)  # file paths stay internal
+
+    response = await (await hass_client()).get(state.attributes["entity_picture"])
+    assert response.status == 200
+    assert await response.read() == b"joy-bytes"
+    unique_id = er.async_get(hass).async_get("image.everly_latest_photo").unique_id
+    assert unique_id == f"{DOMAIN}_{EMAIL}_ID-EVERLY_latest_photo"
+
+
+async def test_latest_photo_is_unknown_without_a_picture(hass, backend):
+    await setup(hass, make_entry())
+    assert hass.states.get("image.everly_latest_photo").state == "unknown"
+    assert hass.states.get("image.ann_marie_latest_photo").state == "unknown"
+
+
+async def test_latest_photo_timestamp_changes_with_a_new_picture(hass, backend):
+    first = write_picture(hass, "pic1.jpg", b"one")
+    second = write_picture(hass, "pic2.jpg", b"two")
+    entry = make_entry()
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with(latest_picture=picture(first))):
+        await setup(hass, entry)
+    before = hass.states.get("image.everly_latest_photo").state
+
+    newer = picture(second, "PIC2", "2026-03-01 13:00:00 +0000")
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with(latest_picture=newer)):
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=5))
+        await hass.data[DOMAIN][entry.entry_id].async_refresh()
+        await hass.async_block_till_done()
+    after = hass.states.get("image.everly_latest_photo")
+    assert after.state != before
+    assert after.attributes["picture_id"] == "PIC2"
+
+
+async def test_photo_event_fires_once_for_a_new_picture(hass, backend):
+    first = picture("/x/pic1.jpg")
+    entry = make_entry()
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with(latest_picture=first)):
+        await setup(hass, entry)
+    assert hass.states.get("event.everly_activity").state == "unknown"  # the first refresh announces nothing
+
+    newer = picture("/x/pic2.jpg", "PIC2", "2026-03-01 13:00:00 +0000", kind="bath", object_type="Bath",
+                    object_id="BATH1")
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with(latest_picture=newer)):
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        state = hass.states.get("event.everly_activity")
+        assert state.attributes["event_type"] == "photo"
+        assert state.attributes["kind"] == "bath"
+        assert state.attributes["time"] == "2026-03-01 13:00:00 +0000"
+        assert state.attributes["object_type"] == "Bath"
+        assert state.attributes["object_id"] == "BATH1"
+        assert state.attributes["picture_id"] == "PIC2"
+        fired_at = state.state
+
+        # The same picture again is not new
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        assert hass.states.get("event.everly_activity").state == fired_at
+
+
+async def test_an_older_picture_becoming_the_latest_is_not_announced(hass, backend):
+    entry = make_entry()
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with(latest_picture=picture("/x/pic2.jpg", "PIC2", "2026-03-01 13:00:00 +0000"))):
+        await setup(hass, entry)
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with(latest_picture=picture("/x/pic1.jpg", "PIC1", "2026-03-01 12:00:00 +0000"))):
+        await hass.data[DOMAIN][entry.entry_id].async_refresh()
+        await hass.async_block_till_done()
+    assert hass.states.get("event.everly_activity").state == "unknown"
+
+
+async def test_diagnostics_are_unaffected_by_pictures(hass, hass_client, backend):
+    entry = make_entry()
+    with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
+               fetch_with(latest_picture=picture("/secret/pic1.jpg"), pictures=[picture("/secret/pic1.jpg")])):
+        await setup(hass, entry)
+    diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+    assert "/secret/" not in str(diagnostics)
+    assert diagnostics["insights"]["ID-EVERLY"]["intake"]["status"] == "low"
 
 
 async def test_unchanged_data_fires_no_activity_event(hass, backend):
@@ -1871,6 +2107,30 @@ async def test_the_intake_intent_reports_in_the_entrys_unit(hass, backend, freez
         "Everly has had 420 ml in the last 24 hours, which is low. Expected is 600 to 800 ml.")
 
 
+async def test_the_next_sleep_question_answers_for_a_sleeping_and_an_awake_baby(hass, assist):
+    # It is 12:00 and Everly fell asleep at 11:00
+    assert said(await ask(hass, "BabyTrackerNextSleep", baby="Everly")) == (
+        f"Everly has been asleep for 1 hour and is expected to wake around {at(12, 40)}.")
+
+    everly = coordinator_for(hass, assist).data["baby_data"]["Everly"]
+    everly["insights"] = insights = {**INSIGHTS}  # a copy: the shared fake stays as it was
+    insights["next_sleep"] = {**AWAKE, "awake_since": "2026-03-01T10:40:00+00:00",
+                              "next_sleep_at": "2026-03-01T12:25:00+00:00"}
+    assert said(await ask(hass, "BabyTrackerNextSleep", baby="Everly")) == (
+        f"Everly has been awake for 1 h 20 min; the next nap is expected around {at(12, 25)}, in 25 minutes.")
+
+    insights["next_sleep"] = {**AWAKE, "next_sleep_at": "2026-03-01T11:45:00+00:00"}
+    assert said(await ask(hass, "BabyTrackerNextSleep", baby="Everly")) == (
+        f"Everly has been awake for 1 h 30 min; a nap is due. It was expected around {at(11, 45)}.")
+
+    insights["next_sleep"] = {**INSIGHTS["next_sleep"], "expected_wake_at": "2026-03-01T11:50:00+00:00"}
+    assert said(await ask(hass, "BabyTrackerNextSleep", baby="Everly")) == (
+        f"Everly has been asleep for 1 hour and was expected to wake around {at(11, 50)}.")
+
+    assert said(await ask(hass, "BabyTrackerNextSleep", baby="Ann Marie")) == (
+        "I don't have enough sleep logged to predict Ann Marie's next nap yet.")
+
+
 async def test_the_sleep_question_says_how_long_an_awake_baby_has_been_up(hass, assist):
     coordinator_for(hass, assist).data["baby_data"]["Everly"]["last_sleep"] = {
         "time": "2026-03-01 10:00:00 +0000", "is_sleeping": False, "duration": 45, "current_duration": 45}
@@ -1920,7 +2180,7 @@ async def test_the_intents_are_registered_once(hass):
     await bt_intent.async_setup_intents(hass)
     await bt_intent.async_setup_intents(hass)
     registered = [h.intent_type for h in intent.async_get(hass) if h.intent_type.startswith("BabyTracker")]
-    assert sorted(registered) == sorted(h.intent_type for h in bt_intent.HANDLERS) and len(registered) == 13
+    assert sorted(registered) == sorted(h.intent_type for h in bt_intent.HANDLERS) and len(registered) == 14
 
 
 def test_baby_names_become_list_values_without_template_syntax():
@@ -2011,6 +2271,9 @@ def test_the_shipped_sentences_are_understood_by_assist():
         ("when is Everly's next feed", "BabyTrackerNextFeed", {"baby": "Everly"}),
         ("how much has Everly eaten today", "BabyTrackerIntakeToday", {"baby": "Everly"}),
         ("is Everly sleeping", "BabyTrackerSleepStatus", {"baby": "Everly"}),
+        ("when should Everly nap", "BabyTrackerNextSleep", {"baby": "Everly"}),
+        ("when is Everly's next nap", "BabyTrackerNextSleep", {"baby": "Everly"}),
+        ("when will Everly wake up", "BabyTrackerNextSleep", {"baby": "Everly"}),
         ("how is Everly doing", "BabyTrackerSummary", {"baby": "Everly"}),
     ):
         result = hassil.recognize(text, intents)

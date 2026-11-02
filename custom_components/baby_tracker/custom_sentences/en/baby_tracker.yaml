@@ -144,6 +144,20 @@ intents:
           - "how is {baby}['s] (intake|eating|feeding)"
           - "how much (has|did) the baby (eaten|eat|had|drunk|taken) [today]"
 
+  BabyTrackerNextSleep:
+    data:
+      - sentences:
+          - "when (should|will|does) {baby} (nap|sleep|go to sleep|go down|need to nap|need to sleep|need a nap) [next]"
+          - "when is {baby}['s] next (nap|sleep|naptime|nap time)"
+          - "when is {baby} (due|ready|tired) for (a nap|sleep|bed)"
+          - "when is {baby} (due to|going to) (nap|sleep)"
+          - "when (should|do) I (put|lay) {baby} down [for a nap]"
+          - "when is the next (nap|sleep|naptime|nap time) [for {baby}]"
+          - "when will {baby} be (tired|sleepy|up|awake) next"
+          - "when (will|should) {baby} (wake|wake up|get up)"
+          - "when is {baby} (due|expected) to wake [up]"
+          - "what time (should|will) {baby} (nap|sleep|wake up)"
+
   BabyTrackerSleepStatus:
     data:
       - sentences:

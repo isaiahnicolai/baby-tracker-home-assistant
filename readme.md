@@ -230,6 +230,7 @@ These are totals over a rolling 7 days (the `window_days` attribute says so), up
 - **Nursing** (`binary_sensor`): on while a [nursing timer](#nursing-timer) is running
 - **Info** (diagnostic sensor): the baby's age, with date of birth and other details in attributes
 - **Photo** and **Photo Landscape** (`image`): the baby's photo from the app, and its wide version when the app has one. See [Photos](#photos)
+- **Latest Photo** (`image`): the newest picture attached to any entry (a joy, diaper, bath, activity...), with `kind`, `time`, `note`, `object_type`, `object_id` and `picture_id` attributes and a `recent` list of the last ten pictures. Unknown until a picture exists
 - **Recent Entries** (diagnostic sensor): the baby's newest records, with the type and ID that `delete_record` takes. See [Undoing a mistake](#undoing-a-mistake)
 - **Sync Now** and **Force Resync** (configuration buttons on the *Baby Tracker* device)
 - **Buttons** for quick logging: wet/dirty/mixed diapers, bath, start/end sleep, and the [controls and buttons](#controls-and-buttons) below (bottle, medicine, nursing timer, tummy time)
@@ -326,6 +327,9 @@ Alongside the raw logs, each baby gets a few derived entities. They are recalcul
 | --- | --- |
 | `sensor.<baby>_next_feed` | Timestamp of the next expected feed, from the median of recent feed intervals (day and night separately), with the interval, basis and sample size as attributes |
 | `sensor.<baby>_feed_interval` | The usual time between feeds, in hours |
+| `sensor.<baby>_next_sleep` | Timestamp when an awake baby will probably need sleep: the end of the last sleep plus their usual wake window. Unknown while asleep. Attributes: `awake_since`, `wake_window_hours`, `window_min_hours`, `window_max_hours`, `max_awake_hours`, `basis`, `sample_count`, `bucket`, `overdue` |
+| `sensor.<baby>_expected_wake` | Timestamp when a sleeping baby is expected to wake, from the usual length of their sleeps. Unknown while awake. Attributes: `asleep_since`, `basis`, `sample_count`, `bucket` |
+| `sensor.<baby>_wake_window` | How long the baby usually stays awake between sleeps right now, in hours. Attributes: `window_min_hours`, `window_max_hours`, `basis` |
 | `sensor.<baby>_intake_24h` | Bottle milk (formula and pumped) over the last 24 hours, with the expected range for the baby's weight. Shown in fl oz when the integration is set to imperial units |
 | `sensor.<baby>_intake_status` | `low`, `ok`, `high` or `unknown` against that range |
 | `sensor.<baby>_diaper_adequacy` | `ok`, `low` or `unknown` for wet and dirty diapers in the last 24 hours, for the baby's age |
@@ -335,14 +339,18 @@ Alongside the raw logs, each baby gets a few derived entities. They are recalcul
 | `binary_sensor.<baby>_intake_low` | On when intake status is `low` |
 | `binary_sensor.<baby>_feed_due` | On once the predicted next feed time has passed |
 | `binary_sensor.<baby>_wake_to_feed` | On when a young baby has gone past the longest sensible gap between feeds |
+| `binary_sensor.<baby>_sleep_due` | Sleep Due: on when an awake baby has reached the end of their usual wake window (`next_sleep_at` has passed). Attributes: `next_sleep_at`, `awake_since`, `wake_window_hours` |
+| `binary_sensor.<baby>_wake_overdue` | Nap Running Long: on when a sleeping baby is 30 minutes past the expected wake time. Attributes: `expected_wake_at`, `asleep_since` |
 
-The numbers rest on published guidance: roughly 150-200 ml of milk per kg of body weight per day (AAP and NHS feeding guidance, capped at 960 ml), the WHO Child Growth Standards for percentiles (read from the CDC's copy of the tables, bundled in `custom_components/baby_tracker/client/data`), and, for babies born before 37 weeks, age corrected for prematurity until 24 months as the AAP recommends. Feed timing, diaper and weight gain ranges are rules of thumb, not measurements of your baby. **These entities are not medical advice and cannot diagnose anything.** Every baby is different; talk to your pediatrician or health visitor about any worry about feeding, diapers or growth.
+**Wake windows.** The sleep predictions work from how long your baby stays awake between sleeps. With at least 3 recent daytime wake windows (the gap from the end of one sleep to the start of the next, ignoring gaps over 8 hours) the window is their median; with fewer it is the middle of the typical range for the baby's age (corrected for prematurity). Either way it is kept inside that range, which runs from 35-60 minutes in the first month, 1-1.5 hours at 1-2 months, 1.25-2 hours at 3-4 months, 2-3 hours at 5-6, 2.5-3.5 hours at 7-9, 3-4 hours at 10-12, 4-6 hours at 13-18 months and 5-6 hours up to two. A sleep in progress is expected to end after the median of the baby's last six sleeps of the same part of the day (daytime is 07:00-19:00), or a typical length for the age with fewer than three. The `basis` attribute says whether the estimate came from `history` or the `age_default`.
 
-The three binary sensors work like the other alerts: they can be dismissed with `baby_tracker.dismiss_alert` using their entity ID.
+The numbers rest on published guidance: roughly 150-200 ml of milk per kg of body weight per day (AAP and NHS feeding guidance, capped at 960 ml), the WHO Child Growth Standards for percentiles (read from the CDC's copy of the tables, bundled in `custom_components/baby_tracker/client/data`), and, for babies born before 37 weeks, age corrected for prematurity until 24 months as the AAP recommends. Feed timing, wake windows, diaper and weight gain ranges are rules of thumb, not measurements of your baby. **These entities are not medical advice and cannot diagnose anything.** Every baby is different; talk to your pediatrician or health visitor about any worry about feeding, sleep, diapers or growth. Sleep Due and Nap Running Long are guidance for planning the day, not a sign that anything is wrong.
+
+The five binary sensors work like the other alerts: they can be dismissed with `baby_tracker.dismiss_alert` using their entity ID.
 
 ### Alerts that follow the clock
 
-Feed Due, Wake To Feed, Feeding Overdue, Night Mode, Time Since Last Feeding and Next Feeding depend on the time of day, not only on new records, so they are re-evaluated **every minute** rather than once per refresh. Feed Due turns on at the predicted time even if the next refresh is fifteen minutes away. Every alert also has a `baby_name` attribute, handy in notification templates.
+Feed Due, Wake To Feed, Sleep Due, Nap Running Long, Feeding Overdue, Night Mode, Time Since Last Feeding and Next Feeding depend on the time of day, not only on new records, so they are re-evaluated **every minute** rather than once per refresh. Feed Due turns on at the predicted time, and Sleep Due at the end of the wake window, even if the next refresh is fifteen minutes away. Every alert also has a `baby_name` attribute, handy in notification templates.
 
 ## Derived sensors
 
@@ -377,7 +385,7 @@ Each baby has a calendar (for example `calendar.baby_name_calendar`) showing the
 
 ## Event entities
 
-Each baby has an **Activity** event entity (`event.baby_name_activity`). It fires when a refresh finds something new, with one of these event types: `feeding`, `diaper`, `sleep_start`, `sleep_end`, `bath`, `medicine` or `undo` (an entry was deleted with Undo Last Entry or the `undo_last` service). The details (type, time, medicine name and so on) are attributes of the event. In an automation:
+Each baby has an **Activity** event entity (`event.baby_name_activity`). It fires when a refresh finds something new, with one of these event types: `feeding`, `diaper`, `sleep_start`, `sleep_end`, `bath`, `medicine`, `photo` (a new picture on any entry; `kind`, `time`, `object_type`, `object_id` and `picture_id` in the event) or `undo` (an entry was deleted with Undo Last Entry or the `undo_last` service). The details (type, time, medicine name and so on) are attributes of the event. In an automation:
 
 ```yaml
 triggers:
@@ -396,8 +404,10 @@ Ready-made automations in [`blueprints/automation/baby_tracker`](blueprints/auto
 | Blueprint | What it does | Import |
 | --- | --- | --- |
 | Feed due notification | Notifies a phone when a baby's Feed Due turns on, with the baby's name in the message | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fisaiahnicolai%2Fbaby-tracker-home-assistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbaby_tracker%2Ffeed_due_notification.yaml) |
+| Sleep due notification | Notifies a phone when a baby's Sleep Due turns on (an awake baby has reached the end of their usual wake window) | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fisaiahnicolai%2Fbaby-tracker-home-assistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbaby_tracker%2Fsleep_due_notification.yaml) |
 | Wake to feed | Notifies a phone when a baby should be woken to eat | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fisaiahnicolai%2Fbaby-tracker-home-assistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbaby_tracker%2Fwake_to_feed.yaml) |
 | Daily intake summary | At a time you choose, sends how much milk the baby has had in 24 hours (by default only when it is low) | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fisaiahnicolai%2Fbaby-tracker-home-assistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbaby_tracker%2Flow_intake_daily.yaml) |
+| New photo notification | Notifies a phone with the picture attached when a baby gets a new photo (uses the Activity event and Latest Photo entities) | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fisaiahnicolai%2Fbaby-tracker-home-assistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbaby_tracker%2Fnew_photo_notification.yaml) |
 
 The address pattern is `https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=<URL-encoded address of the blueprint file on GitHub>`. Each blueprint asks which baby's sensor to watch and which phone (a device with the Home Assistant app) to notify; create one automation per baby.
 
@@ -648,7 +658,7 @@ Deletes the local copy of the data and downloads everything again, for when the 
 service: baby_tracker.dismiss_alert
 data:
   baby_name: "Your Baby Name" # Optional
-  alert_type: feed_due # Optional: feeding_overdue, no_poop, low_wet_diapers, fever, long_sleep, intake_low, feed_due or wake_to_feed
+  alert_type: feed_due # Optional: feeding_overdue, no_poop, low_wet_diapers, fever, long_sleep, intake_low, feed_due, wake_to_feed, sleep_due or wake_overdue
   entity_id: binary_sensor.everly_feed_due # Optional - dismiss one alert by its entity
 ```
 
@@ -677,6 +687,7 @@ Home Assistant's Assist (the voice assistant on phones, satellites and the dashb
 | "when did Everly last eat", "when was Everly's last feed" | "Everly last ate 2 hours ago, a 4 oz bottle." |
 | "when was Everly's last diaper change" | "Everly's last diaper was wet, 45 minutes ago." |
 | "when is Everly's next feed" | The predicted time from the [insights](#insights) |
+| "when should Everly nap", "when is Everly's next nap", "when will Everly wake up" | "Everly has been awake for 1 h 20 min; the next nap is expected around 3:15 PM, in 25 minutes." Or, when asleep, "Everly has been asleep for 40 minutes and is expected to wake around 3:40 PM." |
 | "how much has Everly eaten today", "is Everly eating enough" | The last 24 hours of intake against the expected range |
 | "is Everly sleeping", "is Everly awake", "how long has Everly been asleep" | Asleep since, or awake since |
 | "how is Everly doing", "baby status" | A short status: last feed, last diaper, sleep and next feed (every baby when none is named) |

@@ -187,10 +187,15 @@ def cmd_next(tracker, args):
     """Each baby's predicted next feed, soonest first, and who is due first."""
     babies = []
     for baby in tracker.get_all_babies():
-        feed = (tracker.get_insights(baby.object_id) or {}).get("next_feed") or {}
+        insight = tracker.get_insights(baby.object_id) or {}
+        feed = insight.get("next_feed") or {}
+        sleep = insight.get("next_sleep") or {}
         babies.append({"baby": baby.name, "predicted_at": feed.get("predicted_at"),
                        "overdue": feed.get("overdue"), "last_feed_at": feed.get("last_feed_at"),
-                       "interval_hours": feed.get("interval_hours")})
+                       "interval_hours": feed.get("interval_hours"),
+                       # a nap is due, or a sleep in progress is due to end
+                       "next_sleep_at": sleep.get("next_sleep_at"), "asleep": sleep.get("is_asleep"),
+                       "expected_wake_at": sleep.get("expected_wake_at")})
     # Babies with no prediction (nothing logged yet) go last
     babies.sort(key=lambda b: (b["predicted_at"] is None, datetime.fromisoformat(b["predicted_at"])
                                if b["predicted_at"] else datetime.max))
@@ -295,7 +300,7 @@ def main(argv=None):
     undo.add_argument("--yes", action="store_true", help="delete it (without, only shows what would go)")
     undo.set_defaults(func=cmd_undo)
 
-    insights = sub.add_parser("insights", help="age, next feed, intake, diapers and growth percentiles")
+    insights = sub.add_parser("insights", help="age, next feed and sleep, intake, diapers and growth percentiles")
     insights.add_argument("--baby", help="one baby (default: every baby)")
     insights.set_defaults(func=cmd_insights)
 

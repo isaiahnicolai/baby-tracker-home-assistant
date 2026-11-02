@@ -2,7 +2,7 @@
 
 DOMAIN = "baby_tracker"
 CONFIG_ENTRY_VERSION = 2  # the config flow's VERSION; async_migrate_entry brings older entries up to it
-VERSION = "0.3.1"  # keep in sync with manifest.json and client/__init__.py
+VERSION = "0.4.0"  # keep in sync with manifest.json and client/__init__.py
 
 # Configuration
 CONF_EMAIL = "email"
@@ -90,6 +90,11 @@ ALERT_TYPE_LONG_SLEEP = "long_sleep"
 ALERT_TYPE_INTAKE_LOW = "intake_low"
 ALERT_TYPE_FEED_DUE = "feed_due"
 ALERT_TYPE_WAKE_TO_FEED = "wake_to_feed"
+ALERT_TYPE_SLEEP_DUE = "sleep_due"
+ALERT_TYPE_WAKE_OVERDUE = "wake_overdue"
+
+# Nap Running Long turns on this long after the expected wake time
+WAKE_OVERDUE_GRACE_MINUTES = 30
 
 # Alert thresholds - (min_days, max_days, value)
 FEEDING_THRESHOLDS = [
@@ -191,7 +196,7 @@ RECENT_RECORDS_LIMIT = 10  # how many records the Recent Entries sensor lists
 NOTHING_TO_UNDO = "Nothing to undo"  # what the client's undo_last reports when there is no record in the window
 
 # What a baby's Activity event entity can report
-ACTIVITY_EVENT_TYPES = ["feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine", "undo"]
+ACTIVITY_EVENT_TYPES = ["feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine", "photo", "undo"]
 SIGNAL_ACTIVITY = "baby_tracker_activity"  # dispatcher signal, suffixed with the config entry ID
 
 

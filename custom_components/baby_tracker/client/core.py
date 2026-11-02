@@ -1813,6 +1813,30 @@ class BabyTracker:
             return []
         return db.get_recent_records(baby_id, limit=limit, within_hours=within_hours)
 
+    def get_pictures(self, baby_id, limit=10, picture_dir=None):
+        """
+        The newest pictures attached to one baby's entries, newest first.
+
+        Each item is {"picture_id", "path", "thumbnail_path", "time", "object_type",
+        "object_id", "kind", "note"}: path and thumbnail_path are absolute (None until the
+        sync has downloaded the file), time is the entry's time as ISO 8601 with the
+        tracker's zone, and object_type, object_id, kind and note are the entry's, as
+        get_recent_records gives them. Videos are not listed.
+
+        Args:
+            limit: Most pictures to return
+            picture_dir: Where the pictures are kept (default: the directory the last sync used)
+        """
+        db = self._open_db()
+        if db is None:
+            return []
+        return db.get_pictures(baby_id, limit=limit, picture_dir=picture_dir)
+
+    def get_latest_picture(self, baby_id, picture_dir=None):
+        """The newest picture of one baby (see get_pictures for its keys), or None if there is none."""
+        pictures = self.get_pictures(baby_id, limit=1, picture_dir=picture_dir)
+        return pictures[0] if pictures else None
+
     def delete_record(self, object_type, object_id):
         """
         Delete one record and queue the delete for the other devices.
@@ -1951,7 +1975,7 @@ class BabyTracker:
 
     def get_insights(self, baby_id=None, now=None):
         """
-        Derived insights for one baby: age, next feed, 24-hour intake, diaper
+        Derived insights for one baby: age, next feed, next sleep, 24-hour intake, diaper
         adequacy, growth percentiles and weight velocity (see insights.py).
 
         Args:
@@ -1960,7 +1984,7 @@ class BabyTracker:
 
         Returns:
             dict: {"baby_id", "name", "generated_at", "age", "next_feed",
-            "intake", "diapers", "growth", "weight_velocity"}; each part is a
+            "next_sleep" (see insights.SleepPrediction), "intake", "diapers", "growth", "weight_velocity"}; each part is a
             plain dict, or None when the data it needs is missing. Empty when
             the baby isn't found.
         """
@@ -2013,6 +2037,13 @@ class BabyTracker:
             )
             for row in self.db.get_insight_feeds(baby_id, stamp - self._INSIGHT_FEED_DAYS * 86400)
         ]
+        sleeps = [
+            insights.Sleep(
+                start=at(row["time"]),
+                end=None if row["in_progress"] else at(row["time"] + row["duration"] * 60),
+            )
+            for row in self.db.get_insight_sleeps(baby_id, stamp - self._INSIGHT_FEED_DAYS * 86400, stamp)
+        ]
         day_ago = now - timedelta(hours=24)
 
         next_feed = insights.predict_next_feed(
@@ -2048,6 +2079,7 @@ class BabyTracker:
             "generated_at": now.isoformat(),
             "age": insights.to_dict(age) if age else None,
             "next_feed": insights.to_dict(next_feed),
+            "next_sleep": insights.to_dict(insights.predict_next_sleep(sleeps, now, corrected_days)),
             "intake": insights.to_dict(intake),
             "diapers": insights.to_dict(diapers) if diapers else None,
             "growth": growth or None,

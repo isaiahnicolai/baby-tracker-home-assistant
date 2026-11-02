@@ -6,6 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .entity import baby_device_info, baby_unique_id
@@ -23,6 +24,7 @@ async def async_setup_entry(
     pictures = coordinator.data.get("baby_pictures") or {}
     babies = coordinator.data.get("babies") or []
     async_add_entities(BabyTrackerPhoto(hass, coordinator, baby.name) for baby in babies)
+    async_add_entities(BabyTrackerLatestPhoto(hass, coordinator, baby.name) for baby in babies)
     async_add_entities(
         BabyTrackerLandscapePhoto(hass, coordinator, baby.name)
         for baby in babies
@@ -94,3 +96,39 @@ class BabyTrackerLandscapePhoto(BabyTrackerPhoto):
 
     def _picture(self, pictures):
         return (pictures or {}).get("landscape")
+
+
+class BabyTrackerLatestPhoto(BabyTrackerPhoto):
+    """The newest picture attached to any of the baby's entries (a joy, diaper, bath, activity...), full size."""
+
+    _attr_translation_key = "latest_photo"
+
+    def __init__(self, hass, coordinator, baby_name):
+        """Initialize the image."""
+        self._shown = None
+        super().__init__(hass, coordinator, baby_name)
+        self._attr_unique_id = baby_unique_id(coordinator, baby_name, "latest_photo")
+
+    def _baby_data(self):
+        return ((self.coordinator.data or {}).get("baby_data") or {}).get(self._baby_name) or {}
+
+    def _use_photo_from_data(self):
+        """Take the newest picture from the coordinator's data; the image timestamp moves when it changes."""
+        picture = self._baby_data().get("latest_picture") or {}
+        path = picture.get("path")
+        shown = (picture.get("picture_id"), path) if path else None
+        if shown != self._shown:
+            self._shown = shown
+            self._attr_image_last_updated = dt_util.utcnow() if shown else None
+        self._path = path
+        self._attr_content_type = (mimetypes.guess_type(path)[0] if path else None) or "image/jpeg"
+
+    @property
+    def extra_state_attributes(self):
+        """What the picture is attached to, and the baby's other recent pictures."""
+        data = self._baby_data()
+        picture = data.get("latest_picture") or {}
+        attributes = {key: picture.get(key) for key in ("kind", "time", "note", "object_type", "object_id", "picture_id")}
+        attributes["recent"] = [
+            {key: item.get(key) for key in ("picture_id", "kind", "time")} for item in data.get("pictures") or []]
+        return attributes
