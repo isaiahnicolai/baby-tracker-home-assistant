@@ -52,27 +52,29 @@ After a restart, add the integration and sign in with your Baby Tracker account:
 
 or go to **Settings > Devices & services > Add integration** and search for *Baby Tracker*. Signing in joins your account as a new device and fetches the seed database; the first refresh then replays the account's history, which takes a few seconds per few thousand records. See [Configuration](#configuration) for the options.
 
-### Upgrading from 0.2
-
-Version 0.3 changes how several entities report their state, so check your dashboards and automations after upgrading. [CHANGELOG.md](CHANGELOG.md#breaking-changes-in-030) has the full list. The ones that most often need a fix:
-
-- **Enum states are lowercase.** *Last Diaper* is `wet`, `poopy`, `mixed` or `dry` (it used to be `Wet`, `Poopy`, ...), and *Last Feeding* is `nursing`, `formula`, `pumped` or `supplement`. Update any `is_state(...)` or `states(...) == ...` check. The `status` attribute keeps its capitalised text.
-- **States are numbers and timestamps, not text.** Durations are minutes and volumes, weights and lengths are numbers with units. Use the new *Last Feeding Time*, *Last Diaper Time* and *Last Sleep Time* timestamp sensors instead of parsing text. Times in attributes are still text in the form `2026-10-30 11:00:00 +0000`, so parse them with `strptime(value, '%Y-%m-%d %H:%M:%S %z')`.
-- **Bottle oz is gone.** *Bottle oz* and *Bottle ml* are now one *Bottle Volume* sensor that keeps the entity of *Bottle ml*, so an upgraded install has `sensor.<baby>_bottle_ml` and a new one has `sensor.<baby>_bottle_volume`. Point anything that used `sensor.<baby>_bottle_oz` at it; the oz totals are in its `bottle_amount_oz` attribute.
-- **Photos moved out of `www/`.** The `/local/baby_tracker/...` URLs no longer work; use each baby's *Photo* image entity and delete `www/baby_tracker`. See [Photos](#photos).
-- **Config entries are migrated to version 2 on their own.** Back up first if you may want to go back to 0.2, because 0.2 cannot open a migrated entry.
-
 ### Two or more babies
 
 Each baby gets its own device with its own sensors and buttons (for example "Add Wet Diaper", "Add Dirty Diaper" and "Add Mixed Diaper"). When calling a service yourself, choose the baby with the **Baby** device picker or `baby_name`; one of them is required when the account has more than one baby. Pump sessions belong to the account rather than a baby.
 
 ### Using it from Python or the command line
 
-The sync client in `custom_components/baby_tracker/client/` has no Home Assistant dependency. Install it from a checkout of this repo:
+The sync client in `custom_components/baby_tracker/client/` has no Home Assistant dependency and is published on its own as [`babytracker-client`](https://pypi.org/project/babytracker-client/), so other scripts and projects can use it; its own readme is [custom_components/baby_tracker/client/README.md](custom_components/baby_tracker/client/README.md). Install it in any of these ways:
 
 ```bash
+# from PyPI
+pip install babytracker-client
+
+# the wheel attached to a release (no git needed)
+pip install https://github.com/isaiahnicolai/baby-tracker-home-assistant/releases/download/v1.0.0/babytracker_client-1.0.0-py3-none-any.whl
+
+# straight from the repository, at a tag or the main branch
+pip install "git+https://github.com/isaiahnicolai/baby-tracker-home-assistant@v1.0.0"
+
+# from a checkout, for development
 pip install -e .
 ```
+
+Add `[photos]` to the package (`pip install "babytracker-client[photos]"`) to be able to attach photos; it pulls in Pillow. The package needs Python 3.11 or newer and depends only on `requests` and `python-dateutil`.
 
 That makes it importable as `babytracker_client` and adds a `babytracker` command:
 
@@ -85,6 +87,15 @@ tracker.sync()
 for baby in tracker.get_all_babies():
     print(baby.name, tracker.get_last_diaper(baby.object_id))
 ```
+
+`BabyTracker` is the whole API. The main groups of methods:
+
+- **Account**: `authenticate`, `sync`, `force_resync`, `pending_upload_count`, `get_all_babies`, `get_baby_by_name`, `download_baby_picture`.
+- **Reading**: `get_last_<kind>` and `get_<kind>_records` for every record type (`get_last_diaper`, `get_last_feeding`, `get_last_sleep`, `is_currently_sleeping`, `get_growth_records`...), `get_recent_records`, `get_daily_summary`, `get_feeding_summary`, `get_sleep_analysis`, `get_events_between`, `get_pictures`, `get_latest_picture`.
+- **Insights**: `get_insights` (corrected age, next feed, intake, diapers, growth percentiles, next sleep), `get_next_breast`, `get_next_medicine_dose`, `get_upcoming_milestones`, `get_upcoming_vaccines`, `get_pumped_milk_inventory`.
+- **Writing**: `add_diaper`, `add_nursing`, `add_formula`, `add_pumped`, `add_other_feed`, `log_sleep_event`, `log_pump`, `log_growth`, `add_temperature`, `add_medicine`, `log_bath`, `add_activity`, `log_milestone`, `log_vaccine`, `log_doctor_visit`, `add_joy`, `attach_photo`, `delete_record`, `undo_last`.
+
+Every write is stored locally first and uploaded by `sync` (which the write calls itself when the server is reachable), so a script can keep working offline. Each method's docstring describes its arguments; `tests/` shows every one in use.
 
 ```bash
 export BABYTRACKER_EMAIL=you@example.com   # the password is asked for, or read from BABYTRACKER_PASSWORD
@@ -269,7 +280,7 @@ automation:
 
 To add a snapshot to the diaper you just logged, find its ID in the Recent Entries sensor and call `baby_tracker.attach_photo` with `object_type: Diaper`, that `object_id` and a `camera_entity`. The Latest Photo entity and the Activity event's `photo` type then report it like any other new picture.
 
-Earlier versions saved photos in `www/baby_tracker`, where anyone who could reach Home Assistant could fetch them without logging in. Those old copies are not deleted for you: remove the `www/baby_tracker` folder. Home Assistant shows a [repair](#repairs) on *Settings > Repairs* while it exists.
+Development builds before 1.0 saved photos in `www/baby_tracker`, where anyone who could reach Home Assistant could fetch them without logging in. Those old copies are not deleted for you: remove the `www/baby_tracker` folder. Home Assistant shows a [repair](#repairs) on *Settings > Repairs* while it exists.
 
 ## Controls and Buttons
 
@@ -375,7 +386,7 @@ To override the automatic choice, open **Configure**; the step for each baby has
 
 Problems you can act on show up on *Settings > Repairs*:
 
-- **Old baby photos are publicly readable**: the `www/baby_tracker` folder from earlier versions still exists. Delete it; the photos are kept privately now. The repair goes away on its own after you delete it and restart or reload the integration.
+- **Old baby photos are publicly readable**: the `www/baby_tracker` folder from a development build before 1.0 still exists. Delete it; the photos are kept privately now. The repair goes away on its own after you delete it and restart or reload the integration.
 - **Baby Tracker records aren't reaching the server**: records logged in Home Assistant have stayed unsent for more than 3 refreshes in a row. They are kept and sent when the server accepts them; the repair clears once they have gone.
 - **Baby Tracker account was reset**: the account was reset or recreated in the app, so the data here belongs to the old group and syncing has stopped. Press Force Resync. The repair clears after the next successful sync.
 - **Install the Baby Tracker voice commands**: the Assist sentence file with your babies' names is missing or out of date. Confirm the repair to write it (see [Voice control](#voice-control-assist)).

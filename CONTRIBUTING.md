@@ -108,9 +108,14 @@ tests, hassfest and (for public repositories) HACS validation. Run
 The version appears in four places that must agree: `manifest.json`,
 `pyproject.toml`, `client/__init__.py` (`__version__`) and `const.py`
 (`VERSION`). Add an entry to `CHANGELOG.md` for every user-visible change.
-Publishing a GitHub release runs `.github/workflows/release.yml`, which zips
-`custom_components/baby_tracker` into `baby_tracker.zip` and attaches it to the
-release, which is what HACS installs.
+Publishing a GitHub release runs `.github/workflows/release.yml`, which checks
+that the tag matches the version, zips `custom_components/baby_tracker` into
+`baby_tracker.zip` (what HACS installs) and builds the `babytracker-client`
+wheel and sdist, attaches all three to the release and publishes the package
+to PyPI. PyPI publishing is a trusted publisher (no token in the repo): the
+`babytracker-client` project on pypi.org lists this repository, the workflow
+`release.yml` and the GitHub environment `pypi` as its publisher, and the
+repository has that environment. A pre-release skips PyPI.
 
 ## Brand images
 
