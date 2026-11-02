@@ -2,12 +2,8 @@ name: Release
 
 # On a published GitHub release: attach the integration as baby_tracker.zip
 # (hacs.json sets zip_release, so HACS downloads it instead of the source) and
-# the babytracker-client wheel and sdist, then publish the package to PyPI.
-#
-# PyPI uses trusted publishing (no token): the project on pypi.org lists this
-# repository, the workflow file name `release.yml` and the environment `pypi`
-# as a publisher. Until that is set up, the pypi job fails and the release
-# assets are still attached.
+# the babytracker-client wheel and sdist, so the library can be installed
+# with pip straight from the release.
 
 on:
   release:
@@ -52,26 +48,3 @@ jobs:
           files: |
             baby_tracker.zip
             dist/*
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/
-
-  pypi:
-    needs: zip
-    if: ${{ !github.event.release.prerelease }}
-    runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/project/babytracker-client/
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1

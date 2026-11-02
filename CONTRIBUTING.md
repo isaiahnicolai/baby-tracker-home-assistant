@@ -111,11 +111,8 @@ The version appears in four places that must agree: `manifest.json`,
 Publishing a GitHub release runs `.github/workflows/release.yml`, which checks
 that the tag matches the version, zips `custom_components/baby_tracker` into
 `baby_tracker.zip` (what HACS installs) and builds the `babytracker-client`
-wheel and sdist, attaches all three to the release and publishes the package
-to PyPI. PyPI publishing is a trusted publisher (no token in the repo): the
-`babytracker-client` project on pypi.org lists this repository, the workflow
-`release.yml` and the GitHub environment `pypi` as its publisher, and the
-repository has that environment. A pre-release skips PyPI.
+wheel and sdist, and attaches all three to the release. The package is not
+on PyPI; it installs from the repository or the release wheel.
 
 ## Brand images
 

@@ -3,7 +3,7 @@ Baby Tracker sync client.
 
 A plain-Python client for the Baby Tracker sync service, with no Home
 Assistant dependency. The Home Assistant integration uses it, and it is
-also published on its own (``pip install babytracker-client``), which
+also packaged on its own (``pip install git+https://github.com/isaiahnicolai/baby-tracker-home-assistant``), which
 makes it importable as ``babytracker_client`` and adds the ``babytracker``
 command:
 

@@ -129,8 +129,9 @@ app uses, and was tested against a real account with two babies.
 ### Client library and command line
 
 - The sync client lives in `custom_components/baby_tracker/client/`, has no
-  Home Assistant dependency and is published on PyPI as `babytracker-client`
-  (with a `photos` extra for Pillow), so other projects can use it too. The `babytracker` command has `babies`,
+  Home Assistant dependency and is packaged as `babytracker-client` (with a
+  `photos` extra for Pillow), installable with pip from this repository or
+  the wheel attached to each release, so other projects can use it too. The `babytracker` command has `babies`,
   `sync`, `devices`, `last`, `recent`, `next`, `insights`, `calendar`,
   `inventory`, `add-diaper`, `add-bottle`, `add-nursing`, `add-joy`,
   `attach-photo`, `delete`, `undo`, `raw` and `logout`.

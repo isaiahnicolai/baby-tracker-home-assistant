@@ -58,23 +58,21 @@ Each baby gets its own device with its own sensors and buttons (for example "Add
 
 ### Using it from Python or the command line
 
-The sync client in `custom_components/baby_tracker/client/` has no Home Assistant dependency and is published on its own as [`babytracker-client`](https://pypi.org/project/babytracker-client/), so other scripts and projects can use it; its own readme is [custom_components/baby_tracker/client/README.md](custom_components/baby_tracker/client/README.md). Install it in any of these ways:
+The sync client in `custom_components/baby_tracker/client/` has no Home Assistant dependency and is packaged on its own as `babytracker-client`, so other scripts and projects can use it; its own readme is [custom_components/baby_tracker/client/README.md](custom_components/baby_tracker/client/README.md). Install it in any of these ways:
 
 ```bash
-# from PyPI
-pip install babytracker-client
-
 # the wheel attached to a release (no git needed)
 pip install https://github.com/isaiahnicolai/baby-tracker-home-assistant/releases/download/v1.0.0/babytracker_client-1.0.0-py3-none-any.whl
 
 # straight from the repository, at a tag or the main branch
 pip install "git+https://github.com/isaiahnicolai/baby-tracker-home-assistant@v1.0.0"
+# in a requirements.txt:  babytracker-client @ git+https://github.com/isaiahnicolai/baby-tracker-home-assistant@v1.0.0
 
 # from a checkout, for development
 pip install -e .
 ```
 
-Add `[photos]` to the package (`pip install "babytracker-client[photos]"`) to be able to attach photos; it pulls in Pillow. The package needs Python 3.11 or newer and depends only on `requests` and `python-dateutil`.
+Add `[photos]` to the package (`pip install "babytracker-client[photos] @ git+https://github.com/isaiahnicolai/baby-tracker-home-assistant@v1.0.0"`) to be able to attach photos; it pulls in Pillow. The package needs Python 3.11 or newer and depends only on `requests` and `python-dateutil`.
 
 That makes it importable as `babytracker_client` and adds a `babytracker` command:
 

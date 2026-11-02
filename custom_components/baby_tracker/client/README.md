@@ -4,8 +4,8 @@ A plain-Python client and command line for the sync service behind the
 [Baby Tracker](https://nighp.com/babytracker/) app, with no Home Assistant
 dependency. It is the library the
 [Baby Tracker for Home Assistant](https://github.com/isaiahnicolai/baby-tracker-home-assistant)
-integration is built on, published on its own so that other scripts and
-projects can use it.
+integration is built on, packaged on its own so that other scripts and
+projects can use it. It is installed from GitHub rather than PyPI.
 
 > **Unofficial.** An independent project, not affiliated with or endorsed by
 > the makers of Baby Tracker. It speaks the same protocol the phone app uses,
@@ -15,11 +15,23 @@ projects can use it.
 ## Install
 
 ```bash
-pip install babytracker-client            # Python 3.11 or newer
-pip install "babytracker-client[photos]"  # also Pillow, to attach photos to entries
+# from the repository, at a release tag (or @main for the latest code)
+pip install "git+https://github.com/isaiahnicolai/baby-tracker-home-assistant@v1.0.0"
+
+# or the wheel attached to a release, no git needed
+pip install https://github.com/isaiahnicolai/baby-tracker-home-assistant/releases/download/v1.0.0/babytracker_client-1.0.0-py3-none-any.whl
 ```
 
-It depends only on `requests` and `python-dateutil`.
+In a `requirements.txt`:
+
+```
+babytracker-client @ git+https://github.com/isaiahnicolai/baby-tracker-home-assistant@v1.0.0
+```
+
+Add `[photos]` to pull in Pillow and be able to attach photos to entries
+(`pip install "babytracker-client[photos] @ git+https://github.com/isaiahnicolai/baby-tracker-home-assistant@v1.0.0"`).
+It needs Python 3.11 or newer and otherwise depends only on `requests` and
+`python-dateutil`.
 
 ## Use it from Python
 
