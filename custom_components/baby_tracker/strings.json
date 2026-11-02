@@ -489,7 +489,7 @@
         "step": {
           "confirm": {
             "title": "Install the Baby Tracker voice commands",
-            "description": "Home Assistant only reads Assist sentences from {folder}. Select Submit to write the Baby Tracker sentence file there, with your babies' names filled in, so you can say things like \"Ava had a wet diaper\" or \"when did Ava last eat\". An existing baby_tracker.yaml in that folder is replaced.\n\nThe conversation agent is asked to reload the sentences. If a command is not recognised straight away, restart Home Assistant."
+            "description": "Home Assistant only reads Assist sentences from {folder}. Select Submit to write the Baby Tracker sentence file there, with your babies' names filled in, so you can say things like \"{baby} had a wet diaper\" or \"when did {baby} last eat\". An existing baby_tracker.yaml in that folder is replaced.\n\nThe conversation agent is asked to reload the sentences. If a command is not recognised straight away, restart Home Assistant."
           }
         },
         "error": {

@@ -2437,7 +2437,7 @@ async def test_a_missing_sentence_file_raises_a_repair_and_nothing_is_written(ha
     assert issue is not None
     assert issue.is_fixable is True and issue.severity is ir.IssueSeverity.WARNING
     assert issue.translation_key == "custom_sentences"
-    assert issue.translation_placeholders == {"folder": str(tmp_path / "custom_sentences")}
+    assert issue.translation_placeholders == {"folder": str(tmp_path / "custom_sentences"), "baby": "Ann Marie"}
     assert not (tmp_path / "custom_sentences").exists()  # not without the confirmation
 
 

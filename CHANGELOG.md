@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] - 2026-11-02
+
+### Fixed
+
+- The repair that installs the Assist voice commands gives its example
+  commands with one of your own babies' names instead of a fixed example.
+
 ## [1.0.0] - 2026-11-01
 
 The first release. It syncs a Baby Tracker account with Home Assistant in
@@ -152,4 +159,5 @@ app uses, and was tested against a real account with two babies.
   and the integration with GitHub Actions and hassfest, a dev container with
   `docker compose` and `scripts/bootstrap`, and an MIT license.
 
+[1.0.1]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/releases/tag/v1.0.0
