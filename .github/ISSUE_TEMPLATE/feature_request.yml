@@ -1,0 +1,16 @@
+name: Feature request
+description: Something the app can do that you'd like in Home Assistant, or another idea
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What you'd like
+      description: What you want to do, and how you'd use it (a dashboard, an automation, voice...).
+    validations:
+      required: true
+  - type: textarea
+    id: app
+    attributes:
+      label: How the app does it, if it does
+      description: Where it is in the Baby Tracker app, and on Android or iPhone.
