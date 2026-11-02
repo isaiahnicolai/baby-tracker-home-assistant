@@ -1,3 +1,5 @@
+<img src="logo.png" alt="" width="96" align="right">
+
 # Baby Tracker for Home Assistant
 
 This custom component integrates the Baby Tracker app data with Home Assistant, allowing you to monitor and update your baby's activities through Home Assistant.
@@ -1480,7 +1482,9 @@ For issues and feature requests, please submit them through the GitHub repositor
 
 ## Credits
 
-This integration provides a local interface to the Baby Tracker app (https://www.baby-tracker.com/). All trademarks belong to their respective owners. It is an independent project and is not affiliated with or endorsed by the makers of Baby Tracker.
+This integration provides a local interface to the [Baby Tracker](https://www.baby-tracker.com/) app by Nighp Software, available for [Android](https://play.google.com/store/apps/details?id=com.nighp.babytracker_android) and [iOS](https://apps.apple.com/us/app/baby-tracker-newborn-log/id779656557). All trademarks, including the Baby Tracker name and logo, belong to their respective owners. It is an independent project and is not affiliated with or endorsed by the makers of Baby Tracker.
+
+You need the app, with its sync feature set up, to use this integration: the account it signs in to is created in the app, and the records it reads and writes are your own. Sync is part of the free app; this integration is another device on an account you already have, and it does not unlock or work around any paid feature of the app (ad removal, Plus). The feed predictions, intake checks and growth percentiles here are this project's own calculations from your records, using published WHO and AAP guidance, not the app's.
 
 The makers of Baby Tracker do not publish their sync protocol. The maintainer worked it out by studying how the official Android app talks to the server: the endpoints, the record formats, and the rules for merge order and conflicts. This client follows those same rules so that records stay consistent across your devices. It contains no code from the app. If the protocol changes, this integration may stop working until it is updated.
 

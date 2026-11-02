@@ -73,7 +73,9 @@ class BabyTrackerNumber(CoordinatorEntity, RestoreNumber):
 
     @property
     def native_value(self):
-        return self.coordinator.control(self._baby_id, self._control)
+        value = self.coordinator.control(self._baby_id, self._control)
+        # Doses copied from the app are single-precision floats (0.300000011920929)
+        return round(value, 3) if isinstance(value, float) else value
 
     async def async_set_native_value(self, value: float) -> None:
         self.coordinator.set_control(self._baby_id, self._control, value)

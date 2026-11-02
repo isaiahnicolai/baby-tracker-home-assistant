@@ -483,6 +483,7 @@ class BabyTrackerLastTemperatureSensor(BabyTrackerSensor):
     _data_key = "last_temperature"
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
 
     def __init__(self, coordinator, baby_name):
         super().__init__(coordinator, baby_name)
@@ -553,9 +554,12 @@ class BabyTrackerBottleVolumeSensor(BabyTrackerSensor):
     _sensor_type = SENSOR_TYPE_BOTTLE_VOLUME
     _data_key = "feeding_summary"
     _imperial_unit = UnitOfVolume.FLUID_OUNCES
-    _attr_device_class = SensorDeviceClass.VOLUME
+    # volume_storage, not volume: Home Assistant only allows total state classes for
+    # 'volume', and this is an amount to average and graph, not a meter reading
+    _attr_device_class = SensorDeviceClass.VOLUME_STORAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfVolume.MILLILITERS
+    _attr_suggested_display_precision = 1
 
     def _value(self, record):
         return _round(record.get("bottle_amount_ml", 0), 1)
@@ -634,9 +638,12 @@ class BabyTrackerLastPumpSensor(BabyTrackerSensor):
     _sensor_type = SENSOR_TYPE_LAST_PUMP
     _data_key = "last_pump"
     _imperial_unit = UnitOfVolume.FLUID_OUNCES
-    _attr_device_class = SensorDeviceClass.VOLUME
+    # volume_storage, not volume: Home Assistant only allows total state classes for
+    # 'volume', and this is an amount to average and graph, not a meter reading
+    _attr_device_class = SensorDeviceClass.VOLUME_STORAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfVolume.MILLILITERS
+    _attr_suggested_display_precision = 1
 
     def _value(self, record):
         return _to_ml(record.get("total_amount", 0), record.get("unit"))
@@ -662,9 +669,12 @@ class BabyTrackerPumpSummarySensor(BabyTrackerSensor):
     _data_key = "pump_summary"
     _imperial_unit = UnitOfVolume.FLUID_OUNCES
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_device_class = SensorDeviceClass.VOLUME
+    # volume_storage, not volume: Home Assistant only allows total state classes for
+    # 'volume', and this is an amount to average and graph, not a meter reading
+    _attr_device_class = SensorDeviceClass.VOLUME_STORAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfVolume.MILLILITERS
+    _attr_suggested_display_precision = 1
 
     def _value(self, record):
         return _to_ml(record.get("total_amount", 0), record.get("unit"))
@@ -781,6 +791,7 @@ class BabyTrackerWeightSensor(BabyTrackerSensor):
     _attr_device_class = SensorDeviceClass.WEIGHT
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfMass.KILOGRAMS
+    _attr_suggested_display_precision = 2
 
     def _value(self, record):
         weight = record.get("weight")
@@ -808,6 +819,7 @@ class BabyTrackerLengthSensor(BabyTrackerSensor):
     _attr_device_class = SensorDeviceClass.DISTANCE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfLength.CENTIMETERS
+    _attr_suggested_display_precision = 1
 
     def _value(self, record):
         length = record.get(self._field)
@@ -991,6 +1003,7 @@ class BabyTrackerFeedIntervalSensor(BabyTrackerInsightSensor):
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfTime.HOURS
+    _attr_suggested_display_precision = 1
 
     def _value(self, record):
         return _round(record.get("interval_hours"), 2)
@@ -1006,6 +1019,7 @@ class BabyTrackerIntakeSensor(BabyTrackerInsightSensor):
     _imperial_unit = UnitOfVolume.FLUID_OUNCES
     _attr_device_class = SensorDeviceClass.VOLUME
     _attr_native_unit_of_measurement = UnitOfVolume.MILLILITERS
+    _attr_suggested_display_precision = 1
 
     def _value(self, record):
         return _round(record.get("actual_ml"), 1)
@@ -1053,6 +1067,7 @@ class BabyTrackerGrowthPercentileSensor(BabyTrackerInsightSensor):
     _attribute_keys = ("z", "p3", "p50", "p97", "measured_at", "age_months")
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "%"
+    _attr_suggested_display_precision = 0
 
     def __init__(self, coordinator, baby_name, kind):
         super().__init__(coordinator, baby_name, f"{kind}_percentile")
@@ -1080,6 +1095,7 @@ class BabyTrackerWeightGainSensor(BabyTrackerInsightSensor):
                        "from_at", "to_at", "reason")
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "g/d"
+    _attr_suggested_display_precision = 0
 
     def _value(self, record):
         return _round(record.get("grams_per_day"), 1)
@@ -1347,7 +1363,8 @@ class BabyTrackerPumpedMilkInventorySensor(BabyTrackerHouseholdSensor):
     """Pumped milk in store: everything pumped (with inventory adjustments) minus everything fed."""
 
     _sensor_type = "pumped_milk_inventory"
-    _attr_device_class = SensorDeviceClass.VOLUME
+    _attr_device_class = SensorDeviceClass.VOLUME_STORAGE  # a stock level, so 'measurement' is allowed
+    _attr_suggested_display_precision = 1
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfVolume.MILLILITERS
 

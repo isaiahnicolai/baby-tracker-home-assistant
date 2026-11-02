@@ -112,6 +112,17 @@ Publishing a GitHub release runs `.github/workflows/release.yml`, which zips
 `custom_components/baby_tracker` into `baby_tracker.zip` and attaches it to the
 release, which is what HACS installs.
 
+## Brand images
+
+The icon and logo Home Assistant shows for the integration are in
+`custom_components/baby_tracker/brand/` (`icon.png` 256x256, `icon@2x.png`
+512x512, and the same images as `logo.png` and `logo@2x.png`). Home Assistant
+2026.3 and later serve them from there through `/api/brands/integration/...`;
+older versions would need the images in the
+[home-assistant/brands](https://github.com/home-assistant/brands) repository
+instead. They are the Baby Tracker app's own mark; the trademark belongs to
+its makers.
+
 ## Adding a record type
 
 Say the app gains a record type, or you want a new kind of log. Work from the

@@ -70,15 +70,17 @@ class BabyTracker:
             os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
             _LOGGER.info(f"Database path set to: {self.db_path}")
     
-    def authenticate(self, email, password, device_uuid=None):
+    def authenticate(self, email, password, device_uuid=None, sync_history=True):
         """
         Authenticate with the Baby Tracker service.
-        
+
         Args:
             email: User email
             password: User password
             device_uuid: Optional device UUID (will generate if None)
-            
+            sync_history: when joining a group for the first time, also replay
+                the account's history now (False: the first sync() does it)
+
         Returns:
             dict: Authentication result
         """
@@ -100,7 +102,7 @@ class BabyTracker:
             if not in_group:
                 # Use join_group instead of just login
                 _LOGGER.info(f"Not in a group, joining with {email}")
-                result = self.api.join_group(email, password, device_uuid)
+                result = self.api.join_group(email, password, device_uuid, sync_history=sync_history)
                 if result.get("status") != "success":
                     return {"status": "error", "message": result.get("message") or "Joining the group failed"}
             else:

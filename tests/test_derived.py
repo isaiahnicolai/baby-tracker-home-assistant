@@ -72,19 +72,41 @@ def medicine(object_id, utc_time, med_id, name, interval, baby=EVERLY, amount=2.
                   medicationSelection={"objectID": med_id, "name": name, "unit": "ml", "interval": interval})
 
 
+def recent(hours_ago):
+    """A record time this many hours ago, as the fixtures write it (UTC, whole seconds)."""
+    return (datetime.now(UTC).replace(microsecond=0) - timedelta(hours=hours_ago)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def iso_after(time_str, minutes):
+    return (datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+            + timedelta(minutes=minutes)).isoformat()
+
+
 def test_next_dose_is_the_last_dose_plus_the_interval_in_minutes(apply, tracker):
-    apply(medicine("M1", "2026-10-01 08:00:00", "TYLENOL", "Tylenol", 240))
+    given = recent(2)
+    apply(medicine("M1", given, "TYLENOL", "Tylenol", 240))
     dose = tracker.get_next_medicine_dose(EVERLY)
-    assert dose["next_dose_at"] == "2026-10-01T12:00:00+00:00"
+    assert dose["next_dose_at"] == iso_after(given, 240)
     assert (dose["medicine_name"], dose["amount"], dose["unit"], dose["interval_minutes"]) == ("Tylenol", 2.5, "ml", 240)
-    assert dose["last_given"] == at("2026-10-01 08:00:00")
+    assert dose["last_given"] == at(given)
 
 
 def test_next_dose_follows_the_most_recent_medicine(apply, tracker):
-    apply(medicine("M1", "2026-10-01 08:00:00", "TYLENOL", "Tylenol", 240))
-    apply(medicine("M2", "2026-10-01 09:00:00", "MOTRIN", "Motrin", 360, amount=1.25))
+    # Both doses are overdue (by less than a day): the most recent medicine is reported
+    first, second = recent(10), recent(9)
+    apply(medicine("M1", first, "TYLENOL", "Tylenol", 240))
+    apply(medicine("M2", second, "MOTRIN", "Motrin", 360, amount=1.25))
     dose = tracker.get_next_medicine_dose(EVERLY)
-    assert (dose["medicine_name"], dose["next_dose_at"]) == ("Motrin", "2026-10-01T15:00:00+00:00")
+    assert (dose["medicine_name"], dose["next_dose_at"]) == ("Motrin", iso_after(second, 360))
+
+
+def test_a_dose_due_more_than_a_day_ago_is_no_longer_a_next_dose(apply, tracker):
+    """Days after the last dose the course is over; a due time in the past is not a reminder."""
+    apply(medicine("M1", recent(30), "TYLENOL", "Tylenol", 240))
+    assert tracker.get_next_medicine_dose(EVERLY) is None
+    # Overdue by less than a day still shows, so a missed dose is visible
+    apply(medicine("M2", recent(20), "MOTRIN", "Motrin", 360, amount=1.25))
+    assert tracker.get_next_medicine_dose(EVERLY)["medicine_name"] == "Motrin"
 
 
 def test_next_dose_is_the_soonest_across_the_medicines_given_recently(apply, tracker):
