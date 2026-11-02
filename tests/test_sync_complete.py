@@ -10,7 +10,7 @@ import zipfile
 import pytest
 
 from babytracker_client import AccountResetError, AuthenticationError, BabyTrackerAPI, BabyTrackerLocalDatabase
-from helpers import EMAIL, EVERLY, IPHONE, MILESTONE, OURS, TWIN, b64, unb64
+from helpers import EMAIL, AVA, IPHONE, MILESTONE, OURS, TWIN, b64, unb64
 from test_sync import baby, diaper, merge
 
 
@@ -23,7 +23,7 @@ def picture(object_id, file_name, media_type=0, deleted=False):
 def formula(object_id="F1", pictures=(), timestamp="2026-10-30 12:00:00 +0000"):
     return {"BCObjectType": "Formula", "objectID": object_id, "timestamp": timestamp,
             "time": "2026-10-30 11:00:00 +0000", "note": "", "pictureLoaded": True,
-            "pictureNote": list(pictures), "baby": {"objectID": EVERLY},
+            "pictureNote": list(pictures), "baby": {"objectID": AVA},
             "amount": {"value": 4, "englishMeasure": True, "BCObjectType": "VolumeMeasure"}}
 
 
@@ -66,7 +66,7 @@ def test_sync_downloads_the_picture_files(tracker, server, query, tmp_path):
 
 def test_sync_runs_merge_then_photos_then_upload(tracker, server, tmp_path):
     server.online = False
-    tracker.add_diaper(EVERLY, None)  # queued, can't be sent yet
+    tracker.add_diaper(AVA, None)  # queued, can't be sent yet
     server.online = True
     server.pictures = {"abc.jpg": b"x", "abc__thumbnail.jpg": b"x"}
     server.publish(IPHONE, [formula(pictures=[picture("PIC1", "abc")])])
@@ -281,7 +281,7 @@ def test_sync_signs_in_again_and_rejected_credentials_surface(tracker, server):
 
 def test_a_failed_upload_does_not_fail_the_sync(tracker, server, monkeypatch):
     server.publish(IPHONE, [diaper("FROM-PHONE")])
-    tracker.add_diaper(EVERLY, None)
+    tracker.add_diaper(AVA, None)
 
     def refuse(*args, **kwargs):
         raise Exception("Upload of sync ID 44 failed: 500")
@@ -312,7 +312,7 @@ def test_the_first_login_records_the_account(tracker):
 # ----- merge echoes ------------------------------------------------------------------
 
 def test_losing_a_name_clash_uploads_a_conflict_record(tracker, apply, server):
-    newer = baby("OTHER-ID", "Everly", timestamp="2030-01-01 00:00:00 +0000")
+    newer = baby("OTHER-ID", "Ava", timestamp="2030-01-01 00:00:00 +0000")
     assert apply(newer) == "rejected"
     tracker.api.upload_pending()
 
@@ -320,7 +320,7 @@ def test_losing_a_name_clash_uploads_a_conflict_record(tracker, apply, server):
     assert sent["OPCode"] == "4"
     record = sent["record"]
     assert record["BCObjectType"] == "ConflictRecord"
-    assert record["winner"]["objectID"] == EVERLY and record["winner"]["name"] == "Everly"
+    assert record["winner"]["objectID"] == AVA and record["winner"]["name"] == "Ava"
     assert record["winner"]["BCObjectType"] == "Baby"
     assert record["loser"]["objectID"] == "OTHER-ID"
     assert record["objectID"] and record["timestamp"]
@@ -380,7 +380,7 @@ def test_nothing_is_echoed_while_joining(tracker, apply):
     tracker.api.transaction_handler.joining = True
     apply(diaper("D1"))
     apply(diaper("D1"), op=2)
-    apply(baby("OTHER-ID", "Everly", timestamp="2030-01-01 00:00:00 +0000"))
+    apply(baby("OTHER-ID", "Ava", timestamp="2030-01-01 00:00:00 +0000"))
     tracker.add_diaper(TWIN, None)
     tracker.api.upload_pending()
     apply(baby(TWIN, "Ann Marie"), op=2)
@@ -448,7 +448,7 @@ def seed_zip(app_db, tmp_path, entries):
             conn.backup(sqlite3.connect(copy))
             conn.close()
             db = sqlite3.connect(copy)
-            db.execute("DELETE FROM Baby WHERE ID != ?", (EVERLY,))
+            db.execute("DELETE FROM Baby WHERE ID != ?", (AVA,))
             db.execute("UPDATE Baby SET Name = ?", (name,))
             db.commit()
             db.close()

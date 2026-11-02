@@ -3,7 +3,7 @@ import sqlite3
 import threading
 import time
 
-from helpers import EVERLY, TWIN
+from helpers import AVA, TWIN
 
 BANANA = "FOOD-BANANA"
 TUMMY = "ACTIVITY-TUMMY"
@@ -17,13 +17,13 @@ def test_solids_are_logged_with_the_chosen_food(tracker, server, query, app_db):
 
     assert [(f["id"], f["name"]) for f in tracker.get_other_feed_selections()] == [(BANANA, "Banana")]
 
-    result = tracker.add_other_feed(EVERLY, None, BANANA, 2, "tbsp", True, "first taste")
+    result = tracker.add_other_feed(AVA, None, BANANA, 2, "tbsp", True, "first taste")
     assert result["status"] == "success"
     record = server.uploads[-1]["record"]
     assert record["BCObjectType"] == "OtherFeed"
-    assert record["baby"]["objectID"] == EVERLY and record["feedType"]["objectID"] == BANANA
+    assert record["baby"]["objectID"] == AVA and record["feedType"]["objectID"] == BANANA
     assert query("SELECT BabyID, TypeID, Amount, IsEnglishScale, Unit, Note FROM OtherFeed") == [
-        (EVERLY, BANANA, 2.0, 1, "tbsp", "first taste")]
+        (AVA, BANANA, 2.0, 1, "tbsp", "first taste")]
 
     # Metric amounts are stored as such
     tracker.add_other_feed(TWIN, None, BANANA, 30, "g", False)
@@ -31,7 +31,7 @@ def test_solids_are_logged_with_the_chosen_food(tracker, server, query, app_db):
 
 
 def test_solids_of_an_unknown_food_are_refused_not_invented(tracker, query):
-    result = tracker.add_other_feed(EVERLY, None, "FOOD-NOPE", 1, "tbsp", True)
+    result = tracker.add_other_feed(AVA, None, "FOOD-NOPE", 1, "tbsp", True)
     assert result["status"] == "error"
     assert query("SELECT COUNT(*) FROM OtherFeed") == [(0,)]
 
@@ -43,21 +43,21 @@ def test_an_activity_reuses_the_accounts_description_of_that_name(tracker, serve
     conn.close()
 
     for _ in range(2):
-        assert tracker.add_activity(EVERLY, None, "tummy time", 15)["status"] == "success"
+        assert tracker.add_activity(AVA, None, "tummy time", 15)["status"] == "success"
     assert server.uploads[-1]["record"]["desc"]["objectID"] == TUMMY
     assert query("SELECT DescID, Duration FROM OtherActivity") == [(TUMMY, 15), (TUMMY, 15)]
     assert query("SELECT COUNT(*) FROM OtherActivityDesc") == [(1,)]
 
     # A name the account hasn't used yet gets a description of its own
-    assert tracker.add_activity(EVERLY, None, "Reading", 5)["status"] == "success"
+    assert tracker.add_activity(AVA, None, "Reading", 5)["status"] == "success"
     assert query("SELECT Name FROM OtherActivityDesc ORDER BY Name") == [("Reading",), ("Tummy Time",)]
 
 
 def test_last_activity_is_the_latest_one(tracker):
-    assert tracker.get_last_activity(EVERLY) is None
-    tracker.add_activity(EVERLY, "2026-03-01 09:00:00 +0000", "Tummy Time", 10)
-    tracker.add_activity(EVERLY, "2026-03-01 10:00:00 +0000", "Reading", 5)
-    last = tracker.get_last_activity(EVERLY)
+    assert tracker.get_last_activity(AVA) is None
+    tracker.add_activity(AVA, "2026-03-01 09:00:00 +0000", "Tummy Time", 10)
+    tracker.add_activity(AVA, "2026-03-01 10:00:00 +0000", "Reading", 5)
+    last = tracker.get_last_activity(AVA)
     assert (last["activity_name"], last["duration"]) == ("Reading", 5)
     assert tracker.get_last_activity(TWIN) is None
 
@@ -82,7 +82,7 @@ def test_a_sync_and_a_write_never_run_at_the_same_time(tracker):
     tracker.api.post_diaper = watched(tracker.api.post_diaper)
 
     sync = threading.Thread(target=tracker.sync)
-    write = threading.Thread(target=lambda: tracker.add_diaper(EVERLY, None, pee=True))
+    write = threading.Thread(target=lambda: tracker.add_diaper(AVA, None, pee=True))
     sync.start()
     time.sleep(0.05)
     write.start()

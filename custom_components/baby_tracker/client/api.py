@@ -1288,6 +1288,30 @@ class BabyTrackerAPI:
         }
         return self._post_record(medicine_data)
 
+    def _selection_record(self, object_type, name, desc, **fields):
+        """The wire record of a new selection (a medicine, a food), as the app would create it."""
+        return {
+            "BCObjectType": object_type,
+            "objectID": str(uuid.uuid4()),
+            "timestamp": _now_str(),
+            "newFlage": "true",
+            "name": name,
+            "desc": desc,
+            **fields,
+        }
+
+    def post_medicine_selection(self, name, amount_per_time=0.0, unit="", interval_hours=0, prescription=False,
+                                desc=""):
+        """Create a medicine that can then be logged (a MedicationSelection)."""
+        return self._post_record(self._selection_record(
+            "MedicationSelection", name, desc,
+            prescription=bool(prescription), amountPerTime=float(amount_per_time or 0), unit=unit or "",
+            interval=int(interval_hours or 0)))
+
+    def post_other_feed_selection(self, name, is_bottle=False, desc=""):
+        """Create a food for solids/supplement feeds (an OtherFeedSelection)."""
+        return self._post_record(self._selection_record("OtherFeedSelection", name, desc, bottle=bool(is_bottle)))
+
     def post_other_activity(self, baby_id, time_str=None, activity_name="Tummy Time", duration=0, location_id=None, note=""):
         """
         Post an other activity record

@@ -2,7 +2,7 @@
 
 DOMAIN = "baby_tracker"
 CONFIG_ENTRY_VERSION = 2  # the config flow's VERSION; async_migrate_entry brings older entries up to it
-VERSION = "0.4.0"  # keep in sync with manifest.json and client/__init__.py
+VERSION = "1.0.0"  # keep in sync with manifest.json and client/__init__.py
 
 # Configuration
 CONF_EMAIL = "email"
@@ -195,7 +195,6 @@ NURSING_TIMER_MAX_AGE_HOURS = 24
 FEVER_WINDOW_HOURS = 24
 
 # Repairs (see strings.json "issues")
-ISSUE_OLD_WWW_FOLDER = "old_www_folder"
 ISSUE_UPLOADS_PENDING = "uploads_pending"
 ISSUE_ACCOUNT_RESET = "account_reset"
 ISSUE_CUSTOM_SENTENCES = "custom_sentences"  # the Assist sentence file is not installed or is out of date

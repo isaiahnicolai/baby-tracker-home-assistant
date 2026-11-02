@@ -5,7 +5,7 @@ import json
 EMAIL = "me@example.com"
 OURS = "ha-device-uuid"
 IPHONE = "IPHONE-DEVICE-UUID"
-EVERLY = "BABY-EVERLY"
+AVA = "BABY-AVA"
 TWIN = "BABY-TWIN"
 MILESTONE = "MILESTONE-SMILE"
 VACCINE = "VACCINE-HEPB"
@@ -13,7 +13,7 @@ VACCINE = "VACCINE-HEPB"
 
 # The fields every baby record carries
 COMMON = {"timestamp": "2026-10-30 12:00:00 +0000", "time": "2026-10-30 11:00:00 +0000", "note": "",
-          "pictureLoaded": True, "pictureNote": [], "baby": {"objectID": EVERLY}}
+          "pictureLoaded": True, "pictureNote": [], "baby": {"objectID": AVA}}
 
 
 def b64(record):

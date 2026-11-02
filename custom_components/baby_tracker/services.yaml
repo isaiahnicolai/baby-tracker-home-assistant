@@ -284,6 +284,11 @@ log_medicine:
           min: 0
           max: 100
           step: 0.1
+    create:
+      required: false
+      default: false
+      selector:
+        boolean:
     note:
       required: false
       selector:
@@ -292,6 +297,49 @@ log_medicine:
       required: false
       selector:
         datetime:
+
+create_medicine:
+  fields:
+    name:
+      required: true
+      example: "Vitamin D"
+      selector:
+        text:
+    amount:
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 0.1
+    unit:
+      required: false
+      example: "ml"
+      selector:
+        text:
+    interval_hours:
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 48
+          step: 1
+    prescription:
+      required: false
+      selector:
+        boolean:
+
+create_food:
+  fields:
+    name:
+      required: true
+      example: "Mango"
+      selector:
+        text:
+    is_bottle:
+      required: false
+      selector:
+        boolean:
 
 log_growth:
   fields:
@@ -529,6 +577,11 @@ add_solids:
         text:
     is_english_measure:
       required: false
+      selector:
+        boolean:
+    create:
+      required: false
+      default: false
       selector:
         boolean:
     note:

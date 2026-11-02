@@ -2,334 +2,153 @@
 
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
-[Semantic Versioning](https://semver.org/) (while it is below 1.0, a minor
-version may contain breaking changes).
+[Semantic Versioning](https://semver.org/).
 
-## [0.4.0] - 2026-11-01
+## [1.0.0] - 2026-11-01
 
-### Added
+The first release. It syncs a Baby Tracker account with Home Assistant in
+both directions, for one or more babies, using the same protocol the phone
+app uses, and was tested against a real account with two babies.
 
-- **Latest Photo** image entity for each baby: the newest picture attached to
-  any entry (a joy, diaper, bath, activity...), served full size to logged-in
-  users only. Attributes: `kind`, `time`, `note`, `object_type`, `object_id`,
-  `picture_id` and a `recent` list of the last ten pictures.
-- A `photo` event type on the baby's Activity event entity when a new picture
-  arrives.
-- Blueprint **New photo notification**: sends the picture to a phone.
-- **More of the app's selections sync.** Sleep descriptions and locations, feed
-  descriptions, sick descriptions, allergen sources, other-activity locations
-  and doctors created on the phone after setup now arrive (they were skipped
-  as unsupported), as do the medicines prescribed at a doctor visit. Records
-  keep the description or location they point at, and a selection that is in
-  use is protected from deletion like the others.
-- **The latest picture of each baby.** `BabyTracker.get_latest_picture(baby_id)`
-  and `get_pictures(baby_id, limit)` give the newest pictures attached to
-  entries, with the file paths on disk, the entry they belong to, its time,
-  kind and note.
-- **Photos from Home Assistant.** `baby_tracker.log_joy` logs a joy, optionally with a
-  photo, and `baby_tracker.attach_photo` adds a photo to an existing entry, from a
-  file in the `baby_tracker`, `www` or `media` folder or from a camera or image
-  entity snapshot. They appear on the phone like photos taken in the app. In the
-  client: `BabyTracker.add_joy(baby_id, note, time_str, photo_path)` and
-  `attach_photo(object_type, object_id, photo_path)` (they store a JPEG and
-  thumbnail, upload the files before the entry, and keep them queued for the next
-  sync if the server is unreachable), plus `babytracker add-joy` and
-  `attach-photo`. Needs Pillow (`pip install 'babytracker-client[photos]'`; Home
-  Assistant already has it).
-- **Next nap prediction.** `get_insights` has a `next_sleep` section (and
-  `babytracker next` a nap line): when a sleeping baby is expected to wake, or
-  when an awake one will probably need sleep, from the baby's own recent wake
-  windows within the typical range for their corrected age (35 minutes at
-  birth up to 5-6 hours at two years).
-- **Next Sleep, Expected Wake and Wake Window** sensors for each baby, from that
-  prediction: when an awake baby will probably need sleep, when a sleeping one
-  is expected to wake, and the baby's usual wake window in hours (with the
-  typical range for their age, the basis and the sample size as attributes).
-- **Sleep Due** and **Nap Running Long** alerts. Sleep Due turns on when an
-  awake baby reaches the end of their wake window; Nap Running Long when a
-  sleep is 30 minutes past the expected wake time. Both are re-evaluated every
-  minute and accepted by `dismiss_alert` (`sleep_due`, `wake_overdue`).
-- Blueprint **Sleep due notification**: sends a phone a message when Sleep Due
-  turns on.
-- Assist: "when should Everly nap", "when is Everly's next nap" and "when will
-  Everly wake up" answer from the prediction (`BabyTrackerNextSleep`).
-- **Sleep from another entity.** In the options, each baby can take their sleep
-  from a Home Assistant entity (a Snoo or Owlet state sensor, a bed sensor, an
-  `input_boolean`): you choose the states that mean asleep, how long a wake
-  must last to end the sleep (10 minutes by default) and the shortest sleep to
-  log (5 minutes). The start is back-dated to when the entity went to sleep,
-  the end is dated when it woke, and a restart mid-sleep loses nothing. A
-  **Sleep Source** diagnostic binary sensor shows what the integration thinks.
-- **Quiet mode for activities a baby has outgrown.** A baby counts as tracked
-  for an activity (feeds, diapers, sleep, pumping, medicine, growth,
-  temperature) when something in it was logged in the last 14 days, and every
-  baby under 14 days old tracks everything. For a group that is not tracked,
-  its alerts stay off and its predictions and rates (Next Feed, Time Since Last
-  Feeding, Diaper Adequacy, Next Sleep...) read unknown, each with the
-  attribute `reason: not_tracked`; the household sensors skip that baby, and
-  Assist says "Feeds aren't being tracked for Everly" instead of answering.
-  What was logged (Last Feeding, the counts) stays. The per-baby options step
-  has a **Tracked activities** field to override it (`tracking` option; auto
-  by default), and the Info sensor shows `tracking` and `tracking_mode`.
+### Syncing
 
-## [0.3.1] - 2026-11-01
+- Signs in with your Baby Tracker account and joins it as a new device. Set
+  up only signs in and fetches the seed database; the first refresh replays
+  the account's history (about 3,000 records in 14 seconds) with progress in
+  the log, and a replay interrupted by a restart picks up where it left off.
+- Downloads are paged and resumable. Failures are retried and then skipped
+  with a log entry, updates only overwrite older rows, and name clashes,
+  conflicts, relives and repeated deletes are resolved as the Android app
+  does.
+- Records you add in Home Assistant are saved locally, queued and uploaded
+  in order, so entries logged while the server is unreachable are sent on
+  the next sync. A **Pending Uploads** sensor and a repair tell you when
+  something has stayed unsent.
+- Every record type the app syncs is supported: diapers, nursing, bottles
+  (formula and pumped), solids and other feeds, sleep, pumping, growth,
+  temperature, medicine, baths, tummy time and other activities,
+  milestones, vaccines, joys and journal entries, doctor visits, and the
+  app's selection lists (feed, sleep and sick descriptions, sleep and
+  activity locations, allergen sources, doctors, medicines).
+- Baby photos, their landscape versions and the pictures attached to
+  entries are downloaded and kept in a private `baby_tracker` folder in your
+  configuration directory, served only through image entities.
+- One account per Home Assistant; a rejected password prompts for a new one
+  instead of failing every refresh. Force Resync rebuilds the local copy.
 
-Fixes from the first run against a real account with two babies.
+### Babies and entities
 
-### Changed
+- Each baby is its own device with its own entities, keyed by the baby's ID,
+  so renaming a baby in the app keeps its entities and history. The
+  integration reloads when babies are added or renamed.
+- **Sensors** for the last feeding, diaper, sleep, pump, bath, medicine,
+  temperature, growth measurement, milestone, vaccine, doctor visit and
+  activity, with timestamps; daily counts and totals (feeds, diapers, bottle
+  volume, nursing minutes, sleep, pumped milk); which breast is next; the
+  next medicine dose; upcoming milestones and vaccines; **Recent Entries**
+  with the last ten records and their IDs; and an Info sensor.
+- **Alerts** (binary sensors, re-evaluated every minute): Is Sleeping, Night
+  Mode, Feeding Overdue, Feed Due, Wake To Feed, Intake Low, Low Wet Diapers,
+  Fever, Long Sleep, Sleep Due and Nap Running Long. Their thresholds are
+  options, and `dismiss_alert` silences one.
+- **Insights** calculated by this project from your data: corrected age,
+  next feed prediction with day and night intervals, 24 hour intake against
+  the expected range, wet and dirty diaper adequacy, WHO growth percentiles
+  and weight gain, and a next nap prediction (Next Sleep, Expected Wake and
+  Wake Window) from the baby's own wake windows within the typical range for
+  their age.
+- **Household view** on the Baby Tracker device: Next Feed Due, Next Feed
+  Baby, Last Fed Baby, Babies Asleep, Feeds Today, Pumped Milk Inventory and
+  Pending Uploads.
+- **Controls**: Add Wet/Dirty/Mixed Diaper, Add Bottle with Bottle Size and
+  Bottle Type, Give Medicine with Medicine and Medicine Amount (the amount
+  follows the medicine's usual dose), Log Tummy Time, Log Bath, Start and
+  End Sleep, a nursing timer (Start Nursing Left/Right, End Nursing, a
+  Nursing binary sensor) and Undo Last Entry. Buttons ignore a repeat press
+  within 3 seconds.
+- **Photo**, **Photo Landscape** and **Latest Photo** image entities, a
+  **calendar** per baby, and an **Activity event** entity that fires for
+  every new record, photo and undo (with matching bus events).
+- States are numbers with units, device classes and state classes, so they
+  work with long-term statistics and history graphs; enum states are
+  lowercase; units follow the entry's unit setting. Entity translations,
+  icons and diagnostics (credentials redacted) are included.
 
-- **Adding the integration no longer waits for the whole history.** The
-  setup dialog signs in, joins the account and fetches the seed database;
-  the first refresh replays the transaction history (the integration shows
-  as initialising meanwhile, with progress in the log). A join that has not
-  finished replaying is remembered in the database, so the replay still runs
-  as part of the join (no echoes) even after a restart.
-- **The history replay is about a hundred times faster.** A page of 500
-  transactions is one database transaction with one commit (a failing
-  record is rolled back on its own), and connections use WAL with
-  `synchronous=NORMAL`. 3,000 records took 14 seconds where they took 12
-  minutes.
-- Bottle Volume, Last Pump, Pump Summary and Pumped Milk Inventory use the
-  `volume_storage` device class: Home Assistant 2025.11+ only allows a total
-  state class with `volume`, and these are amounts to average and graph.
-  Numeric sensors have a display precision,
-  so the UI shows `0.4 fl. oz.` rather than `0.405768272422116`.
-- Next Medicine Dose is unknown once the due time is more than a day in the
-  past (the course is over) instead of showing a date days ago.
-- The Medicine Amount control rounds the app's single-precision dose (`0.3`
-  rather than `0.300000011920929`).
-- `scripts/bootstrap` works on a Home Assistant that has already been
-  onboarded (the onboarding endpoint answers 404 then).
-- The integration ships its icon and logo in `brand/`, which Home Assistant
-  2026.3 and later show on the integration page.
+### Services
 
-## [0.3.0] - 2026-10-31
+- Logging services for every record type (diapers, bottles, nursing, solids,
+  sleep, pumping, growth, temperature, medicine, bath, tummy time and other
+  activities, joys), timers (`start_sleep`/`end_sleep`,
+  `start_nursing`/`end_nursing`), `undo_last`, `delete_record`,
+  `dismiss_alert`, `sync_now` and `force_resync`. Every logging service
+  accepts an optional `time`, and the baby is chosen with a device picker or
+  `baby_name`.
+- **Photos from Home Assistant.** `log_joy` logs a joy with an optional
+  photo, and `attach_photo` adds a photo to an existing entry, from a file in
+  the `baby_tracker`, `www` or `media` folder or from a camera or image
+  entity snapshot. They appear on the phone like photos taken in the app.
+- **Undo and delete.** `undo_last` removes a baby's newest record and
+  `delete_record` one by type and ID; the deletion reaches the phone on its
+  next sync.
+- **New medicines and foods.** `create_medicine` (name, usual dose, unit,
+  hours between doses, prescription) and `create_food` add an entry to the
+  app's medicine and solids lists; an existing name is left alone. The new
+  medicine appears in the Medicine select. `log_medicine` and `add_solids`
+  take `create: true` to create an unknown name instead of failing.
 
-This release makes the entities usable in dashboards, automations and
-voice assistants, and adds insights, controls and a household view. **It
-contains breaking changes**: read [Breaking changes](#breaking-changes-in-030)
-before upgrading.
+### Sleep from another entity
 
-### Breaking changes in 0.3.0
+- In the options, each baby can take their sleep from any Home Assistant
+  entity (a Snoo or Owlet state sensor, a bed sensor, an `input_boolean`):
+  you choose the states that mean asleep, how long a wake must last to end
+  the sleep and the shortest sleep to log. The start is back-dated to when
+  the entity went to sleep, the end is dated when it woke, and a restart
+  mid-sleep loses nothing. A **Sleep Source** diagnostic sensor shows what
+  the integration thinks.
 
-- **Enum states are lowercase.** Sensors that reported a label now report a
-  lowercase value: the last diaper is `wet`, `poopy`, `mixed` or `dry` (it
-  was `Wet`, `Poopy`, ...). Update any `is_state(...)`, `states(...)` or
-  template trigger that compared against the old capitalised text.
-- **Numeric states replace text.** Durations are minutes, volumes are mL,
-  weights are kg, lengths are cm and temperatures use the entry's unit, all
-  as numbers with a unit and device class. Timestamps are real timestamps
-  (aware datetimes) rather than text. Templates that parsed the old text
-  to get a number can use the number directly, and `as_timestamp(states(...))`
-  works on the new timestamp sensors. Attributes that carry a time are
-  still text, in the form `2026-10-30 11:00:00 +0000`.
-- **The Bottle oz sensor is gone.** Bottle oz and Bottle ml are one
-  **Bottle Volume** sensor (the ml sensor's unique ID is kept). Its state is
-  a number in mL, shown in oz when the entry's unit system is imperial; the
-  oz totals are still available as attributes. The old `Bottle oz` registry
-  entries are removed on upgrade.
-- **Photos moved out of `www/`.** Baby and activity photos are now kept in a
-  private `<config>/baby_tracker` folder instead of `www/baby_tracker`,
-  where `/local/` served them to anyone without a login. The `/local/...`
-  URL and the Info sensor's entity picture are gone; each baby has a
-  **Photo** image entity instead. A repair issue and a log warning tell you
-  when photos from an older version are still under `www/baby_tracker`, so
-  you can delete them.
-- **Config entry version 2.** Each entry now stores its own `device_uuid`
-  (this used to be done during setup; it is now an `async_migrate_entry`
-  step). The migration runs by itself, but an entry that has been migrated
-  cannot be opened by 0.2.x, so back up before upgrading if you might go
-  back.
-- **Services take a time and follow the unit setting.** Every service that
-  adds or logs a record accepts an optional `time`. Temperature, growth and
-  pump units default to the entry's unit system instead of fixed values.
-- **New installs no longer enable the fixed-size bottle and Tylenol
-  buttons.** They are disabled by default; use the new Add Bottle and Give
-  Medicine buttons with the Bottle Size and Medicine controls instead.
-  Existing installs keep them.
+### Quiet mode
 
-### Added
+- A baby counts as tracked for an activity (feeds, diapers, sleep, pumping,
+  medicine, growth, temperature) when something in it was logged in the last
+  14 days. For a group that is not tracked, its alerts stay off, its
+  predictions read unknown with `reason: not_tracked`, the household
+  sensors skip that baby and Assist says so. The per-baby options step can
+  override the detection.
 
-- **Insights per baby**: corrected age, next feed prediction (with day and
-  night intervals and wake-by guidance), 24 hour intake against the
-  expected range, wet and dirty diaper adequacy, WHO growth percentiles for
-  weight, length and head circumference, and weight gain. They appear as
-  sensors (Next Feed, Feed Interval, Intake 24h, Intake Status, Diaper
-  Adequacy, Weight/Length/Head Percentile, Weight Gain, Corrected Age) and
-  as alerts (Intake Low, Feed Due, Wake To Feed).
-- **Household view**: on the Baby Tracker device, Next Feed Due, Next Feed
-  Baby (who is due first), Last Fed Baby, Babies Asleep, Feeds Today,
-  Pumped Milk Inventory and Pending Uploads.
-- **More per-baby sensors**: Which Breast Next, Next Medicine Dose,
-  Upcoming Milestones and Upcoming Vaccines, Last Activity, and Last
-  Feeding Time, Last Diaper Time and Last Sleep Time timestamps.
-- **A calendar and an Activity event entity per baby.** The event entity
-  fires where the bus events are, so automations can trigger on
-  `event.*_activity`.
-- **Controls**: Bottle Size and Medicine Amount numbers, Bottle Type and
-  Medicine selects (restored after a restart), and Tummy Time Minutes. The
-  Add Bottle, Give Medicine and Log Tummy Time buttons use them.
-- **Nursing timer**: Start Nursing Left, Start Nursing Right and End
-  Nursing buttons with a Nursing binary sensor. The record is written when
-  you press End.
-- **New services**: `log_activity` and `add_solids`.
-- **Voice control through Assist**: log diapers, bottles, sleeps, nursing
-  sessions and temperatures, and ask when a baby last ate, when the next
-  feed is, how much they have had today and whether they are asleep
-  ("Everly had a wet diaper", "when did Everly last eat"). The intents are
-  `BabyTracker...` (also available to AI conversation agents as tools). Home
-  Assistant only reads sentence files from `<config>/custom_sentences/`, so a
-  repair offers to write the English file there with your babies' names;
-  nothing is written until you confirm. See "Voice control (Assist)" in the
-  readme.
-- **Blueprints** for feed due, wake to feed and a daily intake summary.
-- **Alert options** in the options flow: feeding-overdue hours, minimum wet
-  diapers, night hours and fever temperature.
-- **Repairs** for photos left under `www/`, records stuck unsent for
-  several refreshes, and an account that was reset (Force Resync needed).
-- **Diagnostics** (credentials redacted): babies, last sync, pending
-  uploads, insights, controls and running nursing timers.
-- **Image entities** for baby photos, and a **Photo Landscape** entity for
-  babies that have the app's wide (`_l.jpg`) version of the photo.
-- **Undo**: an Undo Last Entry button per baby deletes the newest record
-  from the last 24 hours, and the new `undo_last` and `delete_record`
-  services delete the newest record or one by type and ID. The deletion
-  reaches the phone on its next sync, is logged, and is reported as an
-  `undo` event on the Activity event entity and as a `baby_tracker_undo`
-  bus event.
-- **Recent Entries** sensor per baby (diagnostic): the newest record's label
-  as the state and the last ten, with the type and ID `delete_record`
-  takes, in its `records` attribute.
-- **Entity translations and `icons.json`**; services and exceptions are
-  documented in `strings.json`.
-- **Command line**: `babytracker insights`, `next`, `calendar`,
-  `inventory`, `add-bottle` and `add-nursing` join the existing commands.
-- **Client API**: `get_insights`, `get_events_between`,
-  `get_pumped_milk_inventory`, `get_next_breast`, `get_next_medicine_dose`,
-  `get_upcoming_milestones`, `get_upcoming_vaccines`,
-  `pending_upload_count`, `add_other_feed`, `add_activity` and
-  `get_last_activity`.
-- **Delete and undo in the client**: `delete_record(object_type, object_id)`
-  removes a record here and uploads a delete carrying the whole record, so
-  the phone sees it on its next sync. `get_recent_records(baby_id, limit,
-  within_hours)` lists a baby's newest records of every type with a short
-  label, and `undo_last(baby_id, within_hours)` deletes the newest. The
-  command line gets `recent`, `delete` and `undo` (both ask for `--yes`).
-  Pump sessions have no baby, so they can be deleted but are not listed.
-  Doctor visits made here were never uploaded, so deleting one is local.
-- `download_baby_landscape_picture` fetches the `<pictureName>_l.jpg`
-  variant of a baby photo that the app keeps next to the portrait.
-- **Sync protocol completed**: activity pictures are downloaded and kept
-  (with a retry limit), pictures can be uploaded, `logout` ends the server
-  session, and the app's conflict, relive and repeated-delete messages are
-  sent back as the Android app does.
-- MIT license.
+### Voice control (Assist)
 
-### Changed
+- Log diapers, bottles, sleeps, nursing sessions and temperatures by voice,
+  and ask when a baby last ate, when the next feed or nap is, how much they
+  have had today, when they will wake and whether they are asleep. Home
+  Assistant only reads sentence files from `<config>/custom_sentences/`, so
+  a repair offers to write the English file there with your babies' names.
+  The intents are also available to AI conversation agents as tools.
 
-- Sensors have device classes, state classes and units, so they work with
-  long-term statistics and the standard history graphs. Sync Now and Force Resync
-  are config entities; Info and Pump Summary are diagnostic.
-- Temperature, weight, length and volume sensors show the unit chosen for
-  the entry rather than Home Assistant's own unit system.
-- **The Medicine Amount follows the Medicine you select.** Choosing a
-  medicine sets the amount to that medicine's usual amount from the app
-  (when it has one) instead of keeping the previous medicine's dose; the
-  number starts at the first medicine's usual amount rather than 1, shows
-  the medicine's unit as an attribute, and Give Medicine uses the usual
-  amount when the amount is 0 or unset. A dose you set by hand is still
-  remembered across restarts.
-- Buttons ignore a repeat press within 3 seconds, and writes ask for a
-  debounced refresh, so a double tap does not log a record twice.
-- Feed Due, Wake To Feed, Feeding Overdue, Night Mode and the feeding
-  timers re-evaluate every minute instead of waiting for the next refresh.
-- Every database connection waits up to 10 seconds for a lock and uses
-  write-ahead logging, and one lock covers syncs and writes, so a refresh
-  and a service call never interleave.
-- `add_activity` reuses the account's activity description of that name
-  instead of creating a new one each time.
-- `dismiss_alert` accepts the `intake_low`, `feed_due` and `wake_to_feed`
-  alerts. `force_resync` is documented in `services.yaml`.
-- `manifest.json` declares `integration_type: hub`.
+### Blueprints and repairs
 
-### Fixed
+- Blueprints for feed due, wake to feed, sleep due, new photo and a daily
+  intake summary.
+- Repairs for the Assist sentence file, records stuck unsent and an
+  account that was reset.
 
-- Growth and other-activity reads are filtered by baby; the newest
-  measurement of any baby used to show for every baby.
-- Time zones: "today", day buckets and night sleep use Home Assistant's
-  time zone rather than the host's or UTC.
-- Temperature readings carry their unit, and the fever alert compares the
-  Fahrenheit value.
-- Joy and Journal records are merged, and `NursingSession` is read as
-  Nursing.
-- Sleep clamps a negative duration; growth stores measures and scale flags
-  as the Android app does.
-- Nursing durations are minutes, not seconds.
-- The 24 hour intake total is rounded so floating point noise cannot push
-  an exactly-on-the-bound total over it.
-- A failed Force Resync no longer leaves the integration signed out until a
-  restart; syncing signs in again by itself.
-- An upload failure no longer makes every entity unavailable.
-- A sleep ended within its first minute is ended (duration at least 1 min),
-  and old never-ended sleeps are not shown as in progress.
-- Records logged in Home Assistant are no longer re-merged on the next
-  sync, so a record deleted on the phone cannot come back.
-- Pump totals are summed in millilitres, exclude inventory adjustments and
-  count per-side amounts; a head-only growth row no longer blanks Weight
-  and Length.
-- The nursing timer survives reloads and restarts; a failed button press can
-  be retried at once.
-- Fever ignores readings older than 24 hours; Fever, Low Wet Diapers and
-  Long Sleep re-evaluate every minute.
-- A transient photo download failure is retried instead of remembered.
-- Only one account can be added (`single_config_entry`); the registry
-  migration cannot capture account-level entities.
-- A sleep left running (duration 0) for more than 24 hours is no longer
-  reported as in progress by the last-sleep reads, `is_currently_sleeping`
-  or the Long Sleep alert; it is still the last sleep, with `is_sleeping`
-  false. This is the same window that stops Wake Up from ending it.
+### Client library and command line
 
-## [0.2.0] - 2026-10-30
+- The sync client lives in `custom_components/baby_tracker/client/`, has no
+  Home Assistant dependency and is packaged as `babytracker-client` (with a
+  `photos` extra for Pillow), installable with pip from this repository or
+  the wheel attached to each release, so other projects can use it too. The `babytracker` command has `babies`,
+  `sync`, `devices`, `last`, `recent`, `next`, `insights`, `calendar`,
+  `inventory`, `add-diaper`, `add-bottle`, `add-nursing`, `add-joy`,
+  `attach-photo`, `create-medicine`, `create-food`, `delete`, `undo`, `raw`
+  and `logout`, and with no command opens an interactive shell (cmd2) with
+  the same commands, tab completion for commands, options and baby names,
+  a persistent history and `set baby` to pick a default baby.
 
-### Added
+### Project
 
-- **Multiple babies.** Each baby gets its own device and entities, keyed by
-  the baby's ID, so renaming a baby in the app keeps its entities and
-  history. Services take a Baby device picker as well as `baby_name`.
-  The integration reloads when babies are added or renamed.
-- **Device identity.** Each install registers as its own device in the app,
-  with a device ID that survives a rebuild of the local database.
-- **Options and reauth flows.** Update interval and units can be changed
-  after setup, and a rejected password prompts for a new one instead of
-  failing every refresh.
-- **Standalone client and CLI.** The sync client lives in
-  `custom_components/baby_tracker/client/` with no Home Assistant
-  dependency and installs as `babytracker_client`. The `babytracker`
-  command has `babies`, `sync`, `devices`, `last`, `add-diaper`, `raw` and
-  `logout`.
-- **HACS layout**: `custom_components/baby_tracker/`, `hacs.json`,
-  documentation and issue-tracker links.
-- Tests for the client (against the Android app's real schema, with the
-  server faked) and for the integration, GitHub Actions for both, hassfest,
-  and a dev container with `docker compose` and `scripts/bootstrap`.
+- HACS layout with a zipped release, Home Assistant 2024.12 or newer, brand
+  images on the integration page (2026.3 and newer), tests for the client
+  and the integration with GitHub Actions and hassfest, a dev container with
+  `docker compose` and `scripts/bootstrap`, and an MIT license.
 
-### Changed
-
-- **The sync engine was rebuilt on the Android app's rules.** Downloads are
-  paged and resumable, failures are retried and then skipped with a log
-  entry, updates only overwrite older rows, name clashes and conflicts are
-  resolved as the app does, and records you add are saved locally, queued
-  and uploaded in order, so offline taps are sent on the next sync.
-- Records are stored with a table-driven registry that matches the app, and
-  pump, growth, milestone and vaccine records now sync.
-- Entity names come from the baby's device, so new installs get
-  `button.everly_add_wet_diaper` rather than a doubled
-  `button.baby_tracker_everly_everly_add_wet_diaper`. Existing entity IDs
-  are unchanged.
-- The YAML configuration path was removed; set up the integration from the
-  UI.
-
-[0.4.0]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v0.3.1...v0.4.0
-[0.3.1]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/releases/tag/v0.2.0
+[1.0.0]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/releases/tag/v1.0.0

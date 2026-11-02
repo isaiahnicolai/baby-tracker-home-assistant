@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in the integration, the client library or the command line doesn't work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. Please don't paste your Baby Tracker password, and look over logs before posting them: they can contain your babies' names and entries. The integration's diagnostics download (Settings > Devices & services > Baby Tracker > three dots > Download diagnostics) already hides your login.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options:
+        - Home Assistant integration
+        - Python library
+        - Command line
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Integration or library version
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      description: Settings > About. Leave empty for the library or command line.
+      placeholder: "2026.10.4"
+  - type: dropdown
+    id: app
+    attributes:
+      label: Which Baby Tracker app the account is used with
+      multiple: true
+      options:
+        - Android
+        - iPhone or iPad
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or diagnostics
+      description: "Debug logs help most. Add `custom_components.baby_tracker: debug` under `logger:` in configuration.yaml, restart and reproduce the problem."
+      render: text

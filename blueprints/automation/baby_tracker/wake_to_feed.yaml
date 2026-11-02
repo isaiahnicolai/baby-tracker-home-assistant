@@ -10,7 +10,7 @@ blueprint:
   input:
     wake_to_feed_alert:
       name: Wake To Feed alert
-      description: The baby's Wake To Feed binary sensor (for example binary_sensor.everly_wake_to_feed).
+      description: The baby's Wake To Feed binary sensor (for example binary_sensor.ava_wake_to_feed).
       selector:
         entity:
           filter:

@@ -11,7 +11,7 @@ blueprint:
   input:
     activity_event:
       name: Activity event
-      description: The baby's Activity event entity (for example event.everly_activity).
+      description: The baby's Activity event entity (for example event.ava_activity).
       selector:
         entity:
           filter:
@@ -19,7 +19,7 @@ blueprint:
               domain: event
     latest_photo:
       name: Latest Photo
-      description: The same baby's Latest Photo image entity (for example image.everly_latest_photo).
+      description: The same baby's Latest Photo image entity (for example image.ava_latest_photo).
       selector:
         entity:
           filter:

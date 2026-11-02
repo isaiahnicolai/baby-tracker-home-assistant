@@ -3,14 +3,14 @@ import sqlite3
 
 import pytest
 from babytracker_client.api import _get_local_timezone_offset_seconds
-from helpers import COMMON, EVERLY, IPHONE
+from helpers import COMMON, AVA, IPHONE
 
 
 def test_temperature_uses_the_apps_columns(apply, query, tracker):
     apply({**COMMON, "BCObjectType": "Temperature", "objectID": "T1",
            "temperature": {"value": 99.1, "englishMeasure": True}})
     assert query("SELECT Temp, IsEnglishScale FROM Temperature WHERE ID='T1'") == [(99.1, 1)]
-    assert tracker.get_last_temperature(EVERLY)["temp"] == 99.1
+    assert tracker.get_last_temperature(AVA)["temp"] == 99.1
 
 
 def test_nursing_keeps_finish_side(apply, query):
@@ -74,14 +74,14 @@ def test_joy_and_journal_are_merged_from_other_devices(tracker, server, query, o
                              "time": "2026-10-30 10:30:00 +0000"}])
     assert tracker.sync()["status"] == "success"
     rows = query(f"SELECT BabyID, Note, HasPicture, Time FROM {table} WHERE ID='X1'")
-    assert rows == [(EVERLY, "first giggle", 0, tracker.db.convert_timestamp("2026-10-30 10:30:00 +0000"))]
+    assert rows == [(AVA, "first giggle", 0, tracker.db.convert_timestamp("2026-10-30 10:30:00 +0000"))]
 
 
 def test_nursing_session_is_stored_as_nursing(tracker, server, query):
     server.publish(IPHONE, [{**COMMON, "BCObjectType": "NursingSession", "objectID": "NS1",
                              "finishSide": 1, "leftDuration": 6, "rightDuration": 4}])
     assert tracker.sync()["status"] == "success"
-    assert query("SELECT BabyID, FinishSide, LeftDuration, RightDuration FROM Nursing WHERE ID='NS1'") == [(EVERLY, 1, 6, 4)]
+    assert query("SELECT BabyID, FinishSide, LeftDuration, RightDuration FROM Nursing WHERE ID='NS1'") == [(AVA, 1, 6, 4)]
 
 
 @pytest.mark.parametrize("duration, stored", [(45, 45), (-30, 0), (None, 0)])
@@ -239,7 +239,7 @@ def test_an_allergen_source_in_use_is_not_deleted(apply, app_db):
     apply({"BCObjectType": "AllergenSourceSelection", "objectID": "SRC", "timestamp": COMMON["timestamp"],
            "name": "Peanut"})
     conn = sqlite3.connect(app_db)
-    conn.execute("INSERT INTO Allergen (ID, Time, BabyID, SourceID, Severity) VALUES ('A1', 1, ?, 'SRC', 1)", (EVERLY,))
+    conn.execute("INSERT INTO Allergen (ID, Time, BabyID, SourceID, Severity) VALUES ('A1', 1, ?, 'SRC', 1)", (AVA,))
     conn.commit()
     conn.close()
     assert apply({"BCObjectType": "AllergenSourceSelection", "objectID": "SRC", "timestamp": COMMON["timestamp"]},

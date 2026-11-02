@@ -10,7 +10,7 @@ blueprint:
   input:
     feed_due_alert:
       name: Feed Due alert
-      description: The baby's Feed Due binary sensor (for example binary_sensor.everly_feed_due).
+      description: The baby's Feed Due binary sensor (for example binary_sensor.ava_feed_due).
       selector:
         entity:
           filter:

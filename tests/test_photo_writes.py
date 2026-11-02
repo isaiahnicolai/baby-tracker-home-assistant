@@ -2,7 +2,7 @@
 import os
 
 import pytest
-from helpers import EVERLY
+from helpers import AVA
 
 pytest.importorskip("PIL")
 
@@ -32,11 +32,11 @@ def pics(tmp_path):
 
 def test_joy_with_a_photo_has_the_apps_wire_format(tracker, server, query, tmp_path, pics):
     source = make_image(tmp_path / "snap.png")
-    result = tracker.add_joy(EVERLY, note="first smile", photo_path=source, picture_dir=pics)
+    result = tracker.add_joy(AVA, note="first smile", photo_path=source, picture_dir=pics)
     assert result["status"] == "success" and result["queued"] is False
 
     record = server.uploads[-1]["record"]
-    assert (record["BCObjectType"], record["note"], record["baby"]["objectID"]) == ("Joy", "first smile", EVERLY)
+    assert (record["BCObjectType"], record["note"], record["baby"]["objectID"]) == ("Joy", "first smile", AVA)
     assert record["pictureLoaded"] is True and len(record["pictureNote"]) == 1
     picture = record["pictureNote"][0]
     assert picture["BCObjectType"] == "Picture"
@@ -64,20 +64,20 @@ def test_joy_with_a_photo_has_the_apps_wire_format(tracker, server, query, tmp_p
 
 
 def test_the_new_photo_is_the_latest_picture(tracker, tmp_path, pics):
-    tracker.add_joy(EVERLY, note="older", photo_path=make_image(tmp_path / "a.png"), picture_dir=pics,
+    tracker.add_joy(AVA, note="older", photo_path=make_image(tmp_path / "a.png"), picture_dir=pics,
                     time_str="2026-10-30 08:00:00 +0000")
-    newer = tracker.add_joy(EVERLY, note="newer", photo_path=make_image(tmp_path / "b.png"), picture_dir=pics,
+    newer = tracker.add_joy(AVA, note="newer", photo_path=make_image(tmp_path / "b.png"), picture_dir=pics,
                             time_str="2026-10-30 09:00:00 +0000")
-    latest = tracker.get_latest_picture(EVERLY)  # the folder the write used is remembered
+    latest = tracker.get_latest_picture(AVA)  # the folder the write used is remembered
     assert latest["object_id"] == newer["objectID"] and latest["object_type"] == "Joy"
     assert latest["note"] == "newer"
     assert os.path.isfile(latest["path"]) and latest["path"].endswith(".jpg")
     assert os.path.isfile(latest["thumbnail_path"])
-    assert [p["note"] for p in tracker.get_pictures(EVERLY, picture_dir=pics)] == ["newer", "older"]
+    assert [p["note"] for p in tracker.get_pictures(AVA, picture_dir=pics)] == ["newer", "older"]
 
 
 def test_joy_without_a_photo(tracker, server, query):
-    result = tracker.add_joy(EVERLY, note="giggles")
+    result = tracker.add_joy(AVA, note="giggles")
     assert result["status"] == "success"
     assert server.uploads[-1]["record"]["pictureNote"] == []
     assert server.picture_uploads == []
@@ -86,13 +86,13 @@ def test_joy_without_a_photo(tracker, server, query):
 
 def test_a_jpeg_that_fits_is_copied_as_is(tracker, tmp_path, pics):
     source = make_image(tmp_path / "ok.jpg", "JPEG")
-    tracker.add_joy(EVERLY, photo_path=source, picture_dir=pics)
+    tracker.add_joy(AVA, photo_path=source, picture_dir=pics)
     stored = next(f for f in os.listdir(pics) if not f.endswith("__thumbnail.jpg"))
     assert open(os.path.join(pics, stored), "rb").read() == open(source, "rb").read()
 
 
 def test_a_large_photo_is_scaled_down(tracker, tmp_path, pics):
-    tracker.add_joy(EVERLY, photo_path=make_image(tmp_path / "big.png", size=(3000, 1500)), picture_dir=pics)
+    tracker.add_joy(AVA, photo_path=make_image(tmp_path / "big.png", size=(3000, 1500)), picture_dir=pics)
     stored = next(f for f in os.listdir(pics) if not f.endswith("__thumbnail.jpg"))
     with Image.open(os.path.join(pics, stored)) as full:
         assert full.size == (2048, 1024)
@@ -100,7 +100,7 @@ def test_a_large_photo_is_scaled_down(tracker, tmp_path, pics):
 
 def test_offline_keeps_the_files_pending_and_sync_retries_before_the_record(tracker, server, query, tmp_path, pics):
     server.online = False
-    result = tracker.add_joy(EVERLY, photo_path=make_image(tmp_path / "snap.png"), picture_dir=pics)
+    result = tracker.add_joy(AVA, photo_path=make_image(tmp_path / "snap.png"), picture_dir=pics)
     assert result["status"] == "success" and result["queued"] is True
     assert len(query("SELECT PhotoFile FROM PhotoList")) == 2
     assert query("SELECT COUNT(*) FROM TransactionLog") == [(1,)]
@@ -121,7 +121,7 @@ def test_a_failed_upload_keeps_the_record_queued_too(tracker, server, query, tmp
     def refuse(path):
         raise Exception("503")
     monkeypatch.setattr(tracker.api, "upload_picture", refuse)
-    result = tracker.add_joy(EVERLY, photo_path=make_image(tmp_path / "snap.png"), picture_dir=pics)
+    result = tracker.add_joy(AVA, photo_path=make_image(tmp_path / "snap.png"), picture_dir=pics)
     assert result["queued"] is True
     assert server.uploads == []  # the record waits for its files
     assert query("SELECT COUNT(*) FROM TransactionLog") == [(1,)]
@@ -129,7 +129,7 @@ def test_a_failed_upload_keeps_the_record_queued_too(tracker, server, query, tmp
 
 def test_a_vanished_queued_file_is_dropped_not_stuck(tracker, server, query, tmp_path, pics):
     server.online = False
-    tracker.add_joy(EVERLY, photo_path=make_image(tmp_path / "snap.png"), picture_dir=pics)
+    tracker.add_joy(AVA, photo_path=make_image(tmp_path / "snap.png"), picture_dir=pics)
     for name in os.listdir(pics):
         os.remove(os.path.join(pics, name))
     server.online = True
@@ -138,7 +138,7 @@ def test_a_vanished_queued_file_is_dropped_not_stuck(tracker, server, query, tmp
 
 
 def test_attach_to_an_existing_diaper(tracker, server, query, tmp_path, pics):
-    diaper = tracker.add_diaper(EVERLY, None, pee=True, poo=True, note="big one")
+    diaper = tracker.add_diaper(AVA, None, pee=True, poo=True, note="big one")
     result = tracker.attach_photo("Diaper", diaper["objectID"], make_image(tmp_path / "d.png"), picture_dir=pics)
     assert result["status"] == "success" and result["queued"] is False
 
@@ -160,13 +160,13 @@ def test_attach_to_an_existing_diaper(tracker, server, query, tmp_path, pics):
     assert len(server.uploads[-1]["record"]["pictureNote"]) == 2
     assert server.uploads[-1]["record"]["pictureNote"][0]["fileName"] == name
     assert query("SELECT COUNT(*) FROM Picture WHERE ActivityID=?", (diaper["objectID"],)) == [(2,)]
-    assert tracker.get_latest_picture(EVERLY)["object_id"] == diaper["objectID"]
+    assert tracker.get_latest_picture(AVA)["object_id"] == diaper["objectID"]
 
 
 def test_attach_refuses_what_cannot_have_a_photo(tracker, server, tmp_path, pics):
     image = make_image(tmp_path / "x.png")
     assert tracker.attach_photo("Diaper", "NOPE", image, picture_dir=pics)["status"] == "error"
-    assert tracker.attach_photo("Baby", EVERLY, image, picture_dir=pics)["status"] == "error"
+    assert tracker.attach_photo("Baby", AVA, image, picture_dir=pics)["status"] == "error"
     assert tracker.attach_photo("Nonsense", "X", image, picture_dir=pics)["status"] == "error"
     assert server.uploads == [] and server.picture_uploads == []
     assert not os.path.exists(pics)
@@ -175,20 +175,20 @@ def test_attach_refuses_what_cannot_have_a_photo(tracker, server, tmp_path, pics
 def test_a_file_that_is_not_an_image_is_an_error_and_leaves_nothing(tracker, server, tmp_path, pics):
     bad = tmp_path / "notes.txt"
     bad.write_text("not an image")
-    result = tracker.add_joy(EVERLY, photo_path=str(bad), picture_dir=pics)
+    result = tracker.add_joy(AVA, photo_path=str(bad), picture_dir=pics)
     assert result["status"] == "error" and "image" in result["message"]
     assert server.uploads == [] and os.listdir(pics) == []
 
 
 def test_no_picture_folder_is_a_clear_error(tracker, tmp_path):
-    result = tracker.add_joy(EVERLY, photo_path=make_image(tmp_path / "x.png"))
+    result = tracker.add_joy(AVA, photo_path=make_image(tmp_path / "x.png"))
     assert result["status"] == "error" and "picture folder" in result["message"]
 
 
 def test_a_known_wire_decodes_back_to_the_picture_entries(tracker, server, tmp_path, pics):
     """The entry we send is what records.picture_entries reads on the other devices."""
     from babytracker_client import records
-    tracker.add_joy(EVERLY, photo_path=make_image(tmp_path / "x.png"), picture_dir=pics)
+    tracker.add_joy(AVA, photo_path=make_image(tmp_path / "x.png"), picture_dir=pics)
     record = server.uploads[-1]["record"]
     entries = records.picture_entries(record)
     assert [(e["Type"], e["deleted"]) for e in entries] == [(0, False)]
@@ -225,10 +225,10 @@ def test_cli_adds_a_joy_with_a_photo_and_attaches_one(server, tmp_path, app_db, 
         return json.loads(capsys.readouterr().out)
 
     image = make_image(tmp_path / "x.png")
-    joy = run("add-joy", "--baby", "everly", "--note", "smile", "--photo", image)
+    joy = run("add-joy", "--baby", "ava", "--note", "smile", "--photo", image)
     assert joy["status"] == "success"
     assert len(os.listdir(state / "pictures")) == 2
-    diaper = run("add-diaper", "wet", "--baby", "everly")
+    diaper = run("add-diaper", "wet", "--baby", "ava")
     attached = run("attach-photo", "Diaper", diaper["objectID"], image)
     assert attached["status"] == "success"
     assert len(server.picture_uploads) == 4

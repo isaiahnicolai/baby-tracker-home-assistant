@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from babytracker_client import insights
 from babytracker_client.insights import Feed
-from helpers import EVERLY, TWIN
+from helpers import AVA, TWIN
 
 CHICAGO = ZoneInfo("America/Chicago")
 UTC = UTC
@@ -476,31 +476,31 @@ NOW = datetime(2026, 10, 30, 12, 0, tzinfo=UTC)
 def seed(app_db):
     ts = lambda **delta: (NOW - timedelta(**delta)).timestamp()  # noqa: E731
     conn = sqlite3.connect(app_db)
-    # Everly: a boy, 30 days old, born on her due date
-    conn.execute("UPDATE Baby SET DOB=?, DueDay=?, Gender=1 WHERE ID=?", (ts(days=30), ts(days=30), EVERLY))
+    # Ava: a boy, 30 days old, born on her due date
+    conn.execute("UPDATE Baby SET DOB=?, DueDay=?, Gender=1 WHERE ID=?", (ts(days=30), ts(days=30), AVA))
     conn.execute("UPDATE Baby SET DOB=?, DueDay=?, Gender=0 WHERE ID=?", (ts(days=200), ts(days=200), TWIN))
     growth = "INSERT INTO Growth (ID, Time, BabyID, Weight, Length, Head, IsEnglishWeightScale, IsEnglishLengthScale) VALUES (?,?,?,?,?,?,?,?)"
-    conn.execute(growth, ("G1", ts(days=20), EVERLY, 3.6, 0, 0, 0, 0))
-    conn.execute(growth, ("G2", ts(days=2), EVERLY, 4.0, 21.5, 0, 0, 1))   # 21.5 in = 54.6 cm
+    conn.execute(growth, ("G1", ts(days=20), AVA, 3.6, 0, 0, 0, 0))
+    conn.execute(growth, ("G2", ts(days=2), AVA, 4.0, 21.5, 0, 0, 1))   # 21.5 in = 54.6 cm
     conn.execute(growth, ("G3", ts(days=1), TWIN, 14.0, 0, 0, 0, 0))
     for i in range(6):  # 110 ml every 3 hours, the latest an hour ago
         conn.execute("INSERT INTO Formula (ID, Time, BabyID, Amount, IsEnglishScale) VALUES (?,?,?,?,0)",
-                     (f"F{i}", ts(hours=1 + 3 * i), EVERLY, 110))
+                     (f"F{i}", ts(hours=1 + 3 * i), AVA, 110))
     conn.execute("INSERT INTO Formula (ID, Time, BabyID, Amount, IsEnglishScale) VALUES ('F-old',?,?,300,0)",
-                 (ts(hours=30), EVERLY))
+                 (ts(hours=30), AVA))
     conn.execute("INSERT INTO Formula (ID, Time, BabyID, Amount, IsEnglishScale) VALUES ('F-twin',?,?,4,1)",
                  (ts(hours=2), TWIN))
     conn.execute("INSERT INTO OtherFeedSelection (ID, Name, IsBottle) VALUES ('OS1','Water',0)")
     conn.execute("INSERT INTO OtherFeed (ID, Time, BabyID, TypeID, Amount, IsEnglishScale) VALUES ('O1',?,?,'OS1',500,0)",
-                 (ts(minutes=10), EVERLY))
+                 (ts(minutes=10), AVA))
     diaper = "INSERT INTO Diaper (ID, Time, BabyID, Status, Amount) VALUES (?,?,?,?,?)"
     for i in range(7):
-        conn.execute(diaper, (f"W{i}", ts(hours=1 + i), EVERLY, 0, 2))
+        conn.execute(diaper, (f"W{i}", ts(hours=1 + i), AVA, 0, 2))
     for i in range(3):
-        conn.execute(diaper, (f"P{i}", ts(hours=2 + i), EVERLY, 1, 2))
-    conn.execute(diaper, ("M", ts(hours=3), EVERLY, 2, 2))
-    conn.execute(diaper, ("D", ts(hours=4), EVERLY, 0, 0))        # dry
-    conn.execute(diaper, ("OLD", ts(hours=30), EVERLY, 0, 2))
+        conn.execute(diaper, (f"P{i}", ts(hours=2 + i), AVA, 1, 2))
+    conn.execute(diaper, ("M", ts(hours=3), AVA, 2, 2))
+    conn.execute(diaper, ("D", ts(hours=4), AVA, 0, 0))        # dry
+    conn.execute(diaper, ("OLD", ts(hours=30), AVA, 0, 2))
     conn.execute(diaper, ("TW", ts(hours=1), TWIN, 0, 2))
     conn.commit()
     conn.close()
@@ -508,10 +508,10 @@ def seed(app_db):
 
 def test_get_insights_for_one_baby(tracker, app_db):
     seed(app_db)
-    result = tracker.get_insights(EVERLY, now=NOW)
+    result = tracker.get_insights(AVA, now=NOW)
     json.dumps(result)
 
-    assert result["baby_id"] == EVERLY and result["name"] == "Everly"
+    assert result["baby_id"] == AVA and result["name"] == "Ava"
     assert result["age"]["chronological_days"] == 30
     assert result["age"]["correction_applied"] is False
 
@@ -559,7 +559,7 @@ def test_get_insights_keeps_babies_apart(tracker, app_db):
 
 
 def test_get_insights_without_data_or_babies(tracker, app_db):
-    empty = tracker.get_insights(EVERLY, now=NOW)  # nothing logged yet
+    empty = tracker.get_insights(AVA, now=NOW)  # nothing logged yet
     assert empty["next_feed"]["predicted_at"] is None
     assert empty["intake"]["status"] == "unknown"
     assert empty["growth"] is None
@@ -569,7 +569,7 @@ def test_get_insights_without_data_or_babies(tracker, app_db):
 
 def test_get_insights_opens_the_database_in_the_trackers_zone(tracker):
     tracker.db = None  # not opened yet, as after a restart before the first sync
-    tracker.get_insights(EVERLY, now=NOW)
+    tracker.get_insights(AVA, now=NOW)
     assert tracker.db.tz == tracker.tz == CHICAGO
 
 def test_unknown_age_is_unknown_not_a_newborn():
@@ -584,11 +584,11 @@ def test_unknown_age_is_unknown_not_a_newborn():
 
 def test_get_insights_for_a_baby_without_a_date_of_birth(tracker, app_db):
     conn = sqlite3.connect(app_db)
-    conn.execute("UPDATE Baby SET DOB = 0 WHERE ID = ?", (EVERLY,))
+    conn.execute("UPDATE Baby SET DOB = 0 WHERE ID = ?", (AVA,))
     conn.commit()
     conn.close()
 
-    result = tracker.get_insights(EVERLY, now=NOW)
+    result = tracker.get_insights(AVA, now=NOW)
 
     assert result["age"] is None
     assert result["diapers"] is None
@@ -732,25 +732,25 @@ def test_get_insights_predicts_the_next_sleep(tracker, app_db):
     conn = sqlite3.connect(app_db)
     insert = "INSERT INTO Sleep (ID, Time, BabyID, Duration) VALUES (?,?,?,?)"
     for i, (hour, minute) in enumerate([(8, 0), (9, 30), (11, 0), (12, 0)]):   # 30 minute naps, 1 h awake between
-        conn.execute(insert, (f"S{i}", chicago(hour, minute).timestamp(), EVERLY, 30))
-    conn.execute(insert, ("OLD", chicago(1).timestamp() - 3 * 86400, EVERLY, 0))   # never ended: not in progress
+        conn.execute(insert, (f"S{i}", chicago(hour, minute).timestamp(), AVA, 30))
+    conn.execute(insert, ("OLD", chicago(1).timestamp() - 3 * 86400, AVA, 0))   # never ended: not in progress
     conn.commit()
     conn.close()
 
-    awake = tracker.get_insights(EVERLY, now=chicago(13))["next_sleep"]
+    awake = tracker.get_insights(AVA, now=chicago(13))["next_sleep"]
     json.dumps(awake)
     assert awake["is_asleep"] is False and awake["basis"] == "history" and awake["sample_count"] == 3
     assert datetime.fromisoformat(awake["awake_since"]) == chicago(12, 30)
     assert awake["wake_window_hours"] == 1.0
     assert datetime.fromisoformat(awake["next_sleep_at"]) == chicago(13, 30)
     assert (awake["window_min_hours"], awake["window_max_hours"], awake["max_awake_hours"]) == (1.0, 1.5, 1.5)
-    assert tracker.get_insights(EVERLY, now=chicago(14))["next_sleep"]["overdue"] is True
+    assert tracker.get_insights(AVA, now=chicago(14))["next_sleep"]["overdue"] is True
 
     conn = sqlite3.connect(app_db)
-    conn.execute(insert, ("NOW", chicago(13, 5).timestamp(), EVERLY, 0))   # started, no duration yet
+    conn.execute(insert, ("NOW", chicago(13, 5).timestamp(), AVA, 0))   # started, no duration yet
     conn.commit()
     conn.close()
-    asleep = tracker.get_insights(EVERLY, now=chicago(13, 15))["next_sleep"]
+    asleep = tracker.get_insights(AVA, now=chicago(13, 15))["next_sleep"]
     assert asleep["is_asleep"] is True and asleep["next_sleep_at"] is None
     assert datetime.fromisoformat(asleep["asleep_since"]) == chicago(13, 5)
     assert datetime.fromisoformat(asleep["expected_wake_at"]) == chicago(13, 35)   # the usual 30 minutes
@@ -759,5 +759,5 @@ def test_get_insights_predicts_the_next_sleep(tracker, app_db):
 
 
 def test_get_insights_without_sleeps_has_no_next_sleep(tracker, app_db):
-    result = tracker.get_insights(EVERLY, now=NOW)["next_sleep"]
+    result = tracker.get_insights(AVA, now=NOW)["next_sleep"]
     assert result["is_asleep"] is False and result["next_sleep_at"] is None and result["awake_since"] is None

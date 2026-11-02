@@ -429,7 +429,7 @@
       "message": "baby_name is required when there are multiple babies ({names})"
     },
     "medicine_not_found": {
-      "message": "Medicine {name} not found"
+      "message": "Medicine {name} not found. Create it with the create_medicine action, or set create to true when logging it"
     },
     "milestone_not_found": {
       "message": "Milestone {name} not found"
@@ -441,7 +441,7 @@
       "message": "Failed to {action}: {error}"
     },
     "food_not_found": {
-      "message": "Food {name} not found"
+      "message": "Food {name} not found. Create it with the create_food action, or set create to true when adding it"
     },
     "no_medicine_selected": {
       "message": "This account has no medicines to choose from; add one in the Baby Tracker app"
@@ -475,10 +475,6 @@
     }
   },
   "issues": {
-    "old_www_folder": {
-      "title": "Old baby photos are publicly readable",
-      "description": "Older versions saved baby photos in {folder}, where anyone on your network can open them at /local/baby_tracker/ without logging in. Baby photos are now kept privately and shown by the Photo image entities, so those copies are no longer used. Delete the folder to remove them."
-    },
     "uploads_pending": {
       "title": "Baby Tracker records aren't reaching the server",
       "description": "{count} record(s) logged in Home Assistant have not been uploaded to the Baby Tracker server for several updates in a row. They are kept and will be sent once the server accepts them. Check your internet connection and that the Baby Tracker service is up; the Sync Now button tries again."
@@ -493,7 +489,7 @@
         "step": {
           "confirm": {
             "title": "Install the Baby Tracker voice commands",
-            "description": "Home Assistant only reads Assist sentences from {folder}. Select Submit to write the Baby Tracker sentence file there, with your babies' names filled in, so you can say things like \"Everly had a wet diaper\" or \"when did Everly last eat\". An existing baby_tracker.yaml in that folder is replaced.\n\nThe conversation agent is asked to reload the sentences. If a command is not recognised straight away, restart Home Assistant."
+            "description": "Home Assistant only reads Assist sentences from {folder}. Select Submit to write the Baby Tracker sentence file there, with your babies' names filled in, so you can say things like \"Ava had a wet diaper\" or \"when did Ava last eat\". An existing baby_tracker.yaml in that folder is replaced.\n\nThe conversation agent is asked to reload the sentences. If a command is not recognised straight away, restart Home Assistant."
           }
         },
         "error": {
@@ -748,6 +744,10 @@
           "name": "Amount",
           "description": "Amount given."
         },
+        "create": {
+          "name": "Create",
+          "description": "Create the medicine first when the account has no medicine of that name (its usual dose is set to the amount)."
+        },
         "note": {
           "name": "Note",
           "description": "Optional note for this record."
@@ -755,6 +755,46 @@
         "time": {
           "name": "Time",
           "description": "When it was given (defaults to now)."
+        }
+      }
+    },
+    "create_medicine": {
+      "name": "Create Medicine",
+      "description": "Creates a medicine in Baby Tracker (for every baby on the account). It then appears in the Medicine select and can be logged. Does nothing if a medicine of that name exists.",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "Name of the new medicine (for example \"Vitamin D\")."
+        },
+        "amount": {
+          "name": "Usual Dose",
+          "description": "The usual amount given each time."
+        },
+        "unit": {
+          "name": "Unit",
+          "description": "The unit of the dose, for example ml, mg or drops."
+        },
+        "interval_hours": {
+          "name": "Interval Hours",
+          "description": "Hours between doses (0 for none)."
+        },
+        "prescription": {
+          "name": "Prescription",
+          "description": "Whether this is a prescription medicine."
+        }
+      }
+    },
+    "create_food": {
+      "name": "Create Food",
+      "description": "Creates a food for solids feeds in Baby Tracker (for every baby on the account). Does nothing if a food of that name exists.",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "Name of the new food (for example \"Mango\")."
+        },
+        "is_bottle": {
+          "name": "Bottle",
+          "description": "Whether the food is given from a bottle (for example a supplement drink)."
         }
       }
     },
@@ -973,6 +1013,10 @@
         "is_english_measure": {
           "name": "English Measure",
           "description": "Whether the amount is in English units (on) or metric (off). Defaults to the integration's unit setting."
+        },
+        "create": {
+          "name": "Create",
+          "description": "Create the food first when the account has no food of that name."
         },
         "note": {
           "name": "Note",
@@ -1264,7 +1308,7 @@
       "fields": {
         "entity_id": {
           "name": "Entity ID",
-          "description": "The alert to dismiss (for example binary_sensor.everly_feeding_overdue)."
+          "description": "The alert to dismiss (for example binary_sensor.ava_feeding_overdue)."
         },
         "baby_name": {
           "name": "Baby Name",

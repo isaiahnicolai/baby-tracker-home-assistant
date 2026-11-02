@@ -12,7 +12,7 @@ import sqlite3
 import pytest
 import requests
 
-from helpers import EMAIL, EVERLY, IPHONE, MILESTONE, OURS, TWIN, VACCINE, b64, unb64  # noqa: F401
+from helpers import EMAIL, AVA, IPHONE, MILESTONE, OURS, TWIN, VACCINE, b64, unb64  # noqa: F401
 
 SCHEMA = pathlib.Path(__file__).parent / "fixtures" / "app_schema.sql"
 
@@ -114,7 +114,7 @@ def app_db(tmp_path):
     conn.executescript(SCHEMA.read_text(encoding="utf-8"))
     conn.executemany(
         "INSERT INTO Baby (ID, Timestamp, Name, DOB, DueDay, Gender, Picture) VALUES (?, 1.7e9, ?, 1.7e9, 1.7e9, 0, '')",
-        [(EVERLY, "Everly"), (TWIN, "Ann Marie")],
+        [(AVA, "Ava"), (TWIN, "Ann Marie")],
     )
     conn.execute("INSERT INTO MilestoneSelection (ID, Timestamp, Name, Description, ForAge) VALUES (?, 0, 'First smile', '', 2)", (MILESTONE,))
     conn.execute("INSERT INTO VaccineSelection (ID, Timestamp, Name, Description, ForAge) VALUES (?, 0, 'HepB', '', 0)", (VACCINE,))

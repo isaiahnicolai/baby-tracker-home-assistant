@@ -31,7 +31,7 @@ from custom_components.baby_tracker.client.models import Baby
 from custom_components.baby_tracker.const import DOMAIN
 
 EMAIL = "me@example.com"
-EVERLY = Baby({"objectID": "ID-EVERLY", "name": "Everly", "dob": "", "dueDay": ""})
+AVA = Baby({"objectID": "ID-AVA", "name": "Ava", "dob": "", "dueDay": ""})
 TWIN = Baby({"objectID": "ID-TWIN", "name": "Ann Marie", "dob": "", "dueDay": ""})
 CORE = "custom_components.baby_tracker.client.core.BabyTracker"
 REAL_FETCH = BabyTrackerDataCoordinator._fetch  # the `backend` fixture swaps it out while a test runs
@@ -51,7 +51,7 @@ MEDICINES = [
     {"id": "MED-TYLENOL", "name": "Tylenol", "amount_per_time": 3.75, "unit": "ml"},
     {"id": "MED-VITD", "name": "Vitamin D", "amount_per_time": 1.0, "unit": "ml"},
 ]
-# What get_recent_records returns for Everly (newest first), and what undo_last deletes
+# What get_recent_records returns for Ava (newest first), and what undo_last deletes
 RECENT = [
     {"object_type": "Diaper", "object_id": "DIAPER-1", "time": "2026-03-01T10:00:00+00:00",
      "kind": "wet diaper", "note": ""},
@@ -63,8 +63,8 @@ FOODS = [{"id": "FOOD-BANANA", "name": "Banana", "description": "", "is_bottle":
 
 # What BabyTracker.get_insights returns (datetimes as ISO strings)
 INSIGHTS = {
-    "baby_id": "ID-EVERLY",
-    "name": "Everly",
+    "baby_id": "ID-AVA",
+    "name": "Ava",
     "generated_at": "2026-03-01T10:00:00+00:00",
     "age": {
         "chronological_days": 60, "corrected_days": 46, "chronological_months": 1.97,
@@ -76,7 +76,7 @@ INSIGHTS = {
         "sample_count": 6, "bucket": "day", "last_feed_at": "2026-03-01T09:30:00+00:00",
         "overdue": False, "max_gap_hours": 5.0, "wake_by": "2026-03-01T14:30:00+00:00",
     },
-    "next_sleep": {  # Everly is asleep (since 11:00), as in last_sleep below
+    "next_sleep": {  # Ava is asleep (since 11:00), as in last_sleep below
         "is_asleep": True, "asleep_since": "2026-03-01T11:00:00+00:00",
         "expected_wake_at": "2026-03-01T12:40:00+00:00", "awake_since": None, "wake_window_hours": None,
         "window_min_hours": 1.0, "window_max_hours": 2.5, "next_sleep_at": None, "overdue": False,
@@ -110,8 +110,8 @@ INSIGHTS = {
 }
 
 
-# What the coordinator keeps for Everly besides the insights (client values: UTC times as text)
-EVERLY_DATA = {
+# What the coordinator keeps for Ava besides the insights (client values: UTC times as text)
+AVA_DATA = {
     "insights": INSIGHTS,
     "time_since_last_feeding": {
         "hours_since_last_feeding": 2.5, "last_feeding_time": "2026-03-01T09:30:00+00:00",
@@ -152,16 +152,16 @@ ACCOUNT = {"pumped_milk_inventory": {"ml": 479.1, "pumped_ml": 588.3, "fed_ml": 
 
 
 def fake_fetch(self, photo_dir):
-    babies = [TWIN, EVERLY]
-    data = {b.name: {"baby_info": b, **(EVERLY_DATA if b is EVERLY else {"insights": {}})} for b in babies}
-    return babies, EVERLY, {}, data, ACCOUNT, MEDICINES
+    babies = [TWIN, AVA]
+    data = {b.name: {"baby_info": b, **(AVA_DATA if b is AVA else {"insights": {}})} for b in babies}
+    return babies, AVA, {}, data, ACCOUNT, MEDICINES
 
 
 def fetch_with(**changes):
-    """A fetch like fake_fetch, but with Everly's data changed (as after something new is logged)."""
+    """A fetch like fake_fetch, but with Ava's data changed (as after something new is logged)."""
     def fetch(self, photo_dir):
         babies, info, pictures, data, account, medicines = fake_fetch(self, photo_dir)
-        data["Everly"] = {**data["Everly"], **changes}
+        data["Ava"] = {**data["Ava"], **changes}
         return babies, info, pictures, data, account, medicines
     return fetch
 
@@ -242,7 +242,7 @@ def backend():
          patch(f"{CORE}.add_other_feed", add_other_feed), \
          patch(f"{CORE}.get_medicine_selections", lambda self: MEDICINES), \
          patch(f"{CORE}.get_other_feed_selections", lambda self: FOODS), \
-         patch(f"{CORE}.get_baby_by_name", lambda self, name: next((b for b in (TWIN, EVERLY) if b.name == name), None)):
+         patch(f"{CORE}.get_baby_by_name", lambda self, name: next((b for b in (TWIN, AVA) if b.name == name), None)):
         yield calls
 
 
@@ -277,7 +277,7 @@ async def test_name_based_entities_migrate_to_baby_ids(hass, backend):
 
 async def test_each_baby_gets_its_own_diaper_buttons(hass, backend):
     await setup(hass, make_entry())
-    for baby_id, slug in (("ID-TWIN", "ann_marie"), ("ID-EVERLY", "everly")):
+    for baby_id, slug in (("ID-TWIN", "ann_marie"), ("ID-AVA", "ava")):
         for kind in ("wet", "dirty", "mixed"):
             entity_id = f"button.{slug}_add_{kind}_diaper"
             assert hass.states.get(entity_id), entity_id
@@ -293,8 +293,8 @@ async def test_services_target_a_baby_by_device(hass, backend):
     await hass.services.async_call(DOMAIN, "add_diaper", {"device_id": device.id, "pee": True}, blocking=True)
     assert backend[-1][:2] == ("add_diaper", "ID-TWIN")
 
-    await hass.services.async_call(DOMAIN, "add_diaper", {"baby_name": "Everly"}, blocking=True)
-    assert backend[-1][:2] == ("add_diaper", "ID-EVERLY")
+    await hass.services.async_call(DOMAIN, "add_diaper", {"baby_name": "Ava"}, blocking=True)
+    assert backend[-1][:2] == ("add_diaper", "ID-AVA")
 
     # Two babies and none chosen: refuse rather than guess
     with pytest.raises(ServiceValidationError):
@@ -320,7 +320,7 @@ async def test_rejected_password_asks_to_log_in_again(hass):
 
 async def test_setup_flow_gives_the_integration_its_own_device_id(hass):
     with patch("custom_components.baby_tracker.config_flow.validate_input",
-               return_value={"title": "Baby Tracker (Everly & Ann Marie)"}), \
+               return_value={"title": "Baby Tracker (Ava & Ann Marie)"}), \
          patch("custom_components.baby_tracker.async_setup_entry", return_value=True):
         result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
         result = await hass.config_entries.flow.async_configure(
@@ -365,8 +365,8 @@ async def test_a_bad_row_in_the_diaper_or_medicine_reads_does_not_fail_the_refre
     coordinator = coordinator_for(hass, entry)
     tracker = MagicMock()
     tracker.sync.return_value = {"status": "success"}
-    tracker.get_all_babies.return_value = [EVERLY]
-    tracker.get_baby_info.return_value = EVERLY
+    tracker.get_all_babies.return_value = [AVA]
+    tracker.get_baby_info.return_value = AVA
     tracker.get_events_between.return_value = []
     tracker.get_diaper_summary.side_effect = ValueError("bad row")
     tracker.get_medicine_selections.side_effect = ValueError("bad row")
@@ -375,7 +375,7 @@ async def test_a_bad_row_in_the_diaper_or_medicine_reads_does_not_fail_the_refre
     # The real _fetch (the fixture replaced it on the class)
     _, _, _, baby_data, _, medicines = REAL_FETCH(coordinator, coordinator.photo_dir)
 
-    assert baby_data["Everly"]["diaper_summary"] is None
+    assert baby_data["Ava"]["diaper_summary"] is None
     assert medicines == []
 
 
@@ -434,28 +434,28 @@ async def test_options_flow_refuses_a_fever_temperature_in_the_wrong_unit(hass):
 async def test_insight_entities(hass, backend):
     await setup(hass, make_entry(unit_system="metric"))
 
-    assert hass.states.get("sensor.everly_next_feed").state == "2026-03-01T12:30:00+00:00"
-    next_feed = hass.states.get("sensor.everly_next_feed").attributes
+    assert hass.states.get("sensor.ava_next_feed").state == "2026-03-01T12:30:00+00:00"
+    next_feed = hass.states.get("sensor.ava_next_feed").attributes
     assert next_feed["basis"] == "history" and next_feed["wake_by"] == "2026-03-01T14:30:00+00:00"
 
-    intake = hass.states.get("sensor.everly_intake_24h")
+    intake = hass.states.get("sensor.ava_intake_24h")
     assert float(intake.state) == 420.0
     assert intake.attributes["unit_of_measurement"] == "mL"
     assert intake.attributes["status"] == "low"
     assert intake.attributes["expected_min_ml"] == 600
     assert intake.attributes["bottle_feeds"] == 6
 
-    assert hass.states.get("sensor.everly_intake_status").state == "low"
-    assert hass.states.get("sensor.everly_diaper_adequacy").state == "ok"
-    assert float(hass.states.get("sensor.everly_weight_percentile").state) == 30.9
-    assert hass.states.get("sensor.everly_weight_percentile").attributes["p50"] == 4.5
-    assert hass.states.get("sensor.everly_head_percentile").state == "unknown"  # no head measurement
-    assert float(hass.states.get("sensor.everly_weight_gain").state) == 27.5
-    assert hass.states.get("sensor.everly_corrected_age").state == "46"
+    assert hass.states.get("sensor.ava_intake_status").state == "low"
+    assert hass.states.get("sensor.ava_diaper_adequacy").state == "ok"
+    assert float(hass.states.get("sensor.ava_weight_percentile").state) == 30.9
+    assert hass.states.get("sensor.ava_weight_percentile").attributes["p50"] == 4.5
+    assert hass.states.get("sensor.ava_head_percentile").state == "unknown"  # no head measurement
+    assert float(hass.states.get("sensor.ava_weight_gain").state) == 27.5
+    assert hass.states.get("sensor.ava_corrected_age").state == "46"
 
-    assert hass.states.get("binary_sensor.everly_intake_low").state == "on"
-    assert hass.states.get("binary_sensor.everly_feed_due").state == "on"  # the prediction is in the past
-    assert hass.states.get("binary_sensor.everly_wake_to_feed").state == "on"
+    assert hass.states.get("binary_sensor.ava_intake_low").state == "on"
+    assert hass.states.get("binary_sensor.ava_feed_due").state == "on"  # the prediction is in the past
+    assert hass.states.get("binary_sensor.ava_wake_to_feed").state == "on"
 
     # A baby with no insights has unknown values rather than errors
     assert hass.states.get("sensor.ann_marie_next_feed").state == "unknown"
@@ -479,7 +479,7 @@ async def test_sleep_prediction_entities_for_an_awake_baby(hass, backend, freeze
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", with_next_sleep(AWAKE)):
         await setup(hass, make_entry())
 
-    next_sleep = hass.states.get("sensor.everly_next_sleep")
+    next_sleep = hass.states.get("sensor.ava_next_sleep")
     assert next_sleep.state == "2026-03-01T12:15:00+00:00"
     assert next_sleep.attributes["device_class"] == "timestamp"
     assert next_sleep.attributes["awake_since"] == "2026-03-01T10:30:00+00:00"
@@ -489,33 +489,33 @@ async def test_sleep_prediction_entities_for_an_awake_baby(hass, backend, freeze
     assert (next_sleep.attributes["basis"], next_sleep.attributes["sample_count"]) == ("age_default", 2)
     assert (next_sleep.attributes["bucket"], next_sleep.attributes["overdue"]) == ("day", False)
 
-    window = hass.states.get("sensor.everly_wake_window")
+    window = hass.states.get("sensor.ava_wake_window")
     assert float(window.state) == 1.75
     assert window.attributes["unit_of_measurement"] == "h" and window.attributes["device_class"] == "duration"
     assert window.attributes["state_class"] == "measurement"
     assert (window.attributes["window_min_hours"], window.attributes["window_max_hours"]) == (1.0, 2.5)
     assert window.attributes["basis"] == "age_default"
 
-    assert hass.states.get("sensor.everly_expected_wake").state == "unknown"  # awake
-    assert hass.states.get("binary_sensor.everly_sleep_due").state == "off"
-    assert hass.states.get("binary_sensor.everly_nap_running_long").state == "off"
+    assert hass.states.get("sensor.ava_expected_wake").state == "unknown"  # awake
+    assert hass.states.get("binary_sensor.ava_sleep_due").state == "off"
+    assert hass.states.get("binary_sensor.ava_nap_running_long").state == "off"
 
 
 async def test_sleep_prediction_entities_for_a_sleeping_baby(hass, backend, freezer):
     freezer.move_to("2026-03-01 12:00:00+00:00")
     await setup(hass, make_entry())
 
-    expected = hass.states.get("sensor.everly_expected_wake")
+    expected = hass.states.get("sensor.ava_expected_wake")
     assert expected.state == "2026-03-01T12:40:00+00:00"
     assert expected.attributes["device_class"] == "timestamp"
     assert expected.attributes["asleep_since"] == "2026-03-01T11:00:00+00:00"
     assert (expected.attributes["basis"], expected.attributes["sample_count"], expected.attributes["bucket"]) == (
         "history", 5, "day")
 
-    assert hass.states.get("sensor.everly_next_sleep").state == "unknown"  # asleep
-    assert hass.states.get("sensor.everly_wake_window").state == "unknown"
-    assert hass.states.get("binary_sensor.everly_sleep_due").state == "off"
-    assert hass.states.get("binary_sensor.everly_nap_running_long").state == "off"  # not yet 13:10
+    assert hass.states.get("sensor.ava_next_sleep").state == "unknown"  # asleep
+    assert hass.states.get("sensor.ava_wake_window").state == "unknown"
+    assert hass.states.get("binary_sensor.ava_sleep_due").state == "off"
+    assert hass.states.get("binary_sensor.ava_nap_running_long").state == "off"  # not yet 13:10
 
     # A baby with no insights has unknown values rather than errors
     for key in ("sensor.ann_marie_next_sleep", "sensor.ann_marie_expected_wake", "sensor.ann_marie_wake_window"):
@@ -535,36 +535,36 @@ async def test_sleep_due_turns_on_when_the_clock_passes_the_wake_window(hass, ba
 
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", counting_fetch):
         await setup(hass, make_entry())
-        assert hass.states.get("binary_sensor.everly_sleep_due").state == "off"  # sleepy at 12:15
+        assert hass.states.get("binary_sensor.ava_sleep_due").state == "off"  # sleepy at 12:15
 
         freezer.tick(timedelta(minutes=11))  # past 12:15, short of the next 15-minute refresh
         async_fire_time_changed(hass)
         await hass.async_block_till_done()
 
         assert len(fetches) == 1
-        due = hass.states.get("binary_sensor.everly_sleep_due")
+        due = hass.states.get("binary_sensor.ava_sleep_due")
         assert due.state == "on"
         assert due.attributes["next_sleep_at"] == "2026-03-01T12:15:00+00:00"
         assert due.attributes["awake_since"] == "2026-03-01T10:30:00+00:00"
         assert due.attributes["wake_window_hours"] == 1.75
-        assert hass.states.get("binary_sensor.everly_nap_running_long").state == "off"  # awake
+        assert hass.states.get("binary_sensor.ava_nap_running_long").state == "off"  # awake
 
         # It can be dismissed until the next episode
         await hass.services.async_call(
-            DOMAIN, "dismiss_alert", {"entity_id": "binary_sensor.everly_sleep_due"}, blocking=True)
-        assert hass.states.get("binary_sensor.everly_sleep_due").state == "off"
+            DOMAIN, "dismiss_alert", {"entity_id": "binary_sensor.ava_sleep_due"}, blocking=True)
+        assert hass.states.get("binary_sensor.ava_sleep_due").state == "off"
 
 
 async def test_nap_running_long_turns_on_half_an_hour_after_the_expected_wake(hass, backend, freezer):
     freezer.move_to("2026-03-01 13:08:00+00:00")  # expected wake 12:40, so 13:10 is the line
     await setup(hass, make_entry())
-    assert hass.states.get("binary_sensor.everly_nap_running_long").state == "off"
-    assert hass.states.get("binary_sensor.everly_sleep_due").state == "off"  # asleep
+    assert hass.states.get("binary_sensor.ava_nap_running_long").state == "off"
+    assert hass.states.get("binary_sensor.ava_sleep_due").state == "off"  # asleep
 
     freezer.tick(timedelta(minutes=3))
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
-    running_long = hass.states.get("binary_sensor.everly_nap_running_long")
+    running_long = hass.states.get("binary_sensor.ava_nap_running_long")
     assert running_long.state == "on"
     assert running_long.attributes["expected_wake_at"] == "2026-03-01T12:40:00+00:00"
     assert running_long.attributes["asleep_since"] == "2026-03-01T11:00:00+00:00"
@@ -582,45 +582,45 @@ async def test_sensors_have_numeric_states_and_device_classes(hass, backend):
         assert found.attributes.get("state_class") == state_class, entity_id
         return found.attributes
 
-    attrs = check("sensor.everly_time_since_last_feeding", "150", "min", "duration", "measurement")
+    attrs = check("sensor.ava_time_since_last_feeding", "150", "min", "duration", "measurement")
     assert attrs["feeding_status"] == "Due for feeding soon" and attrs["needs_feeding"] is False
-    attrs = check("sensor.everly_last_sleep", "45", "min", "duration", "measurement")
+    attrs = check("sensor.ava_last_sleep", "45", "min", "duration", "measurement")
     assert attrs["sleeping"] is True
-    check("sensor.everly_last_nursing", "12", "min", "duration", "measurement")
-    check("sensor.everly_nursing_minutes", "90", "min", "duration", "measurement")
+    check("sensor.ava_last_nursing", "12", "min", "duration", "measurement")
+    check("sensor.ava_nursing_minutes", "90", "min", "duration", "measurement")
     # Amounts, not meter readings: volume_storage (HA allows only total classes for "volume")
-    check("sensor.everly_last_pump", "118.3", "mL", "volume_storage", "measurement")  # recorded as 4 oz
-    check("sensor.everly_pump_summary", "354.9", "mL", "volume_storage", "measurement")
-    check("sensor.everly_bottle_volume", "500.0", "mL", "volume_storage", "measurement")
-    check("sensor.everly_weight", "4.536", "kg", "weight", "measurement")  # recorded as 10 lb
-    check("sensor.everly_length", "50.8", "cm", "distance", "measurement")  # recorded as 20 in
-    check("sensor.everly_head_circumference", "35.6", "cm", "distance", "measurement")
-    check("sensor.everly_temperature", "37.3", "°C", "temperature", "measurement")
-    attrs = check("sensor.everly_feedings", "20", "feedings", None, "measurement")
+    check("sensor.ava_last_pump", "118.3", "mL", "volume_storage", "measurement")  # recorded as 4 oz
+    check("sensor.ava_pump_summary", "354.9", "mL", "volume_storage", "measurement")
+    check("sensor.ava_bottle_volume", "500.0", "mL", "volume_storage", "measurement")
+    check("sensor.ava_weight", "4.536", "kg", "weight", "measurement")  # recorded as 10 lb
+    check("sensor.ava_length", "50.8", "cm", "distance", "measurement")  # recorded as 20 in
+    check("sensor.ava_head_circumference", "35.6", "cm", "distance", "measurement")
+    check("sensor.ava_temperature", "37.3", "°C", "temperature", "measurement")
+    attrs = check("sensor.ava_feedings", "20", "feedings", None, "measurement")
     assert attrs["window_days"] == 7
-    check("sensor.everly_diapers", "30", "diapers", None, "measurement")
-    check("sensor.everly_poopy_diapers", "7", "diapers", None, "measurement")  # mixed ones count
-    check("sensor.everly_wet_diapers", "22", "diapers", None, "measurement")
-    check("sensor.everly_daily_summary", "6", "feedings", None, "measurement")
+    check("sensor.ava_diapers", "30", "diapers", None, "measurement")
+    check("sensor.ava_poopy_diapers", "7", "diapers", None, "measurement")  # mixed ones count
+    check("sensor.ava_wet_diapers", "22", "diapers", None, "measurement")
+    check("sensor.ava_daily_summary", "6", "feedings", None, "measurement")
 
     # Times are real timestamps; the kinds of feeding and diaper are enum states
-    check("sensor.everly_last_feeding_time", "2026-03-01T09:30:00+00:00", device_class="timestamp")
-    check("sensor.everly_last_diaper_time", "2026-03-01T10:00:00+00:00", device_class="timestamp")
-    check("sensor.everly_last_sleep_time", "2026-03-01T11:00:00+00:00", device_class="timestamp")
-    check("sensor.everly_last_doctor_visit", "2026-02-20T15:00:00+00:00", device_class="timestamp")
-    check("sensor.everly_last_feeding", "formula", device_class="enum")
-    check("sensor.everly_last_diaper", "wet", device_class="enum")
-    check("sensor.everly_average_bedtime", "unknown")  # nothing to average yet
+    check("sensor.ava_last_feeding_time", "2026-03-01T09:30:00+00:00", device_class="timestamp")
+    check("sensor.ava_last_diaper_time", "2026-03-01T10:00:00+00:00", device_class="timestamp")
+    check("sensor.ava_last_sleep_time", "2026-03-01T11:00:00+00:00", device_class="timestamp")
+    check("sensor.ava_last_doctor_visit", "2026-02-20T15:00:00+00:00", device_class="timestamp")
+    check("sensor.ava_last_feeding", "formula", device_class="enum")
+    check("sensor.ava_last_diaper", "wet", device_class="enum")
+    check("sensor.ava_average_bedtime", "unknown")  # nothing to average yet
 
     # The oz half of Bottle Volume is gone; the ml half kept its ID
     ent_reg = er.async_get(hass)
-    assert ent_reg.async_get_entity_id("sensor", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-EVERLY_bottle_ml")
-    assert not ent_reg.async_get_entity_id("sensor", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-EVERLY_bottle_oz")
-    assert hass.states.get("sensor.everly_bottle_oz") is None
+    assert ent_reg.async_get_entity_id("sensor", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-AVA_bottle_ml")
+    assert not ent_reg.async_get_entity_id("sensor", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-AVA_bottle_oz")
+    assert hass.states.get("sensor.ava_bottle_oz") is None
 
     # Housekeeping entities are kept out of the way
-    assert ent_reg.async_get("sensor.everly_info").entity_category is EntityCategory.DIAGNOSTIC
-    assert ent_reg.async_get("sensor.everly_pump_summary").entity_category is EntityCategory.DIAGNOSTIC
+    assert ent_reg.async_get("sensor.ava_info").entity_category is EntityCategory.DIAGNOSTIC
+    assert ent_reg.async_get("sensor.ava_pump_summary").entity_category is EntityCategory.DIAGNOSTIC
     for key in ("sync_now", "force_resync"):
         entity_id = ent_reg.async_get_entity_id("button", DOMAIN, f"{DOMAIN}_{EMAIL}_{key}")
         assert ent_reg.async_get(entity_id).entity_category is EntityCategory.CONFIG
@@ -629,19 +629,19 @@ async def test_sensors_have_numeric_states_and_device_classes(hass, backend):
 async def test_imperial_entry_shows_imperial_units(hass, backend):
     await setup(hass, make_entry(unit_system="imperial"))
 
-    weight = hass.states.get("sensor.everly_weight")
+    weight = hass.states.get("sensor.ava_weight")
     assert weight.attributes["unit_of_measurement"] == UnitOfMass.POUNDS
     assert float(weight.state) == pytest.approx(10, abs=0.05)
-    length = hass.states.get("sensor.everly_length")
+    length = hass.states.get("sensor.ava_length")
     assert length.attributes["unit_of_measurement"] == UnitOfLength.INCHES
     assert float(length.state) == pytest.approx(20, abs=0.05)
-    pump = hass.states.get("sensor.everly_last_pump")
+    pump = hass.states.get("sensor.ava_last_pump")
     assert pump.attributes["unit_of_measurement"] == UnitOfVolume.FLUID_OUNCES
     assert float(pump.state) == pytest.approx(4, abs=0.05)
-    bottles = hass.states.get("sensor.everly_bottle_volume")
+    bottles = hass.states.get("sensor.ava_bottle_volume")
     assert bottles.attributes["unit_of_measurement"] == UnitOfVolume.FLUID_OUNCES
     assert float(bottles.state) == pytest.approx(16.9, abs=0.05)
-    temperature = hass.states.get("sensor.everly_temperature")
+    temperature = hass.states.get("sensor.ava_temperature")
     assert temperature.attributes["unit_of_measurement"] == UnitOfTemperature.FAHRENHEIT
     assert float(temperature.state) == 99.1
 
@@ -650,8 +650,8 @@ async def test_retired_bottle_oz_sensor_is_removed(hass, backend):
     entry = make_entry()
     entry.add_to_hass(hass)
     ent_reg = er.async_get(hass)
-    old = ent_reg.async_get_or_create("sensor", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-EVERLY_bottle_oz",
-                                      config_entry=entry, suggested_object_id="everly_bottle_oz")
+    old = ent_reg.async_get_or_create("sensor", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-AVA_bottle_oz",
+                                      config_entry=entry, suggested_object_id="ava_bottle_oz")
 
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
@@ -663,46 +663,46 @@ async def test_services_date_the_record_at_the_time_given(hass, backend):
     await setup(hass, make_entry())
 
     await hass.services.async_call(
-        DOMAIN, "add_diaper", {"baby_name": "Everly", "time": "2026-03-01T09:30:00+00:00"}, blocking=True)
-    assert backend[-1] == ("add_diaper", "ID-EVERLY", "2026-03-01 09:30:00 +0000")
+        DOMAIN, "add_diaper", {"baby_name": "Ava", "time": "2026-03-01T09:30:00+00:00"}, blocking=True)
+    assert backend[-1] == ("add_diaper", "ID-AVA", "2026-03-01 09:30:00 +0000")
 
     # A time with no zone is in Home Assistant's time zone
     await hass.services.async_call(
-        DOMAIN, "add_diaper", {"baby_name": "Everly", "time": "2026-03-01 09:30:00"}, blocking=True)
+        DOMAIN, "add_diaper", {"baby_name": "Ava", "time": "2026-03-01 09:30:00"}, blocking=True)
     local = datetime(2026, 3, 1, 9, 30, tzinfo=dt_util.get_default_time_zone())
     assert backend[-1][2] == dt_util.as_utc(local).strftime("%Y-%m-%d %H:%M:%S +0000")
 
     # With no time the client dates it now
-    await hass.services.async_call(DOMAIN, "add_diaper", {"baby_name": "Everly"}, blocking=True)
+    await hass.services.async_call(DOMAIN, "add_diaper", {"baby_name": "Ava"}, blocking=True)
     assert backend[-1][2] is None
 
 
 @pytest.mark.parametrize(("unit_system", "imperial"), [("imperial", True), ("metric", False)])
 async def test_service_units_follow_the_entry_unless_given(hass, backend, unit_system, imperial):
     await setup(hass, make_entry(unit_system=unit_system))
-    base = {"baby_name": "Everly"}
+    base = {"baby_name": "Ava"}
 
     await hass.services.async_call(DOMAIN, "add_temperature", {**base, "temperature": 37.0}, blocking=True)
-    assert backend[-1] == ("add_temperature", "ID-EVERLY", 37.0, imperial)
+    assert backend[-1] == ("add_temperature", "ID-AVA", 37.0, imperial)
     await hass.services.async_call(DOMAIN, "log_growth", {**base, "weight": 4.0}, blocking=True)
-    assert backend[-1] == ("log_growth", "ID-EVERLY", imperial, imperial)
+    assert backend[-1] == ("log_growth", "ID-AVA", imperial, imperial)
 
     # What the call says wins
     await hass.services.async_call(
         DOMAIN, "add_temperature", {**base, "temperature": 37.0, "is_fahrenheit": not imperial}, blocking=True)
-    assert backend[-1] == ("add_temperature", "ID-EVERLY", 37.0, not imperial)
+    assert backend[-1] == ("add_temperature", "ID-AVA", 37.0, not imperial)
     await hass.services.async_call(
         DOMAIN, "log_growth", {**base, "weight": 4.0, "is_english_length_scale": not imperial}, blocking=True)
-    assert backend[-1] == ("log_growth", "ID-EVERLY", imperial, not imperial)
+    assert backend[-1] == ("log_growth", "ID-AVA", imperial, not imperial)
 
 
 async def test_dismiss_alert_takes_the_insight_alert_types(hass, backend):
     await setup(hass, make_entry())
     for alert_type in ("intake_low", "feed_due", "wake_to_feed", "sleep_due", "wake_overdue"):
         await hass.services.async_call(
-            DOMAIN, "dismiss_alert", {"baby_name": "Everly", "alert_type": alert_type}, blocking=True)
-    assert hass.states.get("binary_sensor.everly_feed_due").state == "off"  # dismissed while still true
-    assert hass.states.get("binary_sensor.everly_intake_low").state == "off"
+            DOMAIN, "dismiss_alert", {"baby_name": "Ava", "alert_type": alert_type}, blocking=True)
+    assert hass.states.get("binary_sensor.ava_feed_due").state == "off"  # dismissed while still true
+    assert hass.states.get("binary_sensor.ava_intake_low").state == "off"
 
 
 async def test_version_1_entry_is_migrated_to_its_own_device_id(hass, backend):
@@ -742,31 +742,31 @@ async def test_diagnostics_hide_credentials(hass, hass_client, backend):
     assert "'pw'" not in str(diagnostics) and EMAIL not in str(diagnostics)
     assert diagnostics["babies"] == [
         {"id": "ID-TWIN", "name": "Ann Marie", "dob": ""},
-        {"id": "ID-EVERLY", "name": "Everly", "dob": ""},
+        {"id": "ID-AVA", "name": "Ava", "dob": ""},
     ]
-    assert diagnostics["insights"]["ID-EVERLY"]["intake"]["status"] == "low"
+    assert diagnostics["insights"]["ID-AVA"]["intake"]["status"] == "low"
     assert "pending_uploads" in diagnostics and "last_sync" in diagnostics
 
 
 async def test_diagnostics_include_controls_and_nursing_timers(hass, hass_client, backend):
     entry = make_entry()
     await setup(hass, entry)
-    await set_number(hass, "number.everly_bottle_size", 6.5)
-    await select_option(hass, "select.everly_bottle_type", "pumped")
-    await press(hass, "button.everly_start_nursing_left")
+    await set_number(hass, "number.ava_bottle_size", 6.5)
+    await select_option(hass, "select.ava_bottle_type", "pumped")
+    await press(hass, "button.ava_start_nursing_left")
 
     diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
 
-    controls = diagnostics["controls"]["ID-EVERLY"]
+    controls = diagnostics["controls"]["ID-AVA"]
     assert controls["bottle_size"] == 6.5 and controls["bottle_type"] == "pumped"
-    timer = diagnostics["nursing_timers"]["ID-EVERLY"]
+    timer = diagnostics["nursing_timers"]["ID-AVA"]
     assert timer["side"] == "left" and timer["seconds"] == {"left": 0.0, "right": 0.0}
     assert timer["started_at"] and timer["segment_started_at"]
     assert "ID-TWIN" not in diagnostics["nursing_timers"]
 
 
 async def test_baby_photo_is_an_image_entity_in_a_private_folder(hass, hass_client):
-    baby = Baby({"objectID": "ID-EVERLY", "name": "Everly", "dob": "", "dueDay": "", "pictureName": "everly.jpg"})
+    baby = Baby({"objectID": "ID-AVA", "name": "Ava", "dob": "", "dueDay": "", "pictureName": "ava.jpg"})
     photo_dir = hass.config.path("baby_tracker")
 
     def download(self, picture_name, save_dir):
@@ -786,25 +786,25 @@ async def test_baby_photo_is_an_image_entity_in_a_private_folder(hass, hass_clie
         await setup(hass, make_entry())
 
     assert sync.call_args.kwargs["picture_dir"] == os.path.join(photo_dir, "pictures")
-    state = hass.states.get("image.everly_photo")
+    state = hass.states.get("image.ava_photo")
     assert state is not None
     assert "/local/" not in str(state.attributes)
 
     response = await (await hass_client()).get(state.attributes["entity_picture"])
     assert response.status == 200
     assert await response.read() == b"photo-bytes"
-    assert hass.states.get("sensor.everly_info").attributes.get("entity_picture") is None
+    assert hass.states.get("sensor.ava_info").attributes.get("entity_picture") is None
 
 
 async def test_baby_without_a_photo_still_has_an_image_entity(hass, backend):
     await setup(hass, make_entry())
-    assert hass.states.get("image.everly_photo").state == "unknown"
+    assert hass.states.get("image.ava_photo").state == "unknown"
     assert hass.states.get("image.ann_marie_photo") is not None
-    assert hass.states.get("image.everly_photo_landscape") is None  # only babies with a landscape photo get one
+    assert hass.states.get("image.ava_photo_landscape") is None  # only babies with a landscape photo get one
 
 
 def household_fetch(self, photo_dir):
-    """Two babies with data: Ann Marie is due to feed first, Everly was fed last, both are asleep."""
+    """Two babies with data: Ann Marie is due to feed first, Ava was fed last, both are asleep."""
     twin = {
         "baby_info": TWIN,
         "insights": {"next_feed": {"predicted_at": "2026-03-01T11:15:00+00:00"}},
@@ -812,7 +812,7 @@ def household_fetch(self, photo_dir):
         "last_sleep": {"time": "2026-03-01 10:45:00 +0000", "is_sleeping": True, "duration": 0},
         "daily_summary": {"total_feedings": 4},
     }
-    return [TWIN, EVERLY], EVERLY, {}, {"Ann Marie": twin, "Everly": {"baby_info": EVERLY, **EVERLY_DATA}}, ACCOUNT, MEDICINES
+    return [TWIN, AVA], AVA, {}, {"Ann Marie": twin, "Ava": {"baby_info": AVA, **AVA_DATA}}, ACCOUNT, MEDICINES
 
 
 async def test_household_sensors_look_across_the_babies(hass, backend):
@@ -820,23 +820,23 @@ async def test_household_sensors_look_across_the_babies(hass, backend):
         await setup(hass, make_entry(unit_system="metric"))
 
     due = hass.states.get("sensor.baby_tracker_next_feed_due")
-    assert due.state == "2026-03-01T11:15:00+00:00"  # the earlier of 11:15 and Everly's 12:30
+    assert due.state == "2026-03-01T11:15:00+00:00"  # the earlier of 11:15 and Ava's 12:30
     assert due.attributes["device_class"] == "timestamp"
     assert due.attributes["baby"] == "Ann Marie"
     assert due.attributes["predictions"] == {
-        "Ann Marie": "2026-03-01T11:15:00+00:00", "Everly": "2026-03-01T12:30:00+00:00"}
+        "Ann Marie": "2026-03-01T11:15:00+00:00", "Ava": "2026-03-01T12:30:00+00:00"}
     assert hass.states.get("sensor.baby_tracker_next_feed_baby").state == "Ann Marie"
 
     last_fed = hass.states.get("sensor.baby_tracker_last_fed_baby")
-    assert last_fed.state == "Everly"  # fed at 09:30, after Ann Marie's 08:00
+    assert last_fed.state == "Ava"  # fed at 09:30, after Ann Marie's 08:00
     assert last_fed.attributes["time"] == "2026-03-01T09:30:00+00:00"
 
     asleep = hass.states.get("sensor.baby_tracker_babies_asleep")
-    assert asleep.state == "2" and sorted(asleep.attributes["babies"]) == ["Ann Marie", "Everly"]
+    assert asleep.state == "2" and sorted(asleep.attributes["babies"]) == ["Ann Marie", "Ava"]
 
     feeds = hass.states.get("sensor.baby_tracker_feeds_today")
     assert feeds.state == "10"  # 4 + 6
-    assert feeds.attributes["per_baby"] == {"Ann Marie": 4, "Everly": 6}
+    assert feeds.attributes["per_baby"] == {"Ann Marie": 4, "Ava": 6}
 
     pending = hass.states.get("sensor.baby_tracker_pending_uploads")
     assert pending.state == "2"
@@ -849,8 +849,8 @@ async def test_household_sensors_look_across_the_babies(hass, backend):
 
 
 async def test_household_sensors_skip_a_baby_with_no_data(hass, backend):
-    await setup(hass, make_entry())  # fake_fetch: Ann Marie has nothing, Everly's feed is the only prediction
-    assert hass.states.get("sensor.baby_tracker_next_feed_baby").state == "Everly"
+    await setup(hass, make_entry())  # fake_fetch: Ann Marie has nothing, Ava's feed is the only prediction
+    assert hass.states.get("sensor.baby_tracker_next_feed_baby").state == "Ava"
     assert hass.states.get("sensor.baby_tracker_babies_asleep").state == "1"
     assert hass.states.get("sensor.baby_tracker_feeds_today").state == "6"
 
@@ -874,22 +874,22 @@ async def test_pumped_milk_inventory_is_shown_in_ounces_for_imperial(hass, backe
 async def test_derived_sensors(hass, backend):
     await setup(hass, make_entry())
 
-    breast = hass.states.get("sensor.everly_which_breast_next")
+    breast = hass.states.get("sensor.ava_which_breast_next")
     assert breast.state == "right" and breast.attributes["device_class"] == "enum"
     assert breast.attributes["last_side"] == "left" and breast.attributes["last_type"] == "nursing"
     assert breast.attributes["last_time"] == "2026-03-01T08:00:00+00:00"
 
-    dose = hass.states.get("sensor.everly_next_medicine_dose")
+    dose = hass.states.get("sensor.ava_next_medicine_dose")
     assert dose.state == "2026-03-01T10:00:00+00:00" and dose.attributes["device_class"] == "timestamp"
     assert dose.attributes["medicine_name"] == "Tylenol" and dose.attributes["amount"] == 2.5
     assert dose.attributes["unit"] == "ml" and dose.attributes["last_given"] == "2026-03-01T06:00:00+00:00"
 
-    milestones = hass.states.get("sensor.everly_upcoming_milestones")
+    milestones = hass.states.get("sensor.ava_upcoming_milestones")
     assert milestones.state == "First smile"
     assert milestones.attributes["count"] == 2
     assert milestones.attributes["upcoming"] == [
         {"name": "First smile", "for_age_months": 2}, {"name": "Rolls over", "for_age_months": 5}]
-    assert hass.states.get("sensor.everly_upcoming_vaccines").state == "HepB"
+    assert hass.states.get("sensor.ava_upcoming_vaccines").state == "HepB"
 
     # Nothing known for Ann Marie
     for entity_id in ("which_breast_next", "next_medicine_dose", "upcoming_milestones", "upcoming_vaccines"):
@@ -901,7 +901,7 @@ async def test_medicine_without_an_interval_has_no_next_dose(hass, backend):
             "interval_minutes": 0, "next_dose_at": None}
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch_with(next_medicine_dose=dose)):
         await setup(hass, make_entry())
-    state = hass.states.get("sensor.everly_next_medicine_dose")
+    state = hass.states.get("sensor.ava_next_medicine_dose")
     assert state.state == "unknown" and state.attributes["medicine_name"] == "Vitamin D"
 
 
@@ -918,10 +918,10 @@ async def test_time_based_alerts_follow_the_clock_between_refreshes(hass, backen
     freezer.move_to("2026-03-01 12:20:00+00:00")
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", counting_fetch):
         await setup(hass, make_entry())
-        assert hass.states.get("binary_sensor.everly_feed_due").state == "off"  # predicted for 12:30
-        assert hass.states.get("binary_sensor.everly_wake_to_feed").state == "off"  # wake by 14:30
-        assert hass.states.get("binary_sensor.everly_feeding_overdue").state == "off"  # 3.4 h, over at 3.5
-        assert hass.states.get("sensor.everly_time_since_last_feeding").state == "204"
+        assert hass.states.get("binary_sensor.ava_feed_due").state == "off"  # predicted for 12:30
+        assert hass.states.get("binary_sensor.ava_wake_to_feed").state == "off"  # wake by 14:30
+        assert hass.states.get("binary_sensor.ava_feeding_overdue").state == "off"  # 3.4 h, over at 3.5
+        assert hass.states.get("sensor.ava_time_since_last_feeding").state == "204"
 
         # 11 minutes pass; the 15-minute refresh is not due yet
         freezer.tick(timedelta(minutes=11))
@@ -929,22 +929,22 @@ async def test_time_based_alerts_follow_the_clock_between_refreshes(hass, backen
         await hass.async_block_till_done()
 
         assert len(fetches) == 1  # no refresh, yet the alerts and the sensor moved on
-        assert hass.states.get("binary_sensor.everly_feed_due").state == "on"
-        assert hass.states.get("binary_sensor.everly_feeding_overdue").state == "on"
-        assert hass.states.get("binary_sensor.everly_wake_to_feed").state == "off"
-        assert hass.states.get("sensor.everly_time_since_last_feeding").state == "215"
+        assert hass.states.get("binary_sensor.ava_feed_due").state == "on"
+        assert hass.states.get("binary_sensor.ava_feeding_overdue").state == "on"
+        assert hass.states.get("binary_sensor.ava_wake_to_feed").state == "off"
+        assert hass.states.get("sensor.ava_time_since_last_feeding").state == "215"
 
 
 async def test_night_mode_turns_on_when_night_falls(hass, backend, freezer):
     local = dt_util.get_default_time_zone()
     freezer.move_to(dt_util.as_utc(datetime(2026, 3, 1, 18, 59, tzinfo=local)))
     await setup(hass, make_entry())
-    assert hass.states.get("binary_sensor.everly_night_mode").state == "off"  # asleep, but it is still day
+    assert hass.states.get("binary_sensor.ava_night_mode").state == "off"  # asleep, but it is still day
 
     freezer.tick(timedelta(minutes=2))
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
-    assert hass.states.get("binary_sensor.everly_night_mode").state == "on"
+    assert hass.states.get("binary_sensor.ava_night_mode").state == "on"
 
 
 @pytest.mark.parametrize(("changes", "event_type"), [
@@ -958,20 +958,20 @@ async def test_night_mode_turns_on_when_night_falls(hass, backend, freezer):
 async def test_activity_event_fires_when_something_new_is_found(hass, backend, changes, event_type):
     entry = make_entry()
     await setup(hass, entry)
-    assert hass.states.get("event.everly_activity").state == "unknown"  # nothing has happened yet
+    assert hass.states.get("event.ava_activity").state == "unknown"  # nothing has happened yet
     bus_events = async_capture_events(hass, f"baby_tracker_{event_type.split('_')[0]}")
 
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch_with(**changes)):
         await hass.data[DOMAIN][entry.entry_id].async_refresh()
         await hass.async_block_till_done()
 
-    state = hass.states.get("event.everly_activity")
+    state = hass.states.get("event.ava_activity")
     assert state.attributes["event_type"] == event_type
     assert state.attributes["event_types"] == [
         "feeding", "diaper", "sleep_start", "sleep_end", "bath", "medicine", "photo", "undo"]
-    assert state.attributes["baby_name"] == "Everly"
+    assert state.attributes["baby_name"] == "Ava"
     assert state.attributes["time"] == next(iter(changes.values()))["time"]
-    assert hass.states.get("event.ann_marie_activity").state == "unknown"  # only Everly's changed
+    assert hass.states.get("event.ann_marie_activity").state == "unknown"  # only Ava's changed
 
     # The bus events are still fired for feedings, diapers and sleeps
     assert len(bus_events) == (0 if event_type in ("bath", "medicine") else 1)
@@ -1000,7 +1000,7 @@ async def test_latest_photo_serves_the_newest_picture_with_its_details(hass, has
                fetch_with(latest_picture=pictures[0], pictures=pictures)):
         await setup(hass, entry)
 
-    state = hass.states.get("image.everly_latest_photo")
+    state = hass.states.get("image.ava_latest_photo")
     assert state is not None and state.state != "unknown"
     assert state.attributes["kind"] == "joy"
     assert state.attributes["note"] == "Smiling"
@@ -1017,13 +1017,13 @@ async def test_latest_photo_serves_the_newest_picture_with_its_details(hass, has
     response = await (await hass_client()).get(state.attributes["entity_picture"])
     assert response.status == 200
     assert await response.read() == b"joy-bytes"
-    unique_id = er.async_get(hass).async_get("image.everly_latest_photo").unique_id
-    assert unique_id == f"{DOMAIN}_{EMAIL}_ID-EVERLY_latest_photo"
+    unique_id = er.async_get(hass).async_get("image.ava_latest_photo").unique_id
+    assert unique_id == f"{DOMAIN}_{EMAIL}_ID-AVA_latest_photo"
 
 
 async def test_latest_photo_is_unknown_without_a_picture(hass, backend):
     await setup(hass, make_entry())
-    assert hass.states.get("image.everly_latest_photo").state == "unknown"
+    assert hass.states.get("image.ava_latest_photo").state == "unknown"
     assert hass.states.get("image.ann_marie_latest_photo").state == "unknown"
 
 
@@ -1034,7 +1034,7 @@ async def test_latest_photo_timestamp_changes_with_a_new_picture(hass, backend):
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
                fetch_with(latest_picture=picture(first))):
         await setup(hass, entry)
-    before = hass.states.get("image.everly_latest_photo").state
+    before = hass.states.get("image.ava_latest_photo").state
 
     newer = picture(second, "PIC2", "2026-03-01 13:00:00 +0000")
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
@@ -1042,7 +1042,7 @@ async def test_latest_photo_timestamp_changes_with_a_new_picture(hass, backend):
         async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=5))
         await hass.data[DOMAIN][entry.entry_id].async_refresh()
         await hass.async_block_till_done()
-    after = hass.states.get("image.everly_latest_photo")
+    after = hass.states.get("image.ava_latest_photo")
     assert after.state != before
     assert after.attributes["picture_id"] == "PIC2"
 
@@ -1053,7 +1053,7 @@ async def test_photo_event_fires_once_for_a_new_picture(hass, backend):
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
                fetch_with(latest_picture=first)):
         await setup(hass, entry)
-    assert hass.states.get("event.everly_activity").state == "unknown"  # the first refresh announces nothing
+    assert hass.states.get("event.ava_activity").state == "unknown"  # the first refresh announces nothing
 
     newer = picture("/x/pic2.jpg", "PIC2", "2026-03-01 13:00:00 +0000", kind="bath", object_type="Bath",
                     object_id="BATH1")
@@ -1062,7 +1062,7 @@ async def test_photo_event_fires_once_for_a_new_picture(hass, backend):
                fetch_with(latest_picture=newer)):
         await coordinator.async_refresh()
         await hass.async_block_till_done()
-        state = hass.states.get("event.everly_activity")
+        state = hass.states.get("event.ava_activity")
         assert state.attributes["event_type"] == "photo"
         assert state.attributes["kind"] == "bath"
         assert state.attributes["time"] == "2026-03-01 13:00:00 +0000"
@@ -1074,7 +1074,7 @@ async def test_photo_event_fires_once_for_a_new_picture(hass, backend):
         # The same picture again is not new
         await coordinator.async_refresh()
         await hass.async_block_till_done()
-        assert hass.states.get("event.everly_activity").state == fired_at
+        assert hass.states.get("event.ava_activity").state == fired_at
 
 
 async def test_an_older_picture_becoming_the_latest_is_not_announced(hass, backend):
@@ -1086,7 +1086,7 @@ async def test_an_older_picture_becoming_the_latest_is_not_announced(hass, backe
                fetch_with(latest_picture=picture("/x/pic1.jpg", "PIC1", "2026-03-01 12:00:00 +0000"))):
         await hass.data[DOMAIN][entry.entry_id].async_refresh()
         await hass.async_block_till_done()
-    assert hass.states.get("event.everly_activity").state == "unknown"
+    assert hass.states.get("event.ava_activity").state == "unknown"
 
 
 async def test_diagnostics_are_unaffected_by_pictures(hass, hass_client, backend):
@@ -1096,7 +1096,7 @@ async def test_diagnostics_are_unaffected_by_pictures(hass, hass_client, backend
         await setup(hass, entry)
     diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
     assert "/secret/" not in str(diagnostics)
-    assert diagnostics["insights"]["ID-EVERLY"]["intake"]["status"] == "low"
+    assert diagnostics["insights"]["ID-AVA"]["intake"]["status"] == "low"
 
 
 async def test_unchanged_data_fires_no_activity_event(hass, backend):
@@ -1104,7 +1104,7 @@ async def test_unchanged_data_fires_no_activity_event(hass, backend):
     await setup(hass, entry)
     await hass.data[DOMAIN][entry.entry_id].async_refresh()
     await hass.async_block_till_done()
-    assert hass.states.get("event.everly_activity").state == "unknown"
+    assert hass.states.get("event.ava_activity").state == "unknown"
 
 
 async def test_an_older_record_becoming_the_latest_is_not_announced(hass, backend):
@@ -1116,7 +1116,7 @@ async def test_an_older_record_becoming_the_latest_is_not_announced(hass, backen
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch_with(**older)):
         await hass.data[DOMAIN][entry.entry_id].async_refresh()
         await hass.async_block_till_done()
-    assert hass.states.get("event.everly_activity").state == "unknown"
+    assert hass.states.get("event.ava_activity").state == "unknown"
 
 
 async def test_calendar_returns_a_days_feed_and_sleep(hass, backend):
@@ -1137,12 +1137,12 @@ async def test_calendar_returns_a_days_feed_and_sleep(hass, backend):
     with patch(f"{CORE}.get_events_between", get_events):
         result = await hass.services.async_call(
             "calendar", "get_events",
-            {"entity_id": "calendar.everly_calendar",
+            {"entity_id": "calendar.ava_calendar",
              "start_date_time": "2026-03-01T00:00:00+00:00", "end_date_time": "2026-03-02T00:00:00+00:00"},
             blocking=True, return_response=True)
 
-    assert asked == ["ID-EVERLY"]
-    events = result["calendar.everly_calendar"]["events"]
+    assert asked == ["ID-AVA"]
+    events = result["calendar.ava_calendar"]["events"]
     assert [e["summary"] for e in events] == ["Formula 4 oz", "Sleep (1h 20m)"]
     assert events[1]["description"] == "Crib"
     assert hass.states.get("calendar.ann_marie_calendar") is not None
@@ -1156,7 +1156,7 @@ async def test_calendars_current_event_is_the_most_recent_one(hass, backend, fre
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch_with(last_event=latest)):
         await setup(hass, make_entry())
 
-    calendar = hass.states.get("calendar.everly_calendar")
+    calendar = hass.states.get("calendar.ava_calendar")
     assert calendar.state == "on"  # the nap runs until 12:20
     assert calendar.attributes["message"] == "Sleep (1h 20m)"
     assert hass.states.get("calendar.ann_marie_calendar").state == "off"
@@ -1187,7 +1187,7 @@ def allow_another_press(hass, entry):
 async def test_controls_follow_the_unit_setting(hass, backend):
     await setup(hass, make_entry(unit_system="imperial"))
 
-    size = hass.states.get("number.everly_bottle_size")
+    size = hass.states.get("number.ava_bottle_size")
     assert float(size.state) == 4
     assert size.attributes["unit_of_measurement"] == "oz"
     assert (size.attributes["min"], size.attributes["max"], size.attributes["step"]) == (1, 12, 0.5)
@@ -1195,22 +1195,22 @@ async def test_controls_follow_the_unit_setting(hass, backend):
     assert hass.states.get("number.ann_marie_bottle_size") is not None  # every baby has the controls
 
     # It starts at the usual dose of the first medicine, whose unit it shows
-    assert float(hass.states.get("number.everly_medicine_amount").state) == 3.75
-    assert hass.states.get("number.everly_medicine_amount").attributes["step"] == 0.1
-    assert hass.states.get("number.everly_medicine_amount").attributes["unit"] == "ml"
-    assert float(hass.states.get("number.everly_tummy_time_minutes").state) == 15
+    assert float(hass.states.get("number.ava_medicine_amount").state) == 3.75
+    assert hass.states.get("number.ava_medicine_amount").attributes["step"] == 0.1
+    assert hass.states.get("number.ava_medicine_amount").attributes["unit"] == "ml"
+    assert float(hass.states.get("number.ava_tummy_time_minutes").state) == 15
 
-    bottle_type = hass.states.get("select.everly_bottle_type")
+    bottle_type = hass.states.get("select.ava_bottle_type")
     assert bottle_type.state == "formula"
     assert bottle_type.attributes["options"] == ["formula", "pumped"]
-    medicine = hass.states.get("select.everly_medicine")
+    medicine = hass.states.get("select.ava_medicine")
     assert medicine.attributes["options"] == ["Tylenol", "Vitamin D"]
     assert medicine.state == "Tylenol"
 
 
 async def test_metric_bottle_size_is_in_ml(hass, backend):
     await setup(hass, make_entry(unit_system="metric"))
-    size = hass.states.get("number.everly_bottle_size")
+    size = hass.states.get("number.ava_bottle_size")
     assert float(size.state) == 120
     assert size.attributes["unit_of_measurement"] == "mL"
     assert (size.attributes["min"], size.attributes["max"], size.attributes["step"]) == (30, 360, 10)
@@ -1220,15 +1220,15 @@ async def test_add_bottle_logs_the_amount_and_kind_chosen(hass, backend):
     entry = make_entry()
     await setup(hass, entry)
 
-    await set_number(hass, "number.everly_bottle_size", 6.5)
-    await press(hass, "button.everly_add_bottle")
-    assert backend[-1] == ("add_formula", "ID-EVERLY", 6.5, True)
+    await set_number(hass, "number.ava_bottle_size", 6.5)
+    await press(hass, "button.ava_add_bottle")
+    assert backend[-1] == ("add_formula", "ID-AVA", 6.5, True)
 
-    await select_option(hass, "select.everly_bottle_type", "pumped")
-    await set_number(hass, "number.everly_bottle_size", 3)
+    await select_option(hass, "select.ava_bottle_type", "pumped")
+    await set_number(hass, "number.ava_bottle_size", 3)
     allow_another_press(hass, entry)
-    await press(hass, "button.everly_add_bottle")
-    assert backend[-1] == ("add_pumped", "ID-EVERLY", 3.0, True)
+    await press(hass, "button.ava_add_bottle")
+    assert backend[-1] == ("add_pumped", "ID-AVA", 3.0, True)
 
     # Each baby has its own settings
     await press(hass, "button.ann_marie_add_bottle")
@@ -1237,9 +1237,9 @@ async def test_add_bottle_logs_the_amount_and_kind_chosen(hass, backend):
 
 async def test_add_bottle_in_a_metric_entry_logs_ml(hass, backend):
     await setup(hass, make_entry(unit_system="metric"))
-    await set_number(hass, "number.everly_bottle_size", 150)
-    await press(hass, "button.everly_add_bottle")
-    assert backend[-1] == ("add_formula", "ID-EVERLY", 150.0, False)
+    await set_number(hass, "number.ava_bottle_size", 150)
+    await press(hass, "button.ava_add_bottle")
+    assert backend[-1] == ("add_formula", "ID-AVA", 150.0, False)
 
 
 async def test_give_medicine_logs_the_selected_medicine_and_amount(hass, backend):
@@ -1247,47 +1247,47 @@ async def test_give_medicine_logs_the_selected_medicine_and_amount(hass, backend
     await setup(hass, entry)
 
     # Until one is chosen, the first medicine and its usual dose
-    await press(hass, "button.everly_give_medicine")
-    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-TYLENOL", 3.75)
+    await press(hass, "button.ava_give_medicine")
+    assert backend[-1] == ("add_medicine", "ID-AVA", "MED-TYLENOL", 3.75)
 
-    await select_option(hass, "select.everly_medicine", "Vitamin D")
-    await set_number(hass, "number.everly_medicine_amount", 2.5)
+    await select_option(hass, "select.ava_medicine", "Vitamin D")
+    await set_number(hass, "number.ava_medicine_amount", 2.5)
     allow_another_press(hass, entry)
-    await press(hass, "button.everly_give_medicine")
-    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-VITD", 2.5)
-    assert hass.states.get("select.everly_medicine").state == "Vitamin D"
+    await press(hass, "button.ava_give_medicine")
+    assert backend[-1] == ("add_medicine", "ID-AVA", "MED-VITD", 2.5)
+    assert hass.states.get("select.ava_medicine").state == "Vitamin D"
 
 
 async def test_controls_are_restored_after_a_restart(hass, backend):
     mock_restore_cache_with_extra_data(hass, [
-        (State("number.everly_bottle_size", "7.5"),
+        (State("number.ava_bottle_size", "7.5"),
          {"native_max_value": 12, "native_min_value": 1, "native_step": 0.5,
           "native_unit_of_measurement": "oz", "native_value": 7.5}),
-        # Saved in another unit, so meaningless here: the medicine's usual dose stands
-        (State("number.everly_medicine_amount", "9"),
+        # Saved in another unit, so meaningless here: the restored medicine's usual dose stands
+        (State("number.ava_medicine_amount", "9"),
          {"native_max_value": 100, "native_min_value": 0.1, "native_step": 0.1,
           "native_unit_of_measurement": "mL", "native_value": 9}),
-        (State("select.everly_bottle_type", "pumped"), {}),
-        (State("select.everly_medicine", "Vitamin D"), {}),
+        (State("select.ava_bottle_type", "pumped"), {}),
+        (State("select.ava_medicine", "Vitamin D"), {}),
     ])
     await setup(hass, make_entry())
 
-    assert float(hass.states.get("number.everly_bottle_size").state) == 7.5
-    assert float(hass.states.get("number.everly_medicine_amount").state) == 3.75
-    assert hass.states.get("select.everly_bottle_type").state == "pumped"
-    assert hass.states.get("select.everly_medicine").state == "Vitamin D"
-    await press(hass, "button.everly_add_bottle")
-    assert backend[-1] == ("add_pumped", "ID-EVERLY", 7.5, True)
+    assert float(hass.states.get("number.ava_bottle_size").state) == 7.5
+    assert float(hass.states.get("number.ava_medicine_amount").state) == 1.0  # Vitamin D's
+    assert hass.states.get("select.ava_bottle_type").state == "pumped"
+    assert hass.states.get("select.ava_medicine").state == "Vitamin D"
+    await press(hass, "button.ava_add_bottle")
+    assert backend[-1] == ("add_pumped", "ID-AVA", 7.5, True)
 
 
 async def test_a_bottle_size_saved_in_another_unit_is_not_restored(hass, backend):
     mock_restore_cache_with_extra_data(hass, [
-        (State("number.everly_bottle_size", "150"),
+        (State("number.ava_bottle_size", "150"),
          {"native_max_value": 360, "native_min_value": 30, "native_step": 10,
           "native_unit_of_measurement": "mL", "native_value": 150}),
     ])
     await setup(hass, make_entry(unit_system="imperial"))
-    assert float(hass.states.get("number.everly_bottle_size").state) == 4
+    assert float(hass.states.get("number.ava_bottle_size").state) == 4
 
 
 async def test_pressing_a_button_twice_quickly_logs_once(hass, backend):
@@ -1295,14 +1295,14 @@ async def test_pressing_a_button_twice_quickly_logs_once(hass, backend):
     await setup(hass, entry)
 
     for _ in range(3):
-        await press(hass, "button.everly_add_wet_diaper")
+        await press(hass, "button.ava_add_wet_diaper")
     assert [call[0] for call in backend].count("add_diaper") == 1
 
     # Another button isn't affected, and the same one works again after the window
-    await press(hass, "button.everly_add_dirty_diaper")
+    await press(hass, "button.ava_add_dirty_diaper")
     assert [call[0] for call in backend].count("add_diaper") == 2
     allow_another_press(hass, entry)
-    await press(hass, "button.everly_add_wet_diaper")
+    await press(hass, "button.ava_add_wet_diaper")
     assert [call[0] for call in backend].count("add_diaper") == 3
 
 
@@ -1310,63 +1310,63 @@ async def test_the_fixed_size_buttons_are_off_for_new_installs(hass, backend):
     await setup(hass, make_entry())
     ent_reg = er.async_get(hass)
     for unique_id in ("add_4oz_bottle", "give_tylenol"):
-        entity_id = ent_reg.async_get_entity_id("button", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-EVERLY_{unique_id}")
+        entity_id = ent_reg.async_get_entity_id("button", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-AVA_{unique_id}")
         assert ent_reg.async_get(entity_id).disabled_by is er.RegistryEntryDisabler.INTEGRATION
-    assert hass.states.get("button.everly_add_bottle") is not None
+    assert hass.states.get("button.ava_add_bottle") is not None
 
 
 async def test_nursing_timer_logs_the_minutes_on_each_side(hass, backend, freezer):
     await setup(hass, make_entry())
-    timer = "binary_sensor.everly_nursing"
+    timer = "binary_sensor.ava_nursing"
     assert hass.states.get(timer).state == "off"
 
     started = dt_util.utcnow()
-    await press(hass, "button.everly_start_nursing_left")
+    await press(hass, "button.ava_start_nursing_left")
     assert hass.states.get(timer).state == "on"
     assert hass.states.get(timer).attributes["side"] == "left"
     assert hass.states.get(timer).attributes["started_at"] == started.isoformat()
 
     freezer.tick(timedelta(minutes=10))
-    await press(hass, "button.everly_start_nursing_right")  # switch sides
+    await press(hass, "button.ava_start_nursing_right")  # switch sides
     assert hass.states.get(timer).attributes["side"] == "right"
 
     freezer.tick(timedelta(minutes=6))
-    await press(hass, "button.everly_end_nursing")
+    await press(hass, "button.ava_end_nursing")
 
     # Dated when it started: 10 minutes left, 6 right, finished on the right (2)
-    assert backend[-1] == ("add_nursing", "ID-EVERLY", started.strftime("%Y-%m-%d %H:%M:%S +0000"), 10, 6, 2)
+    assert backend[-1] == ("add_nursing", "ID-AVA", started.strftime("%Y-%m-%d %H:%M:%S +0000"), 10, 6, 2)
     assert hass.states.get(timer).state == "off"
     assert hass.states.get(timer).attributes.get("side") is None
 
 
 async def test_a_very_short_nursing_session_counts_a_minute(hass, backend, freezer):
     await setup(hass, make_entry())
-    await press(hass, "button.everly_start_nursing_right")
+    await press(hass, "button.ava_start_nursing_right")
     freezer.tick(timedelta(seconds=10))
-    await press(hass, "button.everly_end_nursing")
+    await press(hass, "button.ava_end_nursing")
     assert backend[-1][3:] == (0, 1, 2)
 
 
 async def test_ending_nursing_with_no_timer_is_refused(hass, backend):
     await setup(hass, make_entry())
     with pytest.raises(ServiceValidationError):
-        await press(hass, "button.everly_end_nursing")
+        await press(hass, "button.ava_end_nursing")
     assert not [call for call in backend if call[0] == "add_nursing"]
 
 
 async def test_a_failed_nursing_log_keeps_the_timer_running(hass, backend):
     await setup(hass, make_entry())
-    await press(hass, "button.everly_start_nursing_left")
+    await press(hass, "button.ava_start_nursing_left")
     with patch(f"{CORE}.add_nursing", return_value={"status": "error", "message": "offline"}), \
          pytest.raises(HomeAssistantError):
-        await press(hass, "button.everly_end_nursing")
-    assert hass.states.get("binary_sensor.everly_nursing").state == "on"
+        await press(hass, "button.ava_end_nursing")
+    assert hass.states.get("binary_sensor.ava_nursing").state == "on"
 
 
 async def test_nursing_timers_are_per_baby(hass, backend):
     await setup(hass, make_entry())
-    await press(hass, "button.everly_start_nursing_left")
-    assert hass.states.get("binary_sensor.everly_nursing").state == "on"
+    await press(hass, "button.ava_start_nursing_left")
+    assert hass.states.get("binary_sensor.ava_nursing").state == "on"
     assert hass.states.get("binary_sensor.ann_marie_nursing").state == "off"
 
 
@@ -1376,21 +1376,21 @@ async def test_log_activity_service_and_tummy_time_button(hass, backend):
 
     await hass.services.async_call(
         DOMAIN, "log_activity",
-        {"baby_name": "Everly", "activity_name": "Reading", "duration": 20, "time": "2026-03-01T09:30:00+00:00"},
+        {"baby_name": "Ava", "activity_name": "Reading", "duration": 20, "time": "2026-03-01T09:30:00+00:00"},
         blocking=True)
-    assert backend[-1] == ("add_activity", "ID-EVERLY", "Reading", 20, "2026-03-01 09:30:00 +0000")
+    assert backend[-1] == ("add_activity", "ID-AVA", "Reading", 20, "2026-03-01 09:30:00 +0000")
 
     # Tummy time is the default activity
-    await hass.services.async_call(DOMAIN, "log_activity", {"baby_name": "Everly", "duration": 5}, blocking=True)
-    assert backend[-1][:4] == ("add_activity", "ID-EVERLY", "Tummy Time", 5)
+    await hass.services.async_call(DOMAIN, "log_activity", {"baby_name": "Ava", "duration": 5}, blocking=True)
+    assert backend[-1][:4] == ("add_activity", "ID-AVA", "Tummy Time", 5)
 
     # The button logs the Tummy Time Minutes number (15 until changed)
-    await press(hass, "button.everly_log_tummy_time")
-    assert backend[-1][:4] == ("add_activity", "ID-EVERLY", "Tummy Time", 15)
-    await set_number(hass, "number.everly_tummy_time_minutes", 25)
+    await press(hass, "button.ava_log_tummy_time")
+    assert backend[-1][:4] == ("add_activity", "ID-AVA", "Tummy Time", 15)
+    await set_number(hass, "number.ava_tummy_time_minutes", 25)
     allow_another_press(hass, entry)
-    await press(hass, "button.everly_log_tummy_time")
-    assert backend[-1][:4] == ("add_activity", "ID-EVERLY", "Tummy Time", 25)
+    await press(hass, "button.ava_log_tummy_time")
+    assert backend[-1][:4] == ("add_activity", "ID-AVA", "Tummy Time", 25)
 
     with pytest.raises(ServiceValidationError):  # two babies and none chosen
         await hass.services.async_call(DOMAIN, "log_activity", {"duration": 5}, blocking=True)
@@ -1398,7 +1398,7 @@ async def test_log_activity_service_and_tummy_time_button(hass, backend):
 
 async def test_last_activity_sensor(hass, backend):
     await setup(hass, make_entry())
-    last = hass.states.get("sensor.everly_last_activity")
+    last = hass.states.get("sensor.ava_last_activity")
     assert last.state == "Tummy Time"
     assert last.attributes["duration"] == 15
     assert last.attributes["time"] == "2026-03-01 10:30:00 +0000"
@@ -1409,19 +1409,19 @@ async def test_add_solids_service(hass, backend):
     await setup(hass, make_entry())
 
     await hass.services.async_call(
-        DOMAIN, "add_solids", {"baby_name": "Everly", "food_name": "banana", "amount": 2, "unit": "tbsp"},
+        DOMAIN, "add_solids", {"baby_name": "Ava", "food_name": "banana", "amount": 2, "unit": "tbsp"},
         blocking=True)
-    assert backend[-1] == ("add_other_feed", "ID-EVERLY", "FOOD-BANANA", 2.0, "tbsp", True)
+    assert backend[-1] == ("add_other_feed", "ID-AVA", "FOOD-BANANA", 2.0, "tbsp", True)
 
     await hass.services.async_call(
         DOMAIN, "add_solids",
-        {"baby_name": "Everly", "food_name": "Banana", "amount": 30, "unit": "g", "is_english_measure": False},
+        {"baby_name": "Ava", "food_name": "Banana", "amount": 30, "unit": "g", "is_english_measure": False},
         blocking=True)
-    assert backend[-1] == ("add_other_feed", "ID-EVERLY", "FOOD-BANANA", 30.0, "g", False)
+    assert backend[-1] == ("add_other_feed", "ID-AVA", "FOOD-BANANA", 30.0, "g", False)
 
     with pytest.raises(ServiceValidationError):
         await hass.services.async_call(
-            DOMAIN, "add_solids", {"baby_name": "Everly", "food_name": "Dragonfruit", "amount": 1}, blocking=True)
+            DOMAIN, "add_solids", {"baby_name": "Ava", "food_name": "Dragonfruit", "amount": 1}, blocking=True)
 
 
 async def test_writes_ask_for_a_debounced_refresh(hass, backend):
@@ -1430,16 +1430,16 @@ async def test_writes_ask_for_a_debounced_refresh(hass, backend):
     coordinator = coordinator_for(hass, entry)
     with patch.object(coordinator, "async_request_refresh") as request, \
          patch.object(coordinator, "async_refresh") as refresh:
-        await hass.services.async_call(DOMAIN, "add_diaper", {"baby_name": "Everly"}, blocking=True)
-        await hass.services.async_call(DOMAIN, "log_activity", {"baby_name": "Everly", "duration": 5}, blocking=True)
+        await hass.services.async_call(DOMAIN, "add_diaper", {"baby_name": "Ava"}, blocking=True)
+        await hass.services.async_call(DOMAIN, "log_activity", {"baby_name": "Ava", "duration": 5}, blocking=True)
     assert request.call_count == 2
     refresh.assert_not_called()
 
 
 async def test_feeding_overdue_uses_the_age_based_hours_by_default(hass, backend):
-    # Everly last fed 2.5 hours ago; the default for a baby of unknown age is 3.5 hours
+    # Ava last fed 2.5 hours ago; the default for a baby of unknown age is 3.5 hours
     await setup(hass, make_entry())
-    overdue = hass.states.get("binary_sensor.everly_feeding_overdue")
+    overdue = hass.states.get("binary_sensor.ava_feeding_overdue")
     assert overdue.state == "off"
     assert overdue.attributes["threshold"] == 3.5
 
@@ -1447,7 +1447,7 @@ async def test_feeding_overdue_uses_the_age_based_hours_by_default(hass, backend
 async def test_feeding_overdue_turns_on_after_two_hours_when_set_to_two(hass, backend):
     entry = make_entry(options={"feeding_overdue_hours": 2})
     await setup(hass, entry)
-    overdue = hass.states.get("binary_sensor.everly_feeding_overdue")
+    overdue = hass.states.get("binary_sensor.ava_feeding_overdue")
     assert overdue.state == "on"
     assert overdue.attributes["threshold"] == 2
     assert overdue.attributes["age_bracket"] == "custom"
@@ -1455,62 +1455,62 @@ async def test_feeding_overdue_turns_on_after_two_hours_when_set_to_two(hass, ba
     # 0 means by age again
     hass.config_entries.async_update_entry(entry, options={"feeding_overdue_hours": 0})
     await hass.async_block_till_done()
-    assert hass.states.get("binary_sensor.everly_feeding_overdue").state == "off"
+    assert hass.states.get("binary_sensor.ava_feeding_overdue").state == "off"
 
 
 async def test_fever_threshold_is_in_the_entrys_unit(hass, backend, freezer):
-    # Everly's last reading was 99.1 F (37.3 C), taken at 06:00
+    # Ava's last reading was 99.1 F (37.3 C), taken at 06:00
     freezer.move_to("2026-03-01 08:00:00+00:00")
     await setup(hass, make_entry(options={"fever_threshold": 99.0}))
-    fever = hass.states.get("binary_sensor.everly_fever")
+    fever = hass.states.get("binary_sensor.ava_fever")
     assert fever.state == "on" and fever.attributes["threshold"] == 99.0
 
 
 async def test_an_old_temperature_reading_no_longer_raises_the_fever_alert(hass, backend, freezer):
     freezer.move_to("2026-03-01 08:00:00+00:00")
     await setup(hass, make_entry(options={"fever_threshold": 99.0}))
-    assert hass.states.get("binary_sensor.everly_fever").state == "on"
+    assert hass.states.get("binary_sensor.ava_fever").state == "on"
 
     # 24 hours after the 06:00 reading it stops counting, with no new refresh
     freezer.move_to("2026-03-02 06:01:00+00:00")
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
-    fever = hass.states.get("binary_sensor.everly_fever")
+    fever = hass.states.get("binary_sensor.ava_fever")
     assert fever.state == "off" and fever.attributes["current_value"] is None
 
 
 async def test_long_sleep_follows_the_clock_between_refreshes(hass, backend, freezer):
-    # Everly fell asleep at 11:00; for a baby of unknown age the limit is 4 hours
+    # Ava fell asleep at 11:00; for a baby of unknown age the limit is 4 hours
     freezer.move_to("2026-03-01 12:00:00+00:00")
     await setup(hass, make_entry())
-    sleep = hass.states.get("binary_sensor.everly_long_sleep")
+    sleep = hass.states.get("binary_sensor.ava_long_sleep")
     assert sleep.state == "off" and sleep.attributes["current_value"] == 1.0
 
     freezer.move_to("2026-03-01 15:30:00+00:00")
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
-    sleep = hass.states.get("binary_sensor.everly_long_sleep")
+    sleep = hass.states.get("binary_sensor.ava_long_sleep")
     assert sleep.state == "on" and sleep.attributes["current_value"] == 4.5
 
 
 async def test_fever_threshold_in_celsius(hass, backend, freezer):
     freezer.move_to("2026-03-01 08:00:00+00:00")
     await setup(hass, make_entry(unit_system="metric", options={"fever_threshold": 37.0}))
-    fever = hass.states.get("binary_sensor.everly_fever")
+    fever = hass.states.get("binary_sensor.ava_fever")
     assert fever.state == "on" and fever.attributes["current_value"] == 37.3
 
 
 async def test_the_default_fever_threshold_is_100_4_f_or_38_c(hass, backend):
     await setup(hass, make_entry())
-    fever = hass.states.get("binary_sensor.everly_fever")
+    fever = hass.states.get("binary_sensor.ava_fever")
     assert fever.state == "off" and fever.attributes["threshold"] == 100.4
 
 
 async def test_default_night_hours_are_7_pm_to_7_am(hass, backend, freezer):
-    # Everly is asleep; it is noon
+    # Ava is asleep; it is noon
     freezer.move_to(datetime(2026, 3, 1, 12, 0, tzinfo=dt_util.get_default_time_zone()))
     await setup(hass, make_entry())
-    night = hass.states.get("binary_sensor.everly_night_mode")
+    night = hass.states.get("binary_sensor.ava_night_mode")
     assert night.state == "off"
     assert (night.attributes["night_start_hour"], night.attributes["night_end_hour"]) == (19, 7)
 
@@ -1518,7 +1518,7 @@ async def test_default_night_hours_are_7_pm_to_7_am(hass, backend, freezer):
 async def test_night_hours_set_in_the_options_apply(hass, backend, freezer):
     freezer.move_to(datetime(2026, 3, 1, 12, 0, tzinfo=dt_util.get_default_time_zone()))
     await setup(hass, make_entry(options={"night_start_hour": 10, "night_end_hour": 14}))
-    night = hass.states.get("binary_sensor.everly_night_mode")
+    night = hass.states.get("binary_sensor.ava_night_mode")
     assert night.state == "on"
     assert (night.attributes["night_start_hour"], night.attributes["night_end_hour"]) == (10, 14)
 
@@ -1526,27 +1526,7 @@ async def test_night_hours_set_in_the_options_apply(hass, backend, freezer):
 async def test_night_hours_can_wrap_midnight(hass, backend, freezer):
     freezer.move_to(datetime(2026, 3, 1, 12, 0, tzinfo=dt_util.get_default_time_zone()))
     await setup(hass, make_entry(options={"night_start_hour": 22, "night_end_hour": 13}))
-    assert hass.states.get("binary_sensor.everly_night_mode").state == "on"
-
-
-async def test_old_www_folder_raises_a_repair(hass, backend, tmp_path):
-    hass.config.config_dir = str(tmp_path)
-    old_folder = tmp_path / "www" / "baby_tracker"
-    old_folder.mkdir(parents=True)
-    await setup(hass, make_entry())
-
-    issue = ir.async_get(hass).async_get_issue(DOMAIN, "old_www_folder")
-    assert issue is not None
-    assert issue.severity is ir.IssueSeverity.WARNING
-    assert issue.is_fixable is False
-    assert issue.translation_key == "old_www_folder"
-    assert issue.translation_placeholders == {"folder": str(old_folder)}
-
-
-async def test_no_repair_without_the_old_www_folder(hass, backend, tmp_path):
-    hass.config.config_dir = str(tmp_path)
-    await setup(hass, make_entry())
-    assert ir.async_get(hass).async_get_issue(DOMAIN, "old_www_folder") is None
+    assert hass.states.get("binary_sensor.ava_night_mode").state == "on"
 
 
 async def test_unsent_records_raise_a_repair_after_several_refreshes_and_clear_when_sent(hass, backend):
@@ -1595,29 +1575,29 @@ async def test_a_running_nursing_timer_survives_a_reload(hass, backend, freezer)
     entry = make_entry()
     await setup(hass, entry)
     started = dt_util.utcnow()
-    await press(hass, "button.everly_start_nursing_left")
+    await press(hass, "button.ava_start_nursing_left")
     freezer.tick(timedelta(minutes=8))
 
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
 
-    timer = hass.states.get("binary_sensor.everly_nursing")
+    timer = hass.states.get("binary_sensor.ava_nursing")
     assert timer.state == "on"
     assert timer.attributes["side"] == "left" and timer.attributes["started_at"] == started.isoformat()
     freezer.tick(timedelta(minutes=4))
-    await press(hass, "button.everly_end_nursing")
-    assert backend[-1] == ("add_nursing", "ID-EVERLY", started.strftime("%Y-%m-%d %H:%M:%S +0000"), 12, 0, 1)
-    assert hass.states.get("binary_sensor.everly_nursing").state == "off"
+    await press(hass, "button.ava_end_nursing")
+    assert backend[-1] == ("add_nursing", "ID-AVA", started.strftime("%Y-%m-%d %H:%M:%S +0000"), 12, 0, 1)
+    assert hass.states.get("binary_sensor.ava_nursing").state == "off"
 
 
 async def test_an_ended_nursing_timer_does_not_come_back_after_a_reload(hass, backend):
     entry = make_entry()
     await setup(hass, entry)
-    await press(hass, "button.everly_start_nursing_left")
-    await press(hass, "button.everly_end_nursing")
+    await press(hass, "button.ava_start_nursing_left")
+    await press(hass, "button.ava_end_nursing")
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
-    assert hass.states.get("binary_sensor.everly_nursing").state == "off"
+    assert hass.states.get("binary_sensor.ava_nursing").state == "off"
 
 
 async def test_a_forgotten_nursing_timer_is_dropped_when_loaded(hass, backend, hass_storage):
@@ -1627,26 +1607,26 @@ async def test_a_forgotten_nursing_timer_is_dropped_when_loaded(hass, backend, h
     key = f"{DOMAIN}.{entry.entry_id}.nursing"
     hass_storage[key] = {
         "version": 1, "minor_version": 1, "key": key,
-        "data": {"ID-EVERLY": {"side": "left", "started_at": long_ago, "segment_started_at": long_ago,
+        "data": {"ID-AVA": {"side": "left", "started_at": long_ago, "segment_started_at": long_ago,
                                "seconds": {"left": 0.0, "right": 0.0}}},
     }
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert hass.states.get("binary_sensor.everly_nursing").state == "off"
+    assert hass.states.get("binary_sensor.ava_nursing").state == "off"
 
 
 async def test_a_failed_press_can_be_tried_again_at_once(hass, backend):
     await setup(hass, make_entry())
     with patch(f"{CORE}.add_diaper", return_value={"status": "error", "message": "offline"}), \
          pytest.raises(HomeAssistantError):
-        await press(hass, "button.everly_add_wet_diaper")
+        await press(hass, "button.ava_add_wet_diaper")
 
-    await press(hass, "button.everly_add_wet_diaper")  # not swallowed by the debounce
-    assert backend[-1][:2] == ("add_diaper", "ID-EVERLY")
+    await press(hass, "button.ava_add_wet_diaper")  # not swallowed by the debounce
+    assert backend[-1][:2] == ("add_diaper", "ID-AVA")
 
     # A press that worked is still debounced
     logged = len(backend)
-    await press(hass, "button.everly_add_wet_diaper")
+    await press(hass, "button.ava_add_wet_diaper")
     assert len(backend) == logged
 
 
@@ -1656,13 +1636,13 @@ async def test_undo_button_deletes_the_newest_entry(hass, backend):
     await setup(hass, make_entry())
     bus_events = async_capture_events(hass, "baby_tracker_undo")
 
-    await press(hass, "button.everly_undo_last_entry")
+    await press(hass, "button.ava_undo_last_entry")
     await hass.async_block_till_done()
 
-    assert backend[-1] == ("undo_last", "ID-EVERLY", 24.0)
+    assert backend[-1] == ("undo_last", "ID-AVA", 24.0)
     # It is announced like the other writes: on the bus and on the baby's Activity event
     assert len(bus_events) == 1 and bus_events[0].data["kind"] == "wet diaper"
-    state = hass.states.get("event.everly_activity")
+    state = hass.states.get("event.ava_activity")
     assert state.attributes["event_type"] == "undo"
     assert state.attributes["object_type"] == "Diaper" and state.attributes["object_id"] == "DIAPER-1"
     assert hass.states.get("event.ann_marie_activity").state == "unknown"
@@ -1673,7 +1653,7 @@ async def test_undo_button_deletes_the_newest_entry(hass, backend):
 async def test_undo_button_is_debounced_so_it_cannot_delete_two_entries(hass, backend):
     await setup(hass, make_entry())
     for _ in range(3):
-        await press(hass, "button.everly_undo_last_entry")
+        await press(hass, "button.ava_undo_last_entry")
     assert [call[0] for call in backend].count("undo_last") == 1
 
 
@@ -1681,21 +1661,21 @@ async def test_undo_with_nothing_to_undo_is_refused(hass, backend):
     await setup(hass, make_entry())
     nothing = {"status": "error", "message": "Nothing to undo"}
     with patch(f"{CORE}.undo_last", return_value=nothing), pytest.raises(ServiceValidationError) as err:
-        await press(hass, "button.everly_undo_last_entry")
+        await press(hass, "button.ava_undo_last_entry")
     assert err.value.translation_key == "nothing_to_undo"
     assert err.value.translation_placeholders == {"hours": "24"}
 
     # A refused press is not debounced, and fires no event
-    assert hass.states.get("event.everly_activity").state == "unknown"
-    await press(hass, "button.everly_undo_last_entry")
+    assert hass.states.get("event.ava_activity").state == "unknown"
+    await press(hass, "button.ava_undo_last_entry")
     assert backend[-1][0] == "undo_last"
 
 
 async def test_undo_last_service(hass, backend):
     await setup(hass, make_entry())
 
-    await hass.services.async_call(DOMAIN, "undo_last", {"baby_name": "Everly", "within_hours": 6}, blocking=True)
-    assert backend[-1] == ("undo_last", "ID-EVERLY", 6.0)
+    await hass.services.async_call(DOMAIN, "undo_last", {"baby_name": "Ava", "within_hours": 6}, blocking=True)
+    assert backend[-1] == ("undo_last", "ID-AVA", 6.0)
 
     await hass.services.async_call(DOMAIN, "undo_last", {"baby_name": "Ann Marie"}, blocking=True)
     assert backend[-1] == ("undo_last", "ID-TWIN", 24.0)  # the default window
@@ -1706,7 +1686,7 @@ async def test_undo_last_service(hass, backend):
     # Any other failure is an error, not a validation problem
     with patch(f"{CORE}.undo_last", return_value={"status": "error", "message": "Not authenticated"}), \
          pytest.raises(HomeAssistantError) as err:
-        await hass.services.async_call(DOMAIN, "undo_last", {"baby_name": "Everly"}, blocking=True)
+        await hass.services.async_call(DOMAIN, "undo_last", {"baby_name": "Ava"}, blocking=True)
     assert not isinstance(err.value, ServiceValidationError)
 
 
@@ -1723,11 +1703,11 @@ async def test_delete_record_service(hass, backend):
     # With a baby, the deletion is reported on that baby's Activity event
     await hass.services.async_call(
         DOMAIN, "delete_record",
-        {"baby_name": "Everly", "object_type": "Diaper", "object_id": "DIAPER-1"}, blocking=True)
+        {"baby_name": "Ava", "object_type": "Diaper", "object_id": "DIAPER-1"}, blocking=True)
     await hass.async_block_till_done()
     assert backend[-1] == ("delete_record", "Diaper", "DIAPER-1")
     assert len(bus_events) == 1 and bus_events[0].data["object_id"] == "DIAPER-1"
-    assert hass.states.get("event.everly_activity").attributes["event_type"] == "undo"
+    assert hass.states.get("event.ava_activity").attributes["event_type"] == "undo"
 
     with pytest.raises(vol.Invalid):  # only the record types the app has
         await hass.services.async_call(
@@ -1768,22 +1748,22 @@ async def test_log_joy_service_without_a_photo(hass, backend):
     coordinator = coordinator_for(hass, entry)
 
     await hass.services.async_call(
-        DOMAIN, "log_joy", {"baby_name": "Everly", "note": "giggles", "time": "2026-03-01 09:30:00"}, blocking=True)
+        DOMAIN, "log_joy", {"baby_name": "Ava", "note": "giggles", "time": "2026-03-01 09:30:00"}, blocking=True)
     call = backend[-1]
-    assert call[:3] == ("add_joy", "ID-EVERLY", "giggles")
+    assert call[:3] == ("add_joy", "ID-AVA", "giggles")
     assert call[3].endswith("+0000") and call[4] is None  # a sync-format time, and no photo
     assert call[5] == coordinator.picture_dir  # where the client keeps the photos
 
     with patch(f"{CORE}.add_joy", return_value={"status": "error", "message": "Not authenticated"}), \
          pytest.raises(HomeAssistantError):
-        await hass.services.async_call(DOMAIN, "log_joy", {"baby_name": "Everly"}, blocking=True)
+        await hass.services.async_call(DOMAIN, "log_joy", {"baby_name": "Ava"}, blocking=True)
 
 
 async def test_log_joy_service_with_a_photo_file(hass, backend, photo_folder):
     await setup(hass, make_entry())
     await hass.services.async_call(
-        DOMAIN, "log_joy", {"baby_name": "Everly", "note": "smile", "photo": photo_folder}, blocking=True)
-    assert backend[-1][:3] == ("add_joy", "ID-EVERLY", "smile")
+        DOMAIN, "log_joy", {"baby_name": "Ava", "note": "smile", "photo": photo_folder}, blocking=True)
+    assert backend[-1][:3] == ("add_joy", "ID-AVA", "smile")
     assert backend[-1][4] == os.path.realpath(photo_folder)
 
     # www and media work when Home Assistant allows them
@@ -1794,12 +1774,12 @@ async def test_log_joy_service_with_a_photo_file(hass, backend, photo_folder):
         handle.write(b"x")
     try:
         await hass.services.async_call(
-            DOMAIN, "log_joy", {"baby_name": "Everly", "photo": in_www}, blocking=True)
+            DOMAIN, "log_joy", {"baby_name": "Ava", "photo": in_www}, blocking=True)
         assert backend[-1][4] == os.path.realpath(in_www)
         hass.config.allowlist_external_dirs = set()  # no longer an allowed path
         with pytest.raises(ServiceValidationError) as err:
             await hass.services.async_call(
-                DOMAIN, "log_joy", {"baby_name": "Everly", "photo": in_www}, blocking=True)
+                DOMAIN, "log_joy", {"baby_name": "Ava", "photo": in_www}, blocking=True)
         assert err.value.translation_key == "photo_path_not_allowed"
     finally:
         os.remove(in_www)
@@ -1813,7 +1793,7 @@ async def test_photo_paths_outside_the_allowed_folders_are_refused(hass, backend
     calls_before = len(backend)
     for path in (str(outside), sneaky, "/etc/passwd"):
         with pytest.raises(ServiceValidationError) as err:
-            await hass.services.async_call(DOMAIN, "log_joy", {"baby_name": "Everly", "photo": path}, blocking=True)
+            await hass.services.async_call(DOMAIN, "log_joy", {"baby_name": "Ava", "photo": path}, blocking=True)
         assert err.value.translation_key == "photo_path_not_allowed"
         assert err.value.translation_placeholders == {"path": path}
     with pytest.raises(ServiceValidationError) as err:
@@ -1824,7 +1804,7 @@ async def test_photo_paths_outside_the_allowed_folders_are_refused(hass, backend
 
     with pytest.raises(ServiceValidationError) as err:  # allowed place, no such file
         await hass.services.async_call(DOMAIN, "log_joy", {
-            "baby_name": "Everly", "photo": os.path.join(os.path.dirname(photo_folder), "nope.jpg")}, blocking=True)
+            "baby_name": "Ava", "photo": os.path.join(os.path.dirname(photo_folder), "nope.jpg")}, blocking=True)
     assert err.value.translation_key == "photo_not_found"
 
 
@@ -1846,7 +1826,7 @@ async def test_log_joy_takes_a_camera_snapshot_and_cleans_up(hass, backend):
                return_value=Image("image/jpeg", b"snapshot bytes")) as snapshot, \
          patch(f"{CORE}.add_joy", side_effect=add_joy):
         await hass.services.async_call(
-            DOMAIN, "log_joy", {"baby_name": "Everly", "note": "front door", "camera_entity": "camera.nursery"},
+            DOMAIN, "log_joy", {"baby_name": "Ava", "note": "front door", "camera_entity": "camera.nursery"},
             blocking=True)
     snapshot.assert_awaited_once_with(hass, "camera.nursery")
     assert seen["bytes"] == b"snapshot bytes"
@@ -1857,7 +1837,7 @@ async def test_log_joy_takes_a_camera_snapshot_and_cleans_up(hass, backend):
     with patch("homeassistant.components.camera.async_get_image", side_effect=HomeAssistantError("offline")), \
          pytest.raises(ServiceValidationError) as err:
         await hass.services.async_call(
-            DOMAIN, "log_joy", {"baby_name": "Everly", "camera_entity": "camera.nursery"}, blocking=True)
+            DOMAIN, "log_joy", {"baby_name": "Ava", "camera_entity": "camera.nursery"}, blocking=True)
     assert err.value.translation_key == "photo_snapshot_failed"
     assert err.value.translation_placeholders["entity_id"] == "camera.nursery"
 
@@ -1925,7 +1905,7 @@ async def test_photo_services_ask_for_a_debounced_refresh(hass, backend, photo_f
     coordinator = coordinator_for(hass, entry)
     with patch.object(coordinator, "async_request_refresh") as request, \
          patch.object(coordinator, "async_refresh") as refresh:
-        await hass.services.async_call(DOMAIN, "log_joy", {"baby_name": "Everly", "photo": photo_folder}, blocking=True)
+        await hass.services.async_call(DOMAIN, "log_joy", {"baby_name": "Ava", "photo": photo_folder}, blocking=True)
         await hass.services.async_call(DOMAIN, "attach_photo", {
             "object_type": "Diaper", "object_id": "DIAPER-1", "photo": photo_folder}, blocking=True)
     assert request.await_count == 2
@@ -1938,7 +1918,7 @@ async def test_undo_and_delete_ask_for_a_debounced_refresh(hass, backend):
     coordinator = coordinator_for(hass, entry)
     with patch.object(coordinator, "async_request_refresh") as request, \
          patch.object(coordinator, "async_refresh") as refresh:
-        await hass.services.async_call(DOMAIN, "undo_last", {"baby_name": "Everly"}, blocking=True)
+        await hass.services.async_call(DOMAIN, "undo_last", {"baby_name": "Ava"}, blocking=True)
         await hass.services.async_call(
             DOMAIN, "delete_record", {"object_type": "Diaper", "object_id": "DIAPER-1"}, blocking=True)
     assert request.call_count == 2
@@ -1948,11 +1928,11 @@ async def test_undo_and_delete_ask_for_a_debounced_refresh(hass, backend):
 async def test_recent_entries_sensor_lists_the_newest_records(hass, backend):
     await setup(hass, make_entry())
 
-    recent = hass.states.get("sensor.everly_recent_entries")
+    recent = hass.states.get("sensor.ava_recent_entries")
     assert recent.state == "wet diaper"  # the newest
     # The type and ID are what delete_record takes
     assert recent.attributes["records"] == RECENT
-    assert er.async_get(hass).async_get("sensor.everly_recent_entries").entity_category is EntityCategory.DIAGNOSTIC
+    assert er.async_get(hass).async_get("sensor.ava_recent_entries").entity_category is EntityCategory.DIAGNOSTIC
 
     # Nothing logged for Ann Marie
     assert hass.states.get("sensor.ann_marie_recent_entries").state == "unknown"
@@ -1968,7 +1948,7 @@ async def test_recent_entries_follow_the_refresh(hass, backend):
         await coordinator_for(hass, entry).async_refresh()
         await hass.async_block_till_done()
 
-    recent = hass.states.get("sensor.everly_recent_entries")
+    recent = hass.states.get("sensor.ava_recent_entries")
     assert recent.state == "sleep 45 min" and len(recent.attributes["records"]) == 3
 
 
@@ -1980,20 +1960,20 @@ async def test_the_fetch_reads_each_babys_recent_records_in_the_same_job(hass, b
     coordinator = coordinator_for(hass, entry)
     tracker = MagicMock()
     tracker.sync.return_value = {"status": "success"}
-    tracker.get_all_babies.return_value = [EVERLY]
-    tracker.get_baby_info.return_value = EVERLY
+    tracker.get_all_babies.return_value = [AVA]
+    tracker.get_baby_info.return_value = AVA
     tracker.get_events_between.return_value = []
     tracker.get_recent_records.return_value = RECENT
     coordinator.baby_tracker = tracker
 
     _, _, _, baby_data, _, _ = REAL_FETCH(coordinator, coordinator.photo_dir)
-    assert baby_data["Everly"]["recent_records"] == RECENT
-    tracker.get_recent_records.assert_called_once_with("ID-EVERLY", 10)
+    assert baby_data["Ava"]["recent_records"] == RECENT
+    tracker.get_recent_records.assert_called_once_with("ID-AVA", 10)
 
     # A record the database cannot read leaves the sensor empty rather than failing the refresh
     tracker.get_recent_records.side_effect = ValueError("bad row")
     _, _, _, baby_data, _, _ = REAL_FETCH(coordinator, coordinator.photo_dir)
-    assert baby_data["Everly"]["recent_records"] == []
+    assert baby_data["Ava"]["recent_records"] == []
 
 
 # ----- the Medicine Amount follows the selected medicine -----
@@ -2014,22 +1994,22 @@ def fetch_with_medicines(medicines):
 
 async def test_selecting_a_medicine_sets_its_usual_amount(hass, backend):
     await setup(hass, make_entry())
-    amount = "number.everly_medicine_amount"
+    amount = "number.ava_medicine_amount"
     assert float(hass.states.get(amount).state) == 3.75 and hass.states.get(amount).attributes["unit"] == "ml"
 
-    await select_option(hass, "select.everly_medicine", "Vitamin D")
+    await select_option(hass, "select.ava_medicine", "Vitamin D")
     assert float(hass.states.get(amount).state) == 1.0  # the number's state moved with the select
     assert hass.states.get(amount).attributes["unit"] == "ml"
 
     # A dose set by hand stands until another medicine is chosen
     await set_number(hass, amount, 2.5)
     assert float(hass.states.get(amount).state) == 2.5
-    await select_option(hass, "select.everly_medicine", "Tylenol")
+    await select_option(hass, "select.ava_medicine", "Tylenol")
     assert float(hass.states.get(amount).state) == 3.75
 
     # Each baby has their own
     assert float(hass.states.get("number.ann_marie_medicine_amount").state) == 3.75
-    await select_option(hass, "select.everly_medicine", "Vitamin D")
+    await select_option(hass, "select.ava_medicine", "Vitamin D")
     assert float(hass.states.get("number.ann_marie_medicine_amount").state) == 3.75
 
 
@@ -2037,11 +2017,11 @@ async def test_a_medicine_with_no_usual_amount_leaves_the_amount_alone(hass, bac
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
                fetch_with_medicines(MEDICINES_WITH_GAPS)):
         await setup(hass, make_entry())
-        amount = "number.everly_medicine_amount"
+        amount = "number.ava_medicine_amount"
         await set_number(hass, amount, 2.5)
 
         for name in ("Gripe water", "Iron"):
-            await select_option(hass, "select.everly_medicine", name)
+            await select_option(hass, "select.ava_medicine", name)
             assert float(hass.states.get(amount).state) == 2.5, name
             assert "unit" not in hass.states.get(amount).attributes  # the medicine has none to show
 
@@ -2052,22 +2032,22 @@ async def test_give_medicine_falls_back_to_the_usual_amount(hass, backend):
     coordinator = coordinator_for(hass, entry)
 
     for empty in (0, None):
-        coordinator.set_control("ID-EVERLY", "medicine_amount", empty)
+        coordinator.set_control("ID-AVA", "medicine_amount", empty)
         allow_another_press(hass, entry)
-        await press(hass, "button.everly_give_medicine")
-        assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-TYLENOL", 3.75)
+        await press(hass, "button.ava_give_medicine")
+        assert backend[-1] == ("add_medicine", "ID-AVA", "MED-TYLENOL", 3.75)
 
-    await select_option(hass, "select.everly_medicine", "Vitamin D")
-    coordinator.set_control("ID-EVERLY", "medicine_amount", 0)
+    await select_option(hass, "select.ava_medicine", "Vitamin D")
+    coordinator.set_control("ID-AVA", "medicine_amount", 0)
     allow_another_press(hass, entry)
-    await press(hass, "button.everly_give_medicine")
-    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-VITD", 1.0)
+    await press(hass, "button.ava_give_medicine")
+    assert backend[-1] == ("add_medicine", "ID-AVA", "MED-VITD", 1.0)
 
     # An amount that was set is used as it is
-    await set_number(hass, "number.everly_medicine_amount", 2.5)
+    await set_number(hass, "number.ava_medicine_amount", 2.5)
     allow_another_press(hass, entry)
-    await press(hass, "button.everly_give_medicine")
-    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-VITD", 2.5)
+    await press(hass, "button.ava_give_medicine")
+    assert backend[-1] == ("add_medicine", "ID-AVA", "MED-VITD", 2.5)
 
 
 async def test_give_medicine_with_no_amount_and_no_usual_dose_is_refused(hass, backend):
@@ -2075,32 +2055,32 @@ async def test_give_medicine_with_no_amount_and_no_usual_dose_is_refused(hass, b
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
                fetch_with_medicines(MEDICINES_WITH_GAPS)):
         await setup(hass, entry)
-        await select_option(hass, "select.everly_medicine", "Gripe water")
-        coordinator_for(hass, entry).set_control("ID-EVERLY", "medicine_amount", 0)
+        await select_option(hass, "select.ava_medicine", "Gripe water")
+        coordinator_for(hass, entry).set_control("ID-AVA", "medicine_amount", 0)
         with pytest.raises(ServiceValidationError) as err:
-            await press(hass, "button.everly_give_medicine")
+            await press(hass, "button.ava_give_medicine")
     assert err.value.translation_key == "no_medicine_amount"
     assert not [call for call in backend if call[0] == "add_medicine"]
 
 
 async def test_an_amount_set_by_hand_is_restored_and_not_replaced_by_the_selection(hass, backend):
     mock_restore_cache_with_extra_data(hass, [
-        (State("number.everly_medicine_amount", "2.5"),
+        (State("number.ava_medicine_amount", "2.5"),
          {"native_max_value": 100, "native_min_value": 0.1, "native_step": 0.1,
           "native_unit_of_measurement": None, "native_value": 2.5}),
-        (State("select.everly_medicine", "Vitamin D"), {}),
+        (State("select.ava_medicine", "Vitamin D"), {}),
     ])
     await setup(hass, make_entry())
 
-    assert hass.states.get("select.everly_medicine").state == "Vitamin D"
-    assert float(hass.states.get("number.everly_medicine_amount").state) == 2.5  # not Vitamin D's 1.0
-    await press(hass, "button.everly_give_medicine")
-    assert backend[-1] == ("add_medicine", "ID-EVERLY", "MED-VITD", 2.5)
+    assert hass.states.get("select.ava_medicine").state == "Vitamin D"
+    assert float(hass.states.get("number.ava_medicine_amount").state) == 2.5  # not Vitamin D's 1.0
+    await press(hass, "button.ava_give_medicine")
+    assert backend[-1] == ("add_medicine", "ID-AVA", "MED-VITD", 2.5)
 
 
 # ----- landscape photo -----
 
-PHOTO_BABY = Baby({"objectID": "ID-EVERLY", "name": "Everly", "dob": "", "dueDay": "", "pictureName": "everly.jpg"})
+PHOTO_BABY = Baby({"objectID": "ID-AVA", "name": "Ava", "dob": "", "dueDay": "", "pictureName": "ava.jpg"})
 
 
 async def setup_with_photos(hass, portrait=True, landscape=True):
@@ -2123,41 +2103,41 @@ async def setup_with_photos(hass, portrait=True, landscape=True):
          patch(f"{CORE}.sync", return_value={"status": "success"}), \
          patch(f"{CORE}.get_all_babies", return_value=[PHOTO_BABY]), \
          patch(f"{CORE}.get_baby_info", return_value=PHOTO_BABY), \
-         patch(f"{CORE}.download_baby_picture", saver("everly.jpg", b"portrait-bytes", portrait)), \
-         patch(f"{CORE}.download_baby_landscape_picture", saver("everly_l.jpg", b"landscape-bytes", landscape)):
+         patch(f"{CORE}.download_baby_picture", saver("ava.jpg", b"portrait-bytes", portrait)), \
+         patch(f"{CORE}.download_baby_landscape_picture", saver("ava_l.jpg", b"landscape-bytes", landscape)):
         await setup(hass, make_entry())
 
 
 async def test_a_landscape_photo_is_a_second_image_entity(hass, hass_client):
     await setup_with_photos(hass)
 
-    landscape = hass.states.get("image.everly_photo_landscape")
+    landscape = hass.states.get("image.ava_photo_landscape")
     assert landscape is not None
     client = await hass_client()
     response = await client.get(landscape.attributes["entity_picture"])
     assert response.status == 200 and await response.read() == b"landscape-bytes"
 
     # The portrait is untouched
-    portrait = hass.states.get("image.everly_photo")
+    portrait = hass.states.get("image.ava_photo")
     assert await (await client.get(portrait.attributes["entity_picture"])).read() == b"portrait-bytes"
     ent_reg = er.async_get(hass)
-    assert ent_reg.async_get("image.everly_photo_landscape").unique_id == f"{DOMAIN}_{EMAIL}_ID-EVERLY_photo_landscape"
-    assert ent_reg.async_get("image.everly_photo").unique_id == f"{DOMAIN}_{EMAIL}_ID-EVERLY_photo"
+    assert ent_reg.async_get("image.ava_photo_landscape").unique_id == f"{DOMAIN}_{EMAIL}_ID-AVA_photo_landscape"
+    assert ent_reg.async_get("image.ava_photo").unique_id == f"{DOMAIN}_{EMAIL}_ID-AVA_photo"
 
 
 async def test_no_landscape_photo_means_no_landscape_entity(hass, hass_client):
     await setup_with_photos(hass, landscape=False)
 
-    assert hass.states.get("image.everly_photo") is not None
-    assert hass.states.get("image.everly_photo_landscape") is None
-    assert er.async_get(hass).async_get_entity_id("image", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-EVERLY_photo_landscape") is None
+    assert hass.states.get("image.ava_photo") is not None
+    assert hass.states.get("image.ava_photo_landscape") is None
+    assert er.async_get(hass).async_get_entity_id("image", DOMAIN, f"{DOMAIN}_{EMAIL}_ID-AVA_photo_landscape") is None
 
 
 async def test_a_landscape_photo_without_a_portrait(hass, hass_client):
     await setup_with_photos(hass, portrait=False)
 
-    assert hass.states.get("image.everly_photo").state == "unknown"  # nothing to show, but the entity stays
-    landscape = hass.states.get("image.everly_photo_landscape")
+    assert hass.states.get("image.ava_photo").state == "unknown"  # nothing to show, but the entity stays
+    landscape = hass.states.get("image.ava_photo_landscape")
     response = await (await hass_client()).get(landscape.attributes["entity_picture"])
     assert response.status == 200 and await response.read() == b"landscape-bytes"
 
@@ -2198,102 +2178,102 @@ def at(hour, minute=0):
 ])
 async def test_the_diaper_intent_logs_for_the_named_baby(hass, assist, kind, pee, poo, spoken):
     with patch(f"{CORE}.add_diaper", return_value={"status": "success"}) as add_diaper:
-        result = await ask(hass, "BabyTrackerLogDiaper", baby="everly", kind=kind)  # any capitalisation
-    add_diaper.assert_called_once_with("ID-EVERLY", None, pee, poo, 5, 5, 5, 2, "Added by voice")
+        result = await ask(hass, "BabyTrackerLogDiaper", baby="ava", kind=kind)  # any capitalisation
+    add_diaper.assert_called_once_with("ID-AVA", None, pee, poo, 5, 5, 5, 2, "Added by voice")
     assert result.response_type is intent.IntentResponseType.ACTION_DONE
-    assert said(result) == f"Logged a {spoken} diaper for Everly."
+    assert said(result) == f"Logged a {spoken} diaper for Ava."
 
 
 async def test_the_bottle_intent_uses_the_entrys_unit_and_the_babys_bottle_type(hass, assist, backend):
-    result = await ask(hass, "BabyTrackerLogBottle", baby="Everly", amount=4.0)
-    assert backend[-1] == ("add_formula", "ID-EVERLY", 4.0, True)  # an imperial entry: oz
-    assert said(result) == "Logged a 4 oz formula bottle for Everly."
+    result = await ask(hass, "BabyTrackerLogBottle", baby="Ava", amount=4.0)
+    assert backend[-1] == ("add_formula", "ID-AVA", 4.0, True)  # an imperial entry: oz
+    assert said(result) == "Logged a 4 oz formula bottle for Ava."
 
-    result = await ask(hass, "BabyTrackerLogBottle", baby="Everly", amount=120.0, unit="ml", type="breast milk")
-    assert backend[-1] == ("add_pumped", "ID-EVERLY", 120.0, False)
-    assert said(result) == "Logged a 120 ml bottle of pumped milk for Everly."
+    result = await ask(hass, "BabyTrackerLogBottle", baby="Ava", amount=120.0, unit="ml", type="breast milk")
+    assert backend[-1] == ("add_pumped", "ID-AVA", 120.0, False)
+    assert said(result) == "Logged a 120 ml bottle of pumped milk for Ava."
 
     # No type said: the baby's Bottle Type control decides
-    coordinator_for(hass, assist).set_control("ID-EVERLY", "bottle_type", "pumped")
-    await ask(hass, "BabyTrackerLogBottle", baby="Everly", amount=3.0)
-    assert backend[-1] == ("add_pumped", "ID-EVERLY", 3.0, True)
+    coordinator_for(hass, assist).set_control("ID-AVA", "bottle_type", "pumped")
+    await ask(hass, "BabyTrackerLogBottle", baby="Ava", amount=3.0)
+    assert backend[-1] == ("add_pumped", "ID-AVA", 3.0, True)
 
 
 async def test_a_bottle_too_big_to_be_real_is_not_logged(hass, assist, backend):
     logged = len(backend)
-    result = await ask(hass, "BabyTrackerLogBottle", baby="Everly", amount=1200.0, unit="oz")
+    result = await ask(hass, "BabyTrackerLogBottle", baby="Ava", amount=1200.0, unit="oz")
     assert len(backend) == logged
     assert result.response_type is intent.IntentResponseType.ERROR
     assert "doesn't sound like a bottle" in said(result)
 
 
 async def test_the_temperature_intent_tells_fahrenheit_from_celsius(hass, assist, backend):
-    result = await ask(hass, "BabyTrackerLogTemperature", baby="Everly", temperature=98.6)
-    assert backend[-1] == ("add_temperature", "ID-EVERLY", 98.6, True)
-    assert said(result) == "Logged a temperature of 98.6 degrees Fahrenheit for Everly."
+    result = await ask(hass, "BabyTrackerLogTemperature", baby="Ava", temperature=98.6)
+    assert backend[-1] == ("add_temperature", "ID-AVA", 98.6, True)
+    assert said(result) == "Logged a temperature of 98.6 degrees Fahrenheit for Ava."
 
-    await ask(hass, "BabyTrackerLogTemperature", baby="Everly", temperature=37.2)
-    assert backend[-1] == ("add_temperature", "ID-EVERLY", 37.2, False)
+    await ask(hass, "BabyTrackerLogTemperature", baby="Ava", temperature=37.2)
+    assert backend[-1] == ("add_temperature", "ID-AVA", 37.2, False)
 
     logged = len(backend)
-    result = await ask(hass, "BabyTrackerLogTemperature", baby="Everly", temperature=60.0)
+    result = await ask(hass, "BabyTrackerLogTemperature", baby="Ava", temperature=60.0)
     assert len(backend) == logged and result.response_type is intent.IntentResponseType.ERROR
 
 
 async def test_the_sleep_intents_log_the_start_and_end_of_a_sleep(hass, assist):
     with patch(f"{CORE}.log_sleep_event", return_value={"status": "success"}) as log_sleep:
-        # The fixture's Everly has been asleep since 11:00
-        result = await ask(hass, "BabyTrackerStartSleep", baby="Everly")
+        # The fixture's Ava has been asleep since 11:00
+        result = await ask(hass, "BabyTrackerStartSleep", baby="Ava")
         log_sleep.assert_not_called()
-        assert said(result) == "Everly is already asleep."
+        assert said(result) == "Ava is already asleep."
 
-        result = await ask(hass, "BabyTrackerEndSleep", baby="Everly")
-        log_sleep.assert_called_once_with("ID-EVERLY", False, "Added by voice", None)
-        assert said(result) == "Logged that Everly woke up after 1 hour."
+        result = await ask(hass, "BabyTrackerEndSleep", baby="Ava")
+        log_sleep.assert_called_once_with("ID-AVA", False, "Added by voice", None)
+        assert said(result) == "Logged that Ava woke up after 1 hour."
 
         log_sleep.reset_mock()
-        coordinator_for(hass, assist).data["baby_data"]["Everly"]["last_sleep"] = {
+        coordinator_for(hass, assist).data["baby_data"]["Ava"]["last_sleep"] = {
             "time": "2026-03-01 10:00:00 +0000", "is_sleeping": False, "duration": 45, "current_duration": 45}
-        result = await ask(hass, "BabyTrackerEndSleep", baby="Everly")
+        result = await ask(hass, "BabyTrackerEndSleep", baby="Ava")
         log_sleep.assert_not_called()
-        assert said(result) == "Everly isn't asleep, so there's no sleep to end."
+        assert said(result) == "Ava isn't asleep, so there's no sleep to end."
 
-        result = await ask(hass, "BabyTrackerStartSleep", baby="Everly")
-        log_sleep.assert_called_once_with("ID-EVERLY", True, "Added by voice", None)
-        assert said(result) == "Logged that Everly fell asleep."
+        result = await ask(hass, "BabyTrackerStartSleep", baby="Ava")
+        log_sleep.assert_called_once_with("ID-AVA", True, "Added by voice", None)
+        assert said(result) == "Logged that Ava fell asleep."
 
 
 async def test_the_nursing_intents_time_a_session_and_log_it(hass, assist, backend, freezer):
-    result = await ask(hass, "BabyTrackerEndNursing", baby="Everly")
-    assert said(result) == "No nursing session is running for Everly."
+    result = await ask(hass, "BabyTrackerEndNursing", baby="Ava")
+    assert said(result) == "No nursing session is running for Ava."
 
-    result = await ask(hass, "BabyTrackerStartNursing", baby="Everly", side="left")
-    assert said(result) == "Started timing Everly on the left."
-    assert hass.states.get("binary_sensor.everly_nursing").state == "on"
+    result = await ask(hass, "BabyTrackerStartNursing", baby="Ava", side="left")
+    assert said(result) == "Started timing Ava on the left."
+    assert hass.states.get("binary_sensor.ava_nursing").state == "on"
 
     freezer.tick(timedelta(minutes=10))
-    result = await ask(hass, "BabyTrackerEndNursing", baby="Everly")
-    assert backend[-1] == ("add_nursing", "ID-EVERLY", "2026-03-01 12:00:00 +0000", 10, 0, 1)
-    assert said(result) == "Logged Everly's nursing: 10 min on the left."
-    assert hass.states.get("binary_sensor.everly_nursing").state == "off"
+    result = await ask(hass, "BabyTrackerEndNursing", baby="Ava")
+    assert backend[-1] == ("add_nursing", "ID-AVA", "2026-03-01 12:00:00 +0000", 10, 0, 1)
+    assert said(result) == "Logged Ava's nursing: 10 min on the left."
+    assert hass.states.get("binary_sensor.ava_nursing").state == "off"
 
 
 async def test_a_failed_write_is_spoken_not_raised(hass, assist):
     with patch(f"{CORE}.add_diaper", return_value={"status": "error", "message": "offline"}):
-        result = await ask(hass, "BabyTrackerLogDiaper", baby="Everly", kind="wet")
+        result = await ask(hass, "BabyTrackerLogDiaper", baby="Ava", kind="wet")
     assert result.response_type is intent.IntentResponseType.ERROR
     assert result.error_code is intent.IntentResponseErrorCode.FAILED_TO_HANDLE
     assert said(result) == "Sorry, I couldn't do that in Baby Tracker."
 
 
 async def test_the_question_intents_answer_from_the_babys_data(hass, assist):
-    # It is 12:00; Everly last ate at 9:30 (a 4 oz bottle), had a wet diaper at 10:00 and fell asleep at 11:00
-    assert said(await ask(hass, "BabyTrackerLastFeed", baby="Everly")) == "Everly last ate 2 h 30 min ago, a 4 oz bottle."
-    assert said(await ask(hass, "BabyTrackerLastDiaper", baby="Everly")) == "Everly's last diaper was wet, 2 hours ago."
-    assert said(await ask(hass, "BabyTrackerNextFeed", baby="Everly")) == (
-        f"Everly's next feed is expected around {at(12, 30)}, in 30 minutes.")
-    assert said(await ask(hass, "BabyTrackerSleepStatus", baby="Everly")) == (
-        f"Everly has been asleep for 1 hour, since {at(11)}.")
+    # It is 12:00; Ava last ate at 9:30 (a 4 oz bottle), had a wet diaper at 10:00 and fell asleep at 11:00
+    assert said(await ask(hass, "BabyTrackerLastFeed", baby="Ava")) == "Ava last ate 2 h 30 min ago, a 4 oz bottle."
+    assert said(await ask(hass, "BabyTrackerLastDiaper", baby="Ava")) == "Ava's last diaper was wet, 2 hours ago."
+    assert said(await ask(hass, "BabyTrackerNextFeed", baby="Ava")) == (
+        f"Ava's next feed is expected around {at(12, 30)}, in 30 minutes.")
+    assert said(await ask(hass, "BabyTrackerSleepStatus", baby="Ava")) == (
+        f"Ava has been asleep for 1 hour, since {at(11)}.")
     assert said(await ask(hass, "BabyTrackerLastFeed", baby="Ann Marie")) == "I don't have any feeds logged for Ann Marie."
     assert said(await ask(hass, "BabyTrackerNextFeed", baby="Ann Marie")) == (
         "I don't have enough feeds logged to predict Ann Marie's next feed yet.")
@@ -2301,47 +2281,47 @@ async def test_the_question_intents_answer_from_the_babys_data(hass, assist):
 
 async def test_the_intake_intent_reports_in_the_entrys_unit(hass, backend, freezer, tmp_path):
     await start_assist(hass, freezer, tmp_path, unit_system="metric")
-    assert said(await ask(hass, "BabyTrackerIntakeToday", baby="Everly")) == (
-        "Everly has had 420 ml in the last 24 hours, which is low. Expected is 600 to 800 ml.")
+    assert said(await ask(hass, "BabyTrackerIntakeToday", baby="Ava")) == (
+        "Ava has had 420 ml in the last 24 hours, which is low. Expected is 600 to 800 ml.")
 
 
 async def test_the_next_sleep_question_answers_for_a_sleeping_and_an_awake_baby(hass, assist):
-    # It is 12:00 and Everly fell asleep at 11:00
-    assert said(await ask(hass, "BabyTrackerNextSleep", baby="Everly")) == (
-        f"Everly has been asleep for 1 hour and is expected to wake around {at(12, 40)}.")
+    # It is 12:00 and Ava fell asleep at 11:00
+    assert said(await ask(hass, "BabyTrackerNextSleep", baby="Ava")) == (
+        f"Ava has been asleep for 1 hour and is expected to wake around {at(12, 40)}.")
 
-    everly = coordinator_for(hass, assist).data["baby_data"]["Everly"]
-    everly["insights"] = insights = {**INSIGHTS}  # a copy: the shared fake stays as it was
+    ava = coordinator_for(hass, assist).data["baby_data"]["Ava"]
+    ava["insights"] = insights = {**INSIGHTS}  # a copy: the shared fake stays as it was
     insights["next_sleep"] = {**AWAKE, "awake_since": "2026-03-01T10:40:00+00:00",
                               "next_sleep_at": "2026-03-01T12:25:00+00:00"}
-    assert said(await ask(hass, "BabyTrackerNextSleep", baby="Everly")) == (
-        f"Everly has been awake for 1 h 20 min; the next nap is expected around {at(12, 25)}, in 25 minutes.")
+    assert said(await ask(hass, "BabyTrackerNextSleep", baby="Ava")) == (
+        f"Ava has been awake for 1 h 20 min; the next nap is expected around {at(12, 25)}, in 25 minutes.")
 
     insights["next_sleep"] = {**AWAKE, "next_sleep_at": "2026-03-01T11:45:00+00:00"}
-    assert said(await ask(hass, "BabyTrackerNextSleep", baby="Everly")) == (
-        f"Everly has been awake for 1 h 30 min; a nap is due. It was expected around {at(11, 45)}.")
+    assert said(await ask(hass, "BabyTrackerNextSleep", baby="Ava")) == (
+        f"Ava has been awake for 1 h 30 min; a nap is due. It was expected around {at(11, 45)}.")
 
     insights["next_sleep"] = {**INSIGHTS["next_sleep"], "expected_wake_at": "2026-03-01T11:50:00+00:00"}
-    assert said(await ask(hass, "BabyTrackerNextSleep", baby="Everly")) == (
-        f"Everly has been asleep for 1 hour and was expected to wake around {at(11, 50)}.")
+    assert said(await ask(hass, "BabyTrackerNextSleep", baby="Ava")) == (
+        f"Ava has been asleep for 1 hour and was expected to wake around {at(11, 50)}.")
 
     assert said(await ask(hass, "BabyTrackerNextSleep", baby="Ann Marie")) == (
         "I don't have enough sleep logged to predict Ann Marie's next nap yet.")
 
 
 async def test_the_sleep_question_says_how_long_an_awake_baby_has_been_up(hass, assist):
-    coordinator_for(hass, assist).data["baby_data"]["Everly"]["last_sleep"] = {
+    coordinator_for(hass, assist).data["baby_data"]["Ava"]["last_sleep"] = {
         "time": "2026-03-01 10:00:00 +0000", "is_sleeping": False, "duration": 45, "current_duration": 45}
-    assert said(await ask(hass, "BabyTrackerSleepStatus", baby="Everly")) == (
-        "Everly has been awake for 1 h 15 min. The last sleep lasted 45 minutes.")
+    assert said(await ask(hass, "BabyTrackerSleepStatus", baby="Ava")) == (
+        "Ava has been awake for 1 h 15 min. The last sleep lasted 45 minutes.")
 
 
 async def test_the_summary_covers_every_baby_when_none_is_named(hass, assist):
-    everly = (f"Everly last ate 2 h 30 min ago, a 4 oz bottle. Everly's last diaper was wet, 2 hours ago. "
-              f"Everly has been asleep for 1 hour, since {at(11)}. "
-              f"Everly's next feed is expected around {at(12, 30)}, in 30 minutes.")
-    assert said(await ask(hass, "BabyTrackerSummary", baby="Everly")) == everly
-    assert said(await ask(hass, "BabyTrackerSummary")) == f"I don't have anything logged for Ann Marie yet. {everly}"
+    ava = (f"Ava last ate 2 h 30 min ago, a 4 oz bottle. Ava's last diaper was wet, 2 hours ago. "
+              f"Ava has been asleep for 1 hour, since {at(11)}. "
+              f"Ava's next feed is expected around {at(12, 30)}, in 30 minutes.")
+    assert said(await ask(hass, "BabyTrackerSummary", baby="Ava")) == ava
+    assert said(await ask(hass, "BabyTrackerSummary")) == f"I don't have anything logged for Ann Marie yet. {ava}"
 
 
 async def test_with_two_babies_and_none_named_the_intent_asks_which(hass, assist, backend):
@@ -2350,7 +2330,7 @@ async def test_with_two_babies_and_none_named_the_intent_asks_which(hass, assist
     assert len(backend) == logged
     assert result.response_type is intent.IntentResponseType.ERROR
     assert result.error_code is intent.IntentResponseErrorCode.NO_VALID_TARGETS
-    assert said(result) == "Which baby? Ann Marie or Everly."
+    assert said(result) == "Which baby? Ann Marie or Ava."
 
     result = await ask(hass, "BabyTrackerLastFeed", baby="Nobody")
     assert said(result) == "I don't know a baby called Nobody."
@@ -2358,18 +2338,18 @@ async def test_with_two_babies_and_none_named_the_intent_asks_which(hass, assist
 
 async def test_the_only_baby_is_used_when_none_is_named(hass, backend, freezer, tmp_path):
     def one_baby(self, photo_dir):
-        return [EVERLY], EVERLY, {}, {"Everly": {"baby_info": EVERLY, **EVERLY_DATA}}, ACCOUNT, MEDICINES
+        return [AVA], AVA, {}, {"Ava": {"baby_info": AVA, **AVA_DATA}}, ACCOUNT, MEDICINES
 
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", one_baby):
         await start_assist(hass, freezer, tmp_path)
         result = await ask(hass, "BabyTrackerLogDiaper", kind="wet")
-    assert backend[-1][:2] == ("add_diaper", "ID-EVERLY")
-    assert said(result) == "Logged a wet diaper for Everly."
+    assert backend[-1][:2] == ("add_diaper", "ID-AVA")
+    assert said(result) == "Logged a wet diaper for Ava."
 
 
 async def test_the_intents_say_so_when_baby_tracker_is_not_set_up(hass):
     await bt_intent.async_setup_intents(hass)
-    result = await ask(hass, "BabyTrackerLastFeed", baby="Everly")
+    result = await ask(hass, "BabyTrackerLastFeed", baby="Ava")
     assert result.response_type is intent.IntentResponseType.ERROR
     assert said(result) == "Baby Tracker isn't set up."
 
@@ -2384,8 +2364,8 @@ async def test_the_intents_are_registered_once(hass):
 def test_baby_names_become_list_values_without_template_syntax():
     from custom_components.baby_tracker.sentences import baby_values
 
-    assert baby_values(["Everly", "ann marie", " Everly ", "Zoe (Z)", "", None]) == [
-        "ann marie", "Everly", {"in": "Zoe Z", "out": "Zoe (Z)"}]
+    assert baby_values(["Ava", "ann marie", " Ava ", "Zoe (Z)", "", None]) == [
+        "ann marie", "Ava", {"in": "Zoe Z", "out": "Zoe (Z)"}]
 
 
 async def test_a_missing_sentence_file_raises_a_repair_and_nothing_is_written(hass, backend, tmp_path):
@@ -2424,7 +2404,7 @@ async def test_confirming_the_repair_writes_the_sentences_with_the_babys_names(h
 
     sentences_file = tmp_path / "custom_sentences" / "en" / "baby_tracker.yaml"
     written = yaml.safe_load(sentences_file.read_text(encoding="utf-8"))
-    assert written["lists"]["baby"]["values"] == ["Ann Marie", "Everly"]
+    assert written["lists"]["baby"]["values"] == ["Ann Marie", "Ava"]
     assert "BabyTrackerLogDiaper" in written["intents"]
 
     # What is there now is what the integration wants: the repair clears
@@ -2456,23 +2436,23 @@ def test_the_shipped_sentences_are_understood_by_assist():
 
     from custom_components.baby_tracker.sentences import render, template_languages
 
-    intents = hassil.Intents.from_dict(yaml.safe_load(render(template_languages()["en"], ["Everly", "Ann Marie"])))
+    intents = hassil.Intents.from_dict(yaml.safe_load(render(template_languages()["en"], ["Ava", "Ann Marie"])))
     for text, intent_type, slots in (
-        ("Everly had a wet diaper", "BabyTrackerLogDiaper", {"baby": "Everly", "kind": "wet"}),
+        ("Ava had a wet diaper", "BabyTrackerLogDiaper", {"baby": "Ava", "kind": "wet"}),
         ("log a 120 ml bottle for ann marie", "BabyTrackerLogBottle", {"baby": "Ann Marie", "amount": 120, "unit": "ml"}),
-        ("Everly is asleep", "BabyTrackerStartSleep", {"baby": "Everly"}),
-        ("Everly woke up", "BabyTrackerEndSleep", {"baby": "Everly"}),
-        ("start nursing Everly on the left", "BabyTrackerStartNursing", {"baby": "Everly", "side": "left"}),
-        ("stop nursing Everly", "BabyTrackerEndNursing", {"baby": "Everly"}),
-        ("when did Everly last eat", "BabyTrackerLastFeed", {"baby": "Everly"}),
-        ("when was Everly's last diaper change", "BabyTrackerLastDiaper", {"baby": "Everly"}),
-        ("when is Everly's next feed", "BabyTrackerNextFeed", {"baby": "Everly"}),
-        ("how much has Everly eaten today", "BabyTrackerIntakeToday", {"baby": "Everly"}),
-        ("is Everly sleeping", "BabyTrackerSleepStatus", {"baby": "Everly"}),
-        ("when should Everly nap", "BabyTrackerNextSleep", {"baby": "Everly"}),
-        ("when is Everly's next nap", "BabyTrackerNextSleep", {"baby": "Everly"}),
-        ("when will Everly wake up", "BabyTrackerNextSleep", {"baby": "Everly"}),
-        ("how is Everly doing", "BabyTrackerSummary", {"baby": "Everly"}),
+        ("Ava is asleep", "BabyTrackerStartSleep", {"baby": "Ava"}),
+        ("Ava woke up", "BabyTrackerEndSleep", {"baby": "Ava"}),
+        ("start nursing Ava on the left", "BabyTrackerStartNursing", {"baby": "Ava", "side": "left"}),
+        ("stop nursing Ava", "BabyTrackerEndNursing", {"baby": "Ava"}),
+        ("when did Ava last eat", "BabyTrackerLastFeed", {"baby": "Ava"}),
+        ("when was Ava's last diaper change", "BabyTrackerLastDiaper", {"baby": "Ava"}),
+        ("when is Ava's next feed", "BabyTrackerNextFeed", {"baby": "Ava"}),
+        ("how much has Ava eaten today", "BabyTrackerIntakeToday", {"baby": "Ava"}),
+        ("is Ava sleeping", "BabyTrackerSleepStatus", {"baby": "Ava"}),
+        ("when should Ava nap", "BabyTrackerNextSleep", {"baby": "Ava"}),
+        ("when is Ava's next nap", "BabyTrackerNextSleep", {"baby": "Ava"}),
+        ("when will Ava wake up", "BabyTrackerNextSleep", {"baby": "Ava"}),
+        ("how is Ava doing", "BabyTrackerSummary", {"baby": "Ava"}),
     ):
         result = hassil.recognize(text, intents)
         assert result is not None, text
@@ -2484,17 +2464,17 @@ def test_the_shipped_sentences_are_understood_by_assist():
 # ----- sleep taken from another entity -----
 
 SNOO = "binary_sensor.snoo_asleep"
-SNOO_SOURCES = {"sleep_sources": {"ID-EVERLY": {"sleep_source_entity": SNOO}}}
+SNOO_SOURCES = {"sleep_sources": {"ID-AVA": {"sleep_source_entity": SNOO}}}
 NIGHT = datetime(2026, 3, 1, 22, 0, tzinfo=UTC)
-# Everly is awake as far as Baby Tracker knows (the shared test data has her asleep)
-SOURCE_AWAKE = {  # Everly awake as far as Baby Tracker knows (the nap fixture above is AWAKE)
+# Ava is awake as far as Baby Tracker knows (the shared test data has her asleep)
+SOURCE_AWAKE = {  # Ava awake as far as Baby Tracker knows (the nap fixture above is AWAKE)
     "last_sleep": {"time": "2026-03-01 18:00:00 +0000", "is_sleeping": False, "duration": 60,
                         "current_duration": 0, "status": "awake"}}
 
 
 @contextmanager
 def logged_sleeps(**changes):
-    """Everly's sleep as Baby Tracker has it (awake unless changed), with log_sleep_event recorded."""
+    """Ava's sleep as Baby Tracker has it (awake unless changed), with log_sleep_event recorded."""
     fetch = fetch_with(**{**SOURCE_AWAKE, **changes})
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch), \
          patch(f"{CORE}.log_sleep_event", return_value={"status": "success"}) as log_sleep:
@@ -2506,7 +2486,7 @@ def set_snoo(hass, state):
 
 
 async def start_snoo(hass, freezer, state="off", options=None):
-    """Set up the integration with a Snoo-like entity as Everly's sleep source, at 22:00."""
+    """Set up the integration with a Snoo-like entity as Ava's sleep source, at 22:00."""
     freezer.move_to(NIGHT)
     set_snoo(hass, state)
     entry = make_entry(options=options or SNOO_SOURCES)
@@ -2528,18 +2508,18 @@ def starts_and_ends(log_sleep):
 async def test_the_sleep_start_is_logged_after_the_minimum_back_dated(hass, backend, freezer):
     with logged_sleeps() as log_sleep:
         await start_snoo(hass, freezer)
-        assert hass.states.get("binary_sensor.everly_sleep_source").state == "off"
+        assert hass.states.get("binary_sensor.ava_sleep_source").state == "off"
         assert hass.states.get("binary_sensor.ann_marie_sleep_source") is None  # only babies with a source
 
         set_snoo(hass, "on")
         await advance(hass, freezer, minutes=4)
         log_sleep.assert_not_called()  # 5 minutes is the default minimum
-        assert hass.states.get("binary_sensor.everly_sleep_source").state == "on"
+        assert hass.states.get("binary_sensor.ava_sleep_source").state == "on"
 
         await advance(hass, freezer, minutes=1)
-        log_sleep.assert_called_once_with("ID-EVERLY", True, "From Snoo", NIGHT)  # dated when she dropped off
+        log_sleep.assert_called_once_with("ID-AVA", True, "From Snoo", NIGHT)  # dated when she dropped off
 
-        source = hass.states.get("binary_sensor.everly_sleep_source")
+        source = hass.states.get("binary_sensor.ava_sleep_source")
         assert source.attributes["source_entity"] == SNOO
         assert source.attributes["since"] == NIGHT.isoformat()
         assert source.attributes["pending_end"] is None
@@ -2551,13 +2531,13 @@ async def test_a_short_wake_inside_the_gap_does_not_end_the_sleep(hass, backend,
         await advance(hass, freezer, minutes=20)
         set_snoo(hass, "off")
         await advance(hass, freezer, minutes=5)
-        assert hass.states.get("binary_sensor.everly_sleep_source").attributes["pending_end"]
+        assert hass.states.get("binary_sensor.ava_sleep_source").attributes["pending_end"]
 
         set_snoo(hass, "on")  # back down before the 10 minutes are up
         await advance(hass, freezer, minutes=30)
 
         assert starts_and_ends(log_sleep) == [True]  # no end
-        source = hass.states.get("binary_sensor.everly_sleep_source")
+        source = hass.states.get("binary_sensor.ava_sleep_source")
         assert source.state == "on" and source.attributes["pending_end"] is None
         assert source.attributes["since"] == NIGHT.isoformat()
 
@@ -2572,8 +2552,8 @@ async def test_a_wake_longer_than_the_gap_ends_the_sleep_at_the_wake_time(hass, 
         assert starts_and_ends(log_sleep) == [True]  # only the start so far
 
         await advance(hass, freezer, minutes=1)
-        assert log_sleep.call_args_list[-1].args == ("ID-EVERLY", False, "From Snoo", woke)  # not 10 minutes later
-        assert hass.states.get("binary_sensor.everly_sleep_source").state == "off"
+        assert log_sleep.call_args_list[-1].args == ("ID-AVA", False, "From Snoo", woke)  # not 10 minutes later
+        assert hass.states.get("binary_sensor.ava_sleep_source").state == "off"
 
 
 async def test_a_sleep_shorter_than_the_minimum_is_never_logged(hass, backend, freezer):
@@ -2583,7 +2563,7 @@ async def test_a_sleep_shorter_than_the_minimum_is_never_logged(hass, backend, f
         set_snoo(hass, "off")
         await advance(hass, freezer, minutes=30)
         log_sleep.assert_not_called()
-        assert hass.states.get("binary_sensor.everly_sleep_source").state == "off"
+        assert hass.states.get("binary_sensor.ava_sleep_source").state == "off"
 
 
 async def test_an_unavailable_source_is_neither_a_start_nor_an_end(hass, backend, freezer):
@@ -2598,7 +2578,7 @@ async def test_an_unavailable_source_is_neither_a_start_nor_an_end(hass, backend
         set_snoo(hass, "unknown")
         await advance(hass, freezer, minutes=60)
         assert starts_and_ends(log_sleep) == [True]  # never ended
-        assert hass.states.get("binary_sensor.everly_sleep_source").state == "on"
+        assert hass.states.get("binary_sensor.ava_sleep_source").state == "on"
 
 
 async def test_a_sleep_started_by_hand_is_not_started_twice(hass, backend, freezer):
@@ -2621,7 +2601,7 @@ async def test_a_failed_end_is_dropped_quietly(hass, backend, freezer):
         log_sleep.return_value = {"status": "error", "message": "No active sleep session found"}  # ended by hand
         set_snoo(hass, "off")
         await advance(hass, freezer, minutes=10)
-        assert hass.states.get("binary_sensor.everly_sleep_source").state == "off"
+        assert hass.states.get("binary_sensor.ava_sleep_source").state == "off"
 
 
 async def test_a_sleep_in_progress_survives_a_restart(hass, backend, freezer, hass_storage):
@@ -2633,7 +2613,7 @@ async def test_a_sleep_in_progress_survives_a_restart(hass, backend, freezer, ha
         await advance(hass, freezer, minutes=8)
         await hass.config_entries.async_reload(entry.entry_id)  # a restart: the entity is still asleep
         await hass.async_block_till_done()
-        source = hass.states.get("binary_sensor.everly_sleep_source")
+        source = hass.states.get("binary_sensor.ava_sleep_source")
         assert source.state == "on"
         assert source.attributes["since"] == NIGHT.isoformat()  # not 22:18, when HA came back
         assert starts_and_ends(log_sleep) == [True]  # and not started a second time
@@ -2641,7 +2621,7 @@ async def test_a_sleep_in_progress_survives_a_restart(hass, backend, freezer, ha
         woke = dt_util.utcnow()
         set_snoo(hass, "off")
         await advance(hass, freezer, minutes=10)
-        assert log_sleep.call_args_list[-1].args == ("ID-EVERLY", False, "From Snoo", woke)
+        assert log_sleep.call_args_list[-1].args == ("ID-AVA", False, "From Snoo", woke)
 
 
 async def test_a_wake_during_a_restart_ends_the_sleep_from_when_it_was_noticed(hass, backend, freezer, hass_storage):
@@ -2657,12 +2637,12 @@ async def test_a_wake_during_a_restart_ends_the_sleep_from_when_it_was_noticed(h
         await hass.async_block_till_done()
         await advance(hass, freezer, minutes=10)
 
-        assert log_sleep.call_args_list[-1].args == ("ID-EVERLY", False, "From Snoo", noticed)
+        assert log_sleep.call_args_list[-1].args == ("ID-AVA", False, "From Snoo", noticed)
 
 
 async def test_no_sleep_source_means_no_sleep_source_entity(hass, backend):
     await setup(hass, make_entry())
-    assert hass.states.get("binary_sensor.everly_sleep_source") is None
+    assert hass.states.get("binary_sensor.ava_sleep_source") is None
 
 
 async def test_options_flow_saves_a_sleep_source_per_baby(hass, backend):
@@ -2676,7 +2656,7 @@ async def test_options_flow_saves_a_sleep_source_per_baby(hass, backend):
 
     result = await hass.config_entries.options.async_configure(result["flow_id"], {})  # no source for her
     assert result["step_id"] == "sleep_source"
-    assert result["description_placeholders"] == {"baby": "Everly"}
+    assert result["description_placeholders"] == {"baby": "Ava"}
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"sleep_source_entity": SNOO, "sleep_source_asleep_states": []})
@@ -2687,11 +2667,11 @@ async def test_options_flow_saves_a_sleep_source_per_baby(hass, backend):
         "sleep_gap_minutes": 15, "sleep_min_minutes": 3})
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options["sleep_sources"] == {"ID-EVERLY": {
+    assert entry.options["sleep_sources"] == {"ID-AVA": {
         "sleep_source_entity": SNOO, "sleep_source_asleep_states": ["asleep", "weaning"],
         "sleep_gap_minutes": 15, "sleep_min_minutes": 3}}
     assert entry.options["unit_system"] == "imperial"
-    assert hass.states.get("binary_sensor.everly_sleep_source")  # the reload created it
+    assert hass.states.get("binary_sensor.ava_sleep_source")  # the reload created it
 
 
 async def test_options_flow_offers_the_saved_sleep_source_and_can_clear_it(hass, backend):
@@ -2708,7 +2688,7 @@ async def test_options_flow_offers_the_saved_sleep_source_and_can_clear_it(hass,
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert "sleep_sources" not in entry.options
-    assert hass.states.get("binary_sensor.everly_sleep_source") is None
+    assert hass.states.get("binary_sensor.ava_sleep_source") is None
 
 
 # ----- Quiet mode: activities a baby is no longer logged for -----
@@ -2796,15 +2776,15 @@ async def test_the_coordinator_works_out_tracking_for_each_baby(hass, backend):
 
 
 def quiet_fetch(feeds=False, sleep=True, diapers=True):
-    """Ann Marie is tracked and overdue for a feed; Everly is overdue too but her groups are as given."""
+    """Ann Marie is tracked and overdue for a feed; Ava is overdue too but her groups are as given."""
     def fetch(self, photo_dir):
         babies, info, pictures, data, account, medicines = fake_fetch(self, photo_dir)
         data["Ann Marie"] = {
             "baby_info": TWIN, "insights": {"next_feed": {"predicted_at": "2026-03-01T11:15:00+00:00"}},
             "time_since_last_feeding": {"hours_since_last_feeding": 5.0, "last_feeding_time": "2026-03-01T07:00:00+00:00"},
         }
-        data["Everly"] = {
-            **data["Everly"],
+        data["Ava"] = {
+            **data["Ava"],
             "time_since_last_feeding": {"hours_since_last_feeding": 8.0, "last_feeding_time": "2026-03-01T04:00:00+00:00"},
             "tracking": {**ALL_TRACKED, "feeds": feeds, "sleep": sleep, "diapers": diapers},
             "tracking_mode": "auto",
@@ -2814,12 +2794,12 @@ def quiet_fetch(feeds=False, sleep=True, diapers=True):
 
 
 async def test_alerts_of_an_untracked_group_are_off_with_a_reason(hass, backend, freezer):
-    freezer.move_to("2026-03-01 12:40:00+00:00")  # Everly's predicted feed (12:30) has passed
+    freezer.move_to("2026-03-01 12:40:00+00:00")  # Ava's predicted feed (12:30) has passed
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", quiet_fetch(feeds=False)):
         await setup(hass, make_entry())
 
     for alert in ("feeding_overdue", "feed_due", "intake_low", "wake_to_feed"):
-        state = hass.states.get(f"binary_sensor.everly_{alert}")
+        state = hass.states.get(f"binary_sensor.ava_{alert}")
         assert state.state == "off", alert
         assert state.attributes["reason"] == "not_tracked", alert
     assert hass.states.get("binary_sensor.ann_marie_feeding_overdue").state == "on"  # tracked, 5 h
@@ -2830,26 +2810,26 @@ async def test_the_same_alerts_are_on_while_the_group_is_tracked(hass, backend, 
     freezer.move_to("2026-03-01 12:40:00+00:00")
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", quiet_fetch(feeds=True)):
         await setup(hass, make_entry())
-    assert hass.states.get("binary_sensor.everly_feeding_overdue").state == "on"
-    assert hass.states.get("binary_sensor.everly_feed_due").state == "on"
-    assert hass.states.get("binary_sensor.everly_intake_low").state == "on"
-    assert "reason" not in hass.states.get("binary_sensor.everly_feeding_overdue").attributes
+    assert hass.states.get("binary_sensor.ava_feeding_overdue").state == "on"
+    assert hass.states.get("binary_sensor.ava_feed_due").state == "on"
+    assert hass.states.get("binary_sensor.ava_intake_low").state == "on"
+    assert "reason" not in hass.states.get("binary_sensor.ava_feeding_overdue").attributes
 
 
 async def test_sleep_and_diaper_alerts_follow_their_own_groups(hass, backend, freezer):
-    freezer.move_to("2026-03-01 14:00:00+00:00")  # Everly asleep since 11:00, expected awake at 12:40
+    freezer.move_to("2026-03-01 14:00:00+00:00")  # Ava asleep since 11:00, expected awake at 12:40
     entry = make_entry()
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
                quiet_fetch(feeds=True, sleep=True)):
         await setup(hass, entry)
-    assert hass.states.get("binary_sensor.everly_nap_running_long").state == "on"
+    assert hass.states.get("binary_sensor.ava_nap_running_long").state == "on"
 
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch",
                quiet_fetch(feeds=True, sleep=False, diapers=False)):
         await coordinator_for(hass, entry).async_refresh()
         await hass.async_block_till_done()
     for alert in ("nap_running_long", "long_sleep", "sleep_due", "no_poop", "low_wet_diapers"):
-        state = hass.states.get(f"binary_sensor.everly_{alert}")
+        state = hass.states.get(f"binary_sensor.ava_{alert}")
         assert state.state == "off" and state.attributes["reason"] == "not_tracked", alert
 
 
@@ -2860,23 +2840,23 @@ async def test_derived_sensors_read_unknown_but_the_facts_stay(hass, backend):
 
     for sensor in ("next_feed", "feed_interval", "intake_24h", "intake_status", "time_since_last_feeding",
                    "diaper_adequacy", "next_sleep", "expected_wake", "wake_window"):
-        state = hass.states.get(f"sensor.everly_{sensor}")
+        state = hass.states.get(f"sensor.ava_{sensor}")
         assert state is not None, sensor
         assert state.state == "unknown", sensor
         assert state.attributes["reason"] == "not_tracked", sensor
 
     # What was logged stays, and so do the counts
-    assert hass.states.get("sensor.everly_last_feeding").state != "unknown"
-    assert hass.states.get("sensor.everly_last_feeding_time").state == "2026-03-01T09:30:00+00:00"
-    assert hass.states.get("sensor.everly_last_diaper").state != "unknown"
-    assert hass.states.get("sensor.everly_last_sleep").state != "unknown"
-    assert hass.states.get("sensor.everly_wet_diapers").state != "unknown"
+    assert hass.states.get("sensor.ava_last_feeding").state != "unknown"
+    assert hass.states.get("sensor.ava_last_feeding_time").state == "2026-03-01T09:30:00+00:00"
+    assert hass.states.get("sensor.ava_last_diaper").state != "unknown"
+    assert hass.states.get("sensor.ava_last_sleep").state != "unknown"
+    assert hass.states.get("sensor.ava_wet_diapers").state != "unknown"
 
 
 async def test_the_info_sensor_shows_what_is_tracked(hass, backend):
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", quiet_fetch(feeds=False)):
         await setup(hass, make_entry())
-    info = hass.states.get("sensor.everly_info").attributes
+    info = hass.states.get("sensor.ava_info").attributes
     assert info["tracking"]["feeds"] is False and info["tracking"]["sleep"] is True
     assert info["tracking_mode"] == "auto"
     # Without a verdict in the data (as in the other tests' fake data), nothing is shown as off
@@ -2892,14 +2872,14 @@ async def test_household_sensors_only_consider_babies_with_the_group_tracked(has
     with patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch):
         await setup(hass, make_entry(unit_system="metric"))
 
-    assert hass.states.get("sensor.baby_tracker_next_feed_baby").state == "Everly"
+    assert hass.states.get("sensor.baby_tracker_next_feed_baby").state == "Ava"
     assert hass.states.get("sensor.baby_tracker_next_feed_due").attributes["predictions"] == {
-        "Everly": "2026-03-01T12:30:00+00:00"}
-    assert hass.states.get("sensor.baby_tracker_last_fed_baby").state == "Everly"
+        "Ava": "2026-03-01T12:30:00+00:00"}
+    assert hass.states.get("sensor.baby_tracker_last_fed_baby").state == "Ava"
     asleep = hass.states.get("sensor.baby_tracker_babies_asleep")
-    assert asleep.state == "1" and asleep.attributes["babies"] == ["Everly"]
+    assert asleep.state == "1" and asleep.attributes["babies"] == ["Ava"]
     feeds = hass.states.get("sensor.baby_tracker_feeds_today")
-    assert feeds.state == "6" and feeds.attributes["per_baby"] == {"Everly": 6}
+    assert feeds.state == "6" and feeds.attributes["per_baby"] == {"Ava": 6}
 
 
 async def test_assist_says_an_untracked_activity_is_not_tracked(hass, backend, freezer, tmp_path):
@@ -2908,18 +2888,18 @@ async def test_assist_says_an_untracked_activity_is_not_tracked(hass, backend, f
         await start_assist(hass, freezer, tmp_path)
 
         for intent_type in ("BabyTrackerLastFeed", "BabyTrackerNextFeed", "BabyTrackerIntakeToday"):
-            result = await ask(hass, intent_type, baby="Everly")
-            assert said(result) == "Feeds aren't being tracked for Everly", intent_type
-        assert said(await ask(hass, "BabyTrackerLastDiaper", baby="Everly")) == (
-            "Diapers aren't being tracked for Everly")
+            result = await ask(hass, intent_type, baby="Ava")
+            assert said(result) == "Feeds aren't being tracked for Ava", intent_type
+        assert said(await ask(hass, "BabyTrackerLastDiaper", baby="Ava")) == (
+            "Diapers aren't being tracked for Ava")
         # Sleep is still tracked, and the other baby is unaffected
-        assert said(await ask(hass, "BabyTrackerSleepStatus", baby="Everly")).startswith("Everly has been asleep")
+        assert said(await ask(hass, "BabyTrackerSleepStatus", baby="Ava")).startswith("Ava has been asleep")
         assert said(await ask(hass, "BabyTrackerLastFeed", baby="Ann Marie")) == (
             "I don't have any feeds logged for Ann Marie.")
         # The summary leaves out what is not tracked; logging still works
-        summary = said(await ask(hass, "BabyTrackerSummary", baby="Everly"))
+        summary = said(await ask(hass, "BabyTrackerSummary", baby="Ava"))
         assert "ate" not in summary and "diaper" not in summary and "asleep" in summary
-        result = await ask(hass, "BabyTrackerLogDiaper", baby="Everly", kind="wet")
+        result = await ask(hass, "BabyTrackerLogDiaper", baby="Ava", kind="wet")
         assert result.response_type is intent.IntentResponseType.ACTION_DONE
 
 
@@ -2935,7 +2915,7 @@ async def test_options_flow_saves_the_tracked_activities_per_baby(hass, backend)
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"tracked_activities": ["sleep", "feeds"]})  # Ann Marie: by hand
-    result = await hass.config_entries.options.async_configure(result["flow_id"], {})  # Everly: auto
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})  # Ava: auto
     await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -2953,3 +2933,91 @@ async def test_options_flow_saves_the_tracked_activities_per_baby(hass, backend)
     result = await hass.config_entries.options.async_configure(result["flow_id"], {})
     await hass.async_block_till_done()
     assert "tracking" not in entry.options
+
+
+# ----- creating medicines and foods -----
+
+async def test_create_medicine_service_adds_it_to_the_medicine_select(hass, backend):
+    medicines = [dict(m) for m in MEDICINES]
+    calls = []
+
+    def create_medicine(self, name, amount_per_time=0.0, unit="", interval_hours=0, prescription=False):
+        calls.append((name, amount_per_time, unit, interval_hours, prescription))
+        medicines.append({"id": "MED-NEW", "name": name, "amount_per_time": amount_per_time, "unit": unit})
+        return {"status": "success", "objectID": "MED-NEW", "message": "Created the medicine"}
+
+    with patch(f"{CORE}.create_medicine", create_medicine), \
+         patch("custom_components.baby_tracker.BabyTrackerDataCoordinator._fetch", fetch_with_medicines(medicines)):
+        await setup(hass, make_entry())
+        assert "Zinc" not in hass.states.get("select.ava_medicine").attributes["options"]
+        await hass.services.async_call(
+            DOMAIN, "create_medicine",
+            {"name": "Zinc", "amount": 2.5, "unit": "ml", "interval_hours": 8, "prescription": True}, blocking=True)
+        await hass.async_block_till_done()
+        assert calls == [("Zinc", 2.5, "ml", 8, True)]
+        assert "Zinc" in hass.states.get("select.ava_medicine").attributes["options"]
+
+
+async def test_create_food_service(hass, backend):
+    calls = []
+
+    def create_food(self, name, is_bottle=False):
+        calls.append((name, is_bottle))
+        return {"status": "success", "objectID": "FOOD-NEW", "message": "Created the food"}
+
+    with patch(f"{CORE}.create_food", create_food):
+        await setup(hass, make_entry())
+        await hass.services.async_call(DOMAIN, "create_food", {"name": "Mango"}, blocking=True)
+        await hass.services.async_call(DOMAIN, "create_food", {"name": "Oat milk", "is_bottle": True}, blocking=True)
+    assert calls == [("Mango", False), ("Oat milk", True)]
+
+
+async def test_create_services_report_failure(hass, backend):
+    failed = {"status": "error", "message": "A medicine needs a name"}
+    with patch(f"{CORE}.create_medicine", lambda self, *a, **k: failed), \
+         patch(f"{CORE}.create_food", lambda self, *a, **k: failed):
+        await setup(hass, make_entry())
+        with pytest.raises(HomeAssistantError):
+            await hass.services.async_call(DOMAIN, "create_medicine", {"name": " "}, blocking=True)
+        with pytest.raises(HomeAssistantError):
+            await hass.services.async_call(DOMAIN, "create_food", {"name": " "}, blocking=True)
+
+
+async def test_log_medicine_and_add_solids_create_unknown_names_when_asked(hass, backend):
+    created = []
+
+    def create_medicine(self, name, amount_per_time=0.0, unit="", interval_hours=0, prescription=False):
+        created.append(("medicine", name, amount_per_time))
+        return {"status": "success", "objectID": "MED-NEW"}
+
+    def create_food(self, name, is_bottle=False):
+        created.append(("food", name))
+        return {"status": "success", "objectID": "FOOD-NEW"}
+
+    with patch(f"{CORE}.create_medicine", create_medicine), patch(f"{CORE}.create_food", create_food):
+        await setup(hass, make_entry())
+
+        # Without create, an unknown name is still refused
+        with pytest.raises(ServiceValidationError):
+            await hass.services.async_call(
+                DOMAIN, "log_medicine", {"baby_name": "Ava", "medicine_name": "Zinc", "amount": 2}, blocking=True)
+        assert created == []
+
+        await hass.services.async_call(
+            DOMAIN, "log_medicine",
+            {"baby_name": "Ava", "medicine_name": "Zinc", "amount": 2, "create": True}, blocking=True)
+        assert created[-1] == ("medicine", "Zinc", 2.0)
+        assert backend[-1] == ("add_medicine", "ID-AVA", "MED-NEW", 2.0)
+
+        await hass.services.async_call(
+            DOMAIN, "add_solids", {"baby_name": "Ava", "food_name": "Mango", "amount": 1, "create": True},
+            blocking=True)
+        assert created[-1] == ("food", "Mango")
+        assert backend[-1] == ("add_other_feed", "ID-AVA", "FOOD-NEW", 1.0, "", True)
+
+        # A known name is not created again
+        created.clear()
+        await hass.services.async_call(
+            DOMAIN, "add_solids", {"baby_name": "Ava", "food_name": "banana", "amount": 1, "create": True},
+            blocking=True)
+        assert created == []
