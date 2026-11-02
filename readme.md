@@ -974,7 +974,7 @@ The baby data is in `baby_tracker.db` in your Home Assistant configuration direc
 
 ## Support
 
-For issues and feature requests, use the GitHub repository's issue tracker.
+Report a bug or ask for a feature in the [issue tracker](https://github.com/isaiahnicolai/baby-tracker-home-assistant/issues/new/choose). The bug form asks for your versions and logs. The diagnostics download hides your login, but check logs for your babies' names before posting. Report security problems privately, as [SECURITY.md](SECURITY.md) describes.
 
 ## Credits
 

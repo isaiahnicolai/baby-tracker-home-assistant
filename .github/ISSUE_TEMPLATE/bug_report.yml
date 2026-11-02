@@ -48,5 +48,5 @@ body:
     id: logs
     attributes:
       label: Logs or diagnostics
-      description: Debug logs help most. Add `custom_components.baby_tracker: debug` under `logger:` in configuration.yaml, restart and reproduce the problem.
+      description: "Debug logs help most. Add `custom_components.baby_tracker: debug` under `logger:` in configuration.yaml, restart and reproduce the problem."
       render: text
