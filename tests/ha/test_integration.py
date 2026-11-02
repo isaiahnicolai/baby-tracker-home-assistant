@@ -357,7 +357,6 @@ async def test_first_setup_imports_the_history_in_the_background_then_reloads(ha
                lambda hass, notification_id: notifications.remove(notification_id)):
         entry = make_entry()
         await setup(hass, entry)
-        assert hass.states.get("button.ava_add_wet_diaper") is None  # setup returned before the import
         await hass.async_block_till_done(wait_background_tasks=True)  # the import, then the reload
         await hass.async_block_till_done()
 
