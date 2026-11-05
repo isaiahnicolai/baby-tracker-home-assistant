@@ -6,11 +6,36 @@ body:
     attributes:
       value: |
         Thanks for reporting this. Please don't paste your Baby Tracker password, and look over logs before posting them: they can contain your babies' names and entries. The integration's diagnostics download (Settings > Devices & services > Baby Tracker > three dots > Download diagnostics) already hides your login.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you start
+      options:
+        - label: I'm on the latest release, or the problem is still there after updating
+          required: true
+        - label: I searched the existing issues and this isn't already reported
+          required: true
   - type: textarea
     id: what
     attributes:
       label: What happened
-      description: What you did, what you expected, and what happened instead.
+      description: What went wrong, including any error message you saw.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did, step by step, so it can be tried again.
+      placeholder: |
+        1. Press Start Sleep for Ava
+        2. Wait for the next sync
+        3. ...
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What should have happened instead, for example what the app shows.
     validations:
       required: true
   - type: dropdown
@@ -19,6 +44,8 @@ body:
       label: Where
       options:
         - Home Assistant integration
+        - Voice / Assist
+        - Blueprint
         - Python library
         - Command line
     validations:
@@ -27,7 +54,8 @@ body:
     id: version
     attributes:
       label: Integration or library version
-      placeholder: "1.0.0"
+      description: Settings > Devices & services > Baby Tracker shows the integration's version.
+      placeholder: "1.0.1"
     validations:
       required: true
   - type: input
@@ -35,7 +63,15 @@ body:
     attributes:
       label: Home Assistant version
       description: Settings > About. Leave empty for the library or command line.
-      placeholder: "2026.10.4"
+      placeholder: "2026.11.0"
+  - type: dropdown
+    id: install
+    attributes:
+      label: How the integration was installed
+      options:
+        - HACS
+        - Manually (copied custom_components)
+        - Not applicable (library or command line)
   - type: dropdown
     id: app
     attributes:
@@ -44,9 +80,22 @@ body:
       options:
         - Android
         - iPhone or iPad
+  - type: dropdown
+    id: babies
+    attributes:
+      label: Number of babies on the account
+      options:
+        - "1"
+        - "2"
+        - "3 or more"
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Download diagnostics from the integration's page and drag the file into this box.
   - type: textarea
     id: logs
     attributes:
-      label: Logs or diagnostics
+      label: Logs
       description: "Debug logs help most. Add `custom_components.baby_tracker: debug` under `logger:` in configuration.yaml, restart and reproduce the problem."
       render: text
