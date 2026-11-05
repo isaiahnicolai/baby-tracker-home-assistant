@@ -60,7 +60,7 @@ or go to **Settings > Devices & services > Add integration** and search for *Bab
 
 Each baby gets its own device with its own sensors and buttons (for example "Add Wet Diaper", "Add Dirty Diaper" and "Add Mixed Diaper"). Entity IDs follow `<domain>.<baby name>_<entity name>`, such as `sensor.ava_last_diaper`, `sensor.ava_weight`, `sensor.ava_last_feeding` and `button.ava_add_bottle`. The examples in this readme use a baby called Ava (and Ann Marie as a second baby); use your own baby's name.
 
-All services take an optional `baby_name` (or the baby's device, from the **Baby** device picker). If you leave it out, the service uses the baby when there is only one, and refuses to guess when there are several. Pump sessions belong to the account rather than a baby.
+Every service that logs or acts on a baby takes an optional `baby_name` (or the baby's device, from the **Baby** device picker). If you leave it out, the service uses the baby when there is only one, and refuses to guess when there are several. Pump sessions belong to the account rather than a baby.
 
 ### Using it from Python or the command line
 
@@ -78,7 +78,7 @@ pip install "git+https://github.com/isaiahnicolai/baby-tracker-home-assistant@v1
 pip install -e .
 ```
 
-Add `[photos]` to the package (`pip install "babytracker-client[photos] @ git+https://github.com/isaiahnicolai/baby-tracker-home-assistant@v1.0.0"`) to be able to attach photos; it pulls in Pillow. The package needs Python 3.11 or newer and depends only on `requests` and `python-dateutil`.
+Add `[photos]` to the package (`pip install "babytracker-client[photos] @ git+https://github.com/isaiahnicolai/baby-tracker-home-assistant@v1.0.0"`) to be able to attach photos; it pulls in Pillow. The package needs Python 3.11 or newer and depends on `requests`, `python-dateutil` and, for the interactive shell, `cmd2`.
 
 That makes it importable as `babytracker_client` and adds a `babytracker` command:
 
@@ -95,7 +95,7 @@ for baby in tracker.get_all_babies():
 `BabyTracker` is the whole API. The main groups of methods:
 
 - **Account**: `authenticate`, `sync`, `force_resync`, `pending_upload_count`, `get_all_babies`, `get_baby_by_name`, `download_baby_picture`.
-- **Reading**: `get_last_<kind>` and `get_<kind>_records` for every record type (`get_last_diaper`, `get_last_feeding`, `get_last_sleep`, `is_currently_sleeping`, `get_growth_records`...), `get_recent_records`, `get_daily_summary`, `get_feeding_summary`, `get_sleep_analysis`, `get_events_between`, `get_pictures`, `get_latest_picture`.
+- **Reading**: `get_last_<kind>` for every record type (`get_last_diaper`, `get_last_feeding`, `get_last_sleep`...), `is_currently_sleeping`, `get_feedings`, `get_<kind>_records` for baths, pumping, growth, milestones, doctor visits, vaccines, medicine and activities, `get_recent_records`, `get_daily_summary`, `get_feeding_summary`, `get_sleep_analysis`, `get_events_between`, `get_pictures`, `get_latest_picture`.
 - **Insights**: `get_insights` (corrected age, next feed, intake, diapers, growth percentiles, next sleep), `get_next_breast`, `get_next_medicine_dose`, `get_upcoming_milestones`, `get_upcoming_vaccines`, `get_pumped_milk_inventory`.
 - **Writing**: `add_diaper`, `add_nursing`, `add_formula`, `add_pumped`, `add_other_feed`, `log_sleep_event`, `log_pump`, `log_growth`, `add_temperature`, `add_medicine`, `log_bath`, `add_activity`, `log_milestone`, `log_vaccine`, `log_doctor_visit`, `add_joy`, `attach_photo`, `delete_record`, `undo_last`.
 
@@ -225,7 +225,7 @@ These are totals over a rolling 7 days (the `window_days` attribute says so), up
 
 ### Alerts, Night Mode and Housekeeping
 
-- **Alerts** (`binary_sensor`): Feeding Overdue, No Poop, Low Wet Diapers, Fever, Long Sleep, plus the three insight alerts below. Their thresholds can be changed in the [options](#options)
+- **Alerts** (`binary_sensor`): Feeding Overdue, No Poop, Low Wet Diapers, Fever, Long Sleep, plus the five insight alerts below. The Feeding Overdue, Low Wet Diapers and Fever thresholds can be changed in the [options](#options)
 - **Night Mode** (`binary_sensor`): on while the baby sleeps at night, 19:00 to 07:00 unless you change the [night hours](#options)
 - **Nursing** (`binary_sensor`): on while a [nursing timer](#nursing-timer) is running
 - **Info** (diagnostic sensor): the baby's age, with date of birth and other details in attributes
@@ -316,7 +316,7 @@ Like Start/End Sleep, the nursing buttons time a session and log it when it ends
 - `button.ava_end_nursing` stops the timer and logs one nursing record, dated when the session started, with the minutes spent on each side (at least one minute in total) and the side you finished on.
 - `binary_sensor.ava_nursing` is on while a timer runs, with the `side` being nursed and `started_at` as attributes.
 
-The running timer is kept in Home Assistant, not in the Baby Tracker app, so it is lost if Home Assistant restarts. If logging fails (for example, the server is down), the timer keeps running and you can press End Nursing again.
+The running timer is kept in Home Assistant, not in the Baby Tracker app. It is saved, so it survives a restart or reload, but one started more than 24 hours ago is dropped. If logging fails (for example, the server is down), the timer keeps running and you can press End Nursing again.
 
 ## Options
 
@@ -359,7 +359,7 @@ Once a child is no longer logged for feeds or diapers, the questions about them 
 For an activity that is not tracked:
 
 - its alerts (for feeds: Feeding Overdue, Feed Due, Wake To Feed, Intake Low; for diapers: No Poop, Low Wet Diapers; for sleep: Long Sleep, Sleep Due, Nap Running Long; for temperature: Fever) are off, with the attribute `reason: not_tracked`;
-- its predictions and rates (Next Feed, Feed Interval, Intake, Intake Status, Time Since Last Feeding, Feeding Timer, Diaper Adequacy, Next Sleep, Expected Wake, Wake Window) read unknown, with the same attribute;
+- its predictions and rates (Next Feed, Feed Interval, Intake, Intake Status, Time Since Last Feeding, Next Feeding, Diaper Adequacy, Next Sleep, Expected Wake, Wake Window) read unknown, with the same attribute;
 - the household sensors (Next Feed Baby, Last Fed Baby, Babies Asleep, Feeds Today) leave that baby out;
 - Assist answers "Feeds aren't being tracked for Ava" to questions about it.
 
@@ -398,7 +398,7 @@ Alongside the raw logs, each baby gets a few derived entities. They are recalcul
 | `binary_sensor.<baby>_feed_due` | On once the predicted next feed time has passed |
 | `binary_sensor.<baby>_wake_to_feed` | On when a young baby has gone past the longest sensible gap between feeds |
 | `binary_sensor.<baby>_sleep_due` | Sleep Due: on when an awake baby has reached the end of their usual wake window (`next_sleep_at` has passed). Attributes: `next_sleep_at`, `awake_since`, `wake_window_hours` |
-| `binary_sensor.<baby>_wake_overdue` | Nap Running Long: on when a sleeping baby is 30 minutes past the expected wake time. Attributes: `expected_wake_at`, `asleep_since` |
+| `binary_sensor.<baby>_nap_running_long` | Nap Running Long: on when a sleeping baby is 30 minutes past the expected wake time. Attributes: `expected_wake_at`, `asleep_since` |
 
 **Wake windows.** The sleep predictions work from how long your baby stays awake between sleeps. With at least 3 recent daytime wake windows (the gap from the end of one sleep to the start of the next, ignoring gaps over 8 hours) the window is their median; with fewer it is the middle of the typical range for the baby's age (corrected for prematurity). Either way it is kept inside that range, which runs from 35-60 minutes in the first month, 1-1.5 hours at 1-2 months, 1.25-2 hours at 3-4 months, 2-3 hours at 5-6, 2.5-3.5 hours at 7-9, 3-4 hours at 10-12, 4-6 hours at 13-18 months and 5-6 hours up to two. A sleep in progress is expected to end after the median of the baby's last six sleeps of the same part of the day (daytime is 07:00-19:00), or a typical length for the age with fewer than three. The `basis` attribute says whether the estimate came from `history` or the `age_default`.
 
@@ -408,7 +408,7 @@ The five binary sensors work like the other alerts: they can be dismissed with `
 
 ### Alerts that follow the clock
 
-Feed Due, Wake To Feed, Sleep Due, Nap Running Long, Feeding Overdue, Night Mode, Time Since Last Feeding and Next Feeding depend on the time of day, not only on new records, so they are re-evaluated **every minute** rather than once per refresh. Feed Due turns on at the predicted time, and Sleep Due at the end of the wake window, even if the next refresh is fifteen minutes away. Every alert also has a `baby_name` attribute, handy in notification templates.
+Feed Due, Wake To Feed, Sleep Due, Nap Running Long, Feeding Overdue, Low Wet Diapers, Fever, Long Sleep, Night Mode, Time Since Last Feeding and Next Feeding depend on the time of day, not only on new records, so they are re-evaluated **every minute** rather than once per refresh. Feed Due turns on at the predicted time, and Sleep Due at the end of the wake window, even if the next refresh is fifteen minutes away. Every alert also has a `baby_name` attribute, handy in notification templates.
 
 ### Other derived sensors
 
@@ -471,9 +471,9 @@ The address pattern is `https://my.home-assistant.io/redirect/blueprint_import/?
 
 ## Service Calls
 
-All services support multi-baby tracking with an optional `baby_name` parameter.
+Every service that logs or acts on a baby takes an optional `baby_name` parameter for multi-baby tracking.
 
-Every service that adds a record (all of the ones below except the utility services) also takes an optional **`time`**: when it happened, for logging something afterwards. Without it the record is dated now. A time without a time zone is in Home Assistant's time zone. In the UI it is a date and time picker.
+Every service that adds a record (all of the ones below except `create_medicine`, `create_food` and the utility services) also takes an optional **`time`**: when it happened, for logging something afterwards. Without it the record is dated now. A time without a time zone is in Home Assistant's time zone. In the UI it is a date and time picker.
 
 ```yaml
 service: baby_tracker.add_diaper
@@ -492,7 +492,7 @@ Where a service takes a unit (oz or ml, pounds or kilograms, inches or centimete
 ```yaml
 service: baby_tracker.add_diaper
 data:
-  baby_name: "Your Baby Name" # Optional - leave empty for first baby
+  baby_name: "Your Baby Name" # Optional if you have only one baby
   pee: true
   poo: false
   pee_color: 0 # Optional (0-5)
@@ -766,7 +766,7 @@ Manually triggers a sync with Baby Tracker servers.
 service: baby_tracker.force_resync
 ```
 
-Deletes the local copy of the data and downloads everything again, for when the sync group was reset in the app. Records that were never uploaded are sent first; if that fails nothing is deleted. The **Force Resync** button does the same.
+Deletes the local copy of the data and downloads everything again, for when the sync group was reset in the app. Records that were never uploaded are sent first; if that fails nothing is deleted. After a reset in the app they can't be sent to the new sync group, so they are discarded. The **Force Resync** button does the same.
 
 #### Dismiss Alerts
 
