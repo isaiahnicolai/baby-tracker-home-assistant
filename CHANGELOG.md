@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.2] - 2026-11-06
+
+### Fixed
+
+- The voice-commands repair's confirmation step shows one of your babies'
+  names in its example commands; it was left unfilled.
+- Readme corrections: the Nap Running Long entity ID, nursing timers
+  surviving a restart, which services take `baby_name` and `time`, the
+  options that set alert thresholds, and the client's dependencies.
+
 ## [1.0.1] - 2026-11-02
 
 ### Added
@@ -168,5 +178,6 @@ app uses, and was tested against a real account with two babies.
   and the integration with GitHub Actions and hassfest, a dev container with
   `docker compose` and `scripts/bootstrap`, and an MIT license.
 
+[1.0.2]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/releases/tag/v1.0.0

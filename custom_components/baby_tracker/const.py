@@ -2,7 +2,7 @@
 
 DOMAIN = "baby_tracker"
 CONFIG_ENTRY_VERSION = 2  # the config flow's VERSION; async_migrate_entry brings older entries up to it
-VERSION = "1.0.1"  # keep in sync with manifest.json and client/__init__.py
+VERSION = "1.0.2"  # keep in sync with manifest.json and client/__init__.py
 
 # Configuration
 CONF_EMAIL = "email"

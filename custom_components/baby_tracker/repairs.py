@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import ServiceValidationError
 
-from .sentences import async_install_sentences
+from .sentences import async_install_sentences, baby_names
 from .services import get_coordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -37,11 +37,16 @@ class SentencesRepairFlow(RepairsFlow):
             else:
                 return self.async_create_entry(data={})
 
+        names = baby_names(coordinator)
         return self.async_show_form(
             step_id="confirm",
             data_schema=vol.Schema({}),
             errors=errors,
-            description_placeholders={"folder": self.hass.config.path("custom_sentences")},
+            # The form's text is filled from these, not from the issue's placeholders
+            description_placeholders={
+                "folder": self.hass.config.path("custom_sentences"),
+                "baby": names[0] if names else "Ava",
+            },
         )
 
 

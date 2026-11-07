@@ -2461,7 +2461,7 @@ async def test_confirming_the_repair_writes_the_sentences_with_the_babys_names(h
     flow.hass, flow.handler, flow.issue_id = hass, DOMAIN, "custom_sentences"
     form = await flow.async_step_init()
     assert form["type"] is FlowResultType.FORM and form["step_id"] == "confirm"
-    assert form["description_placeholders"] == {"folder": str(tmp_path / "custom_sentences")}
+    assert form["description_placeholders"] == {"folder": str(tmp_path / "custom_sentences"), "baby": "Ann Marie"}
     assert not (tmp_path / "custom_sentences").exists()  # showing the form writes nothing
 
     done = await flow.async_step_confirm({})

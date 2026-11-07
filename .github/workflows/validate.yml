@@ -20,5 +20,4 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          # A custom repository isn't in the home-assistant/brands repo
-          ignore: brands
+          # No ignores: HACS's default list needs every check, and brand/ covers the brands one

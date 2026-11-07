@@ -30,8 +30,8 @@ babytracker-client @ git+https://github.com/isaiahnicolai/baby-tracker-home-assi
 
 Add `[photos]` to pull in Pillow and be able to attach photos to entries
 (`pip install "babytracker-client[photos] @ git+https://github.com/isaiahnicolai/baby-tracker-home-assistant@v1.0.0"`).
-It needs Python 3.11 or newer and otherwise depends only on `requests` and
-`python-dateutil`.
+It needs Python 3.11 or newer and depends on `requests`, `python-dateutil` and,
+for the interactive shell, `cmd2`.
 
 ## Use it from Python
 
@@ -60,9 +60,10 @@ the account's history (a few seconds per few thousand records).
 
 - **Account**: `authenticate`, `sync`, `force_resync`, `pending_upload_count`,
   `get_all_babies`, `get_baby_by_name`, `download_baby_picture`.
-- **Reading**: `get_last_<kind>` and `get_<kind>_records` for every record
-  type (`get_last_diaper`, `get_last_feeding`, `get_last_sleep`,
-  `is_currently_sleeping`, `get_growth_records`...), `get_recent_records`,
+- **Reading**: `get_last_<kind>` for every record type (`get_last_diaper`,
+  `get_last_feeding`, `get_last_sleep`...), `is_currently_sleeping`,
+  `get_feedings`, `get_<kind>_records` for baths, pumping, growth, milestones,
+  doctor visits, vaccines, medicine and activities, `get_recent_records`,
   `get_daily_summary`, `get_feeding_summary`, `get_sleep_analysis`,
   `get_events_between`, `get_pictures`, `get_latest_picture`.
 - **Insights**: `get_insights` (corrected age, next feed, 24 hour intake,
