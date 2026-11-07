@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.2] - 2026-11-06
 
 ### Fixed
 
@@ -178,5 +178,6 @@ app uses, and was tested against a real account with two babies.
   and the integration with GitHub Actions and hassfest, a dev container with
   `docker compose` and `scripts/bootstrap`, and an MIT license.
 
+[1.0.2]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/releases/tag/v1.0.0
