@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.3] - 2026-11-10
+
+### Fixed
+
+- **Force Resync works after a sync reset in the app.** It joins as a new
+  device, as the app does. After a reset the service refuses every device
+  from before it, so rejoining with the old device ID stayed locked out.
+- **Baths are logged as activities.** The apps have no bath screen: a bath
+  is an activity of a type named Bath, added in the app. Built-in Bath
+  records never showed in the apps. Without a Bath type, logging one says to
+  add it in the app first.
+- **Nothing is sent that stops a phone's sync.** Deleting a record type the
+  phone apps don't write is refused, and deletes from other devices are
+  passed on only when the Android app can read them. A deleted built-in Bath
+  record had stopped the Android app's sync with "Merge failure".
+
 ## [1.0.2] - 2026-11-06
 
 ### Fixed
@@ -178,6 +194,7 @@ app uses, and was tested against a real account with two babies.
   and the integration with GitHub Actions and hassfest, a dev container with
   `docker compose` and `scripts/bootstrap`, and an MIT license.
 
+[1.0.3]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/isaiahnicolai/baby-tracker-home-assistant/releases/tag/v1.0.0

@@ -12,6 +12,7 @@ from datetime import datetime, timezone, tzinfo
 
 from . import dbconn as sqlite3  # sqlite3 with a busy timeout and WAL
 from .dbconn import remove_sidecar_files
+from . import records
 from .transaction import OP_DELETE, TransactionHandler
 
 _LOGGER = logging.getLogger(__name__)
@@ -823,6 +824,11 @@ class BabyTrackerAPI:
         if wire["BCObjectType"] == "DoctorVisit":
             self.local_db.delete_record("DoctorVisit", object_id)
             return {"status": "success", "objectID": object_id, "queued": False}
+        if wire["BCObjectType"] not in records.DELETABLE:
+            raise ValueError(
+                f"{wire['BCObjectType']} records can't be deleted from Home Assistant: the iPhone "
+                "app can't pass the delete on, and Android phones would stop syncing. Delete it "
+                "in the app instead.")
         return self._post_record(wire, op_code=OP_DELETE)
 
     def _baby_ref(self, baby_id):

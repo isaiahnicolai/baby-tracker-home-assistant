@@ -125,6 +125,11 @@ class TransactionHandler:
         """Queue a transaction of ours triggered by this merge (unless joining, or it is our own)."""
         if not self._emit:
             return
+        if record.get("BCObjectType") not in records.ANDROID_PARSEABLE:
+            # Passing it on would stop every Android phone's sync ("Merge failure")
+            _LOGGER.warning(f"Not passing on op {op_code} of type {record.get('BCObjectType')!r} "
+                            f"({record.get('objectID')}): the Android app can't read it")
+            return
         try:
             self.enqueue(op_code, record)
         except Exception as e:  # the merge itself succeeded; the app only logs this too
