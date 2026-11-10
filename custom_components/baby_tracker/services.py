@@ -24,6 +24,7 @@ from .const import (
     ALERT_TYPE_WAKE_OVERDUE,
     ALERT_TYPE_WAKE_TO_FEED,
     ATTACHABLE_RECORD_TYPES,
+    CONF_DEVICE_UUID,
     DEFAULT_UNIT_SYSTEM,
     DELETABLE_RECORD_TYPES,
     DOMAIN,
@@ -1043,16 +1044,20 @@ async def async_register_services(hass: HomeAssistant):
 
         _LOGGER.warning("Force resync initiated - this will delete local database and re-sync all data")
 
+        # Rejoin as a new device, as the app does whenever it joins: after a sync reset in the app
+        # the service refuses every device ID from before it ("Account has been reset").
+        new_device_uuid = str(uuid.uuid4())
         result = await hass.async_add_executor_job(
             coordinator.baby_tracker.force_resync,
             coordinator.email,
             coordinator.password,
-            coordinator.device_uuid
+            new_device_uuid
         )
         if not coordinator.baby_tracker.is_authenticated:
             # The database is gone and the rejoin failed: the next refresh must sign in again
             coordinator.authenticated = False
         _check(result, "force resync")
+        coordinator.device_uuid = new_device_uuid
 
         _LOGGER.info("Force resync completed successfully")
 
@@ -1067,6 +1072,9 @@ async def async_register_services(hass: HomeAssistant):
                 # Get the config entry
                 entry = hass.config_entries.async_get_entry(entry_id)
                 if entry:
+                    # Keep the new device ID, so later sign-ins use it
+                    hass.config_entries.async_update_entry(
+                        entry, data={**entry.data, CONF_DEVICE_UUID: new_device_uuid})
                     await hass.config_entries.async_reload(entry.entry_id)
                     _LOGGER.info(f"Config entry {entry_id} reloaded")
                 break

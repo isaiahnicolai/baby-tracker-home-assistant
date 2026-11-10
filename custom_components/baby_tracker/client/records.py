@@ -174,6 +174,26 @@ def _bottle(table, *extra):
     ], baby=True, embedded=[("desc", "FeedDesc")])
 
 
+# The record types the Android app can parse (the types its JSON reader registers). A transaction
+# of any other type stops the app's sync with "Merge failure" until the account is reset, so one is
+# never sent or passed on.
+ANDROID_PARSEABLE = frozenset({
+    "Baby", "Activity", "BabyActivity", "Bath", "Bottle", "ConflictRecord", "EditableSelection",
+    "Diaper", "Feed", "Formula", "Growth", "Journal", "Joy", "Medication", "MedicationSelection",
+    "Milestone", "MilestoneSelection", "Nursing", "OtherActivity", "OtherActivityDescription",
+    "OtherFeed", "OtherFeedSelection", "Picture", "Pump", "Pumped", "Sleep", "Temperature",
+    "Vaccine", "VaccineSelection", "NursingSession",
+})
+
+# The record types both phone apps write, so either one passes a delete of them on unchanged. The
+# iPhone app relabels a delete of a type it doesn't know (a built-in Bath, say) as "BCObject", which
+# the Android app can't parse: its sync stops with "Merge failure". Only these are deleted from HA.
+DELETABLE = frozenset({
+    "Diaper", "Sleep", "Nursing", "Formula", "Pumped", "OtherFeed", "Pump", "Medication",
+    "Temperature", "OtherActivity", "Milestone", "Vaccine", "Growth",
+})
+
+
 RECORD_TYPES: Dict[str, RecordType] = {
     "Baby": RecordType("Baby", [
         ("Name", lambda r, d: r.get("name") or ""),

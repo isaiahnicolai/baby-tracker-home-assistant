@@ -884,14 +884,23 @@ class BabyTracker:
         else:
             full_note = note
 
+        # The apps have no bath screen: a bath is an activity of a type named Bath, added in the
+        # app. A built-in Bath record never shows in the apps, and deleting one stops Android sync.
+        db = self.api.local_db
+        types = db.get_activity_types() if db else []
+        if not any((t.get("name") or "").strip().lower() == "bath" for t in types):
+            return {"status": "error", "message": (
+                "The account has no activity named Bath. Add one in the Baby Tracker app "
+                "(Other activity, then add a type named Bath), then try again.")}
         try:
-            response = self.api.post_bath(
+            response = self.api.post_other_activity(
                 baby_id=baby_id,
                 time_str=time_str,
-                bath_type=bath_type,
-                note=note
+                activity_name="Bath",
+                duration=0,
+                note=full_note,
             )
-            return {**response, "message": "Bath record added"}
+            return {**response, "message": "Bath added"}
         except Exception as e:
             _LOGGER.error(f"Failed to add bath record: {str(e)}")
             return {"status": "error", "message": f"Failed to add bath record: {str(e)}"}
